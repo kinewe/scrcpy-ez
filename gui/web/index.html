@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>scrcpy-ez</title>
+<style>
+/*__CSS__*/
+</style>
+</head>
+<body>
+
+<!-- ================= 顶部共享栏（设备/窗口总览两页共用；常驻，tabs 支持拖拽换位） ================= -->
+<div id="top-chrome">
+  <div class="winbar">
+    <div class="title" id="win-title">scrcpy-ez</div>
+    <div class="ver" id="app-ver">v0.1</div>
+    <div class="spacer"></div>
+    <div class="iconbtn" title="刷新" id="btn-refresh">↻</div>
+    <div class="iconbtn" title="指引" aria-label="指引" id="btn-guide">💡</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-view="devices">设备</div>
+    <div class="tab" data-view="cast">窗口总览</div>
+  </div>
+</div>
+
+<!-- ================= 视图 1：设备列表 ================= -->
+<div class="view" id="view-devices">
+  <div class="section-title">已连接设备（<span id="dev-count">0</span>）<span class="spacer"></span><button class="batch-entry" id="batch-toggle" type="button">批量管理</button></div>
+  <div id="device-list"><div class="empty-tip">正在扫描设备…</div></div>
+
+  <div class="batch-bar" id="batch-bar" style="display:none">
+    <span class="cnt" id="batch-cnt">已选 0 台</span>
+    <button class="btn primary tiny" id="batch-del" type="button">删除</button>
+    <button class="btn ghost tiny" id="batch-rename" type="button">改名</button>
+    <button class="btn ghost tiny" id="batch-cast" type="button">启动投屏</button>
+    <button class="btn primary tiny" id="batch-rename-ok" type="button" style="display:none">改好了</button>
+    <div class="spacer"></div>
+    <div class="xbtn" id="batch-x" title="退出批量管理"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l10 10M12 2L2 12"/></svg></div>
+  </div>
+
+  <div class="foot">scrcpy-ez · 轻松易用不折腾</div>
+</div>
+
+<!-- ================= 视图 2：窗口总览（投屏中视图；常驻 tab，切换靠顶部 tabs） ================= -->
+<div class="view" id="view-cast" style="display:none">
+  <div class="winbar">
+    <div class="title">投屏中</div>
+  </div>
+
+  <!-- 会话标签栏：每个投屏会话一个标签（设备名 + 状态点；支持浏览器式拖拽排序） -->
+  <div class="tabbar" id="cast-tabbar" style="display:none"></div>
+  <div class="cast-empty-box" id="cast-empty" style="display:none">
+    <div class="empty-tip">暂无投屏 · 去设备页点“投屏”</div>
+    <button class="btn primary" id="cast-empty-go">去设备</button>
+  </div>
+  <div id="cast-sessions"></div>
+
+  <!-- 快捷键说明弹窗 -->
+  <div class="modal-mask" id="shortcut-modal" style="display:none">
+    <div class="modal-card">
+      <div class="modal-head"><b>快捷键说明</b><span class="modal-close" id="shortcut-close">✕</span></div>
+      <div class="keycard">
+        <div class="key-row"><span class="kbd">Ctrl</span><span class="kbd">F</span><span class="key-desc">参数控件开关（可 Alt 拖动）</span></div>
+        <div class="key-row"><span class="kbd">Ctrl</span><span class="kbd">G</span><span class="key-desc">复制图片存手机相册</span></div>
+        <div class="key-row"><span class="kbd">Ctrl</span><span class="kbd">H</span><span class="key-desc">黑屏省电（再按恢复）</span></div>
+        <div class="key-row"><span class="kbd">Ctrl</span><span class="kbd">T</span><span class="key-desc">窗口置顶开关</span></div>
+        <div class="key-row"><span class="kbd">Alt</span><span class="kbd">F</span><span class="key-desc">全屏</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 参数浮窗（有线/无线两套独立；投屏中快捷调参，保持现状） -->
+  <div class="modal-mask" id="param-modal" style="display:none">
+    <div class="modal-card param-card">
+      <div class="modal-head">
+        <b id="param-title">自定义参数</b>
+        <span class="modal-close" id="param-close">✕</span>
+      </div>
+      <div class="param-sub">每设备两套分别记忆 · 保存后重新投屏</div>
+      <div class="param-mode" id="param-mode">当前：有线模式</div>
+      <div id="param-rows"></div>
+      <div class="param-note" id="param-note"></div>
+      <div class="param-foot">
+        <button class="btn ghost" id="param-cancel">取消</button>
+        <button class="btn primary" id="param-save">保存并重新投屏</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新设备弹窗（轮 B：非模态提示条——检测到未创建会话的在线设备） -->
+  <div class="newdev-popup" id="newdev-popup" style="display:none">
+    <div class="np-row">
+      <div class="np-text">检测到新设备 <span class="np-name" id="newdev-name"></span><span class="np-tag" id="newdev-tag"></span>，是否开始投屏？</div>
+      <div class="np-btns">
+        <button class="btn primary tiny" id="newdev-start">开始投屏</button>
+        <button class="btn ghost tiny" id="newdev-dismiss">暂不</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 轻提示（全局：设备/窗口总览共用） -->
+<div class="toast" id="cast-toast" style="display:none"></div>
+
+<!-- ================= 无线调试配对向导（gui50：自动发现 / 手动 / 二维码三路线） ================= -->
+<div class="modal-mask" id="pair-modal" style="display:none">
+  <div class="modal-card pair-card" id="pair-card">
+    <div class="modal-head pair-head" id="pair-head">
+      <b><span class="pair-head-dot"></span>配对新设备</b>
+      <span class="modal-close" id="pair-close">✕</span>
+    </div>
+
+    <!-- 主表单：自动发现 / 手动填写共用；配对进行中时禁用；失败时红框 + 红色重试按钮 -->
+    <div id="pair-form">
+      <div class="pair-found" id="pair-found">
+        <div class="pf-dot"></div>
+        <div class="pf-main">
+          <div class="pf-name" id="pair-found-name"></div>
+          <div class="pf-addr" id="pair-found-addr"></div>
+        </div>
+        <button class="btn tiny ghost pair-swap" id="pair-swap" style="display:none">换一台</button>
+      </div>
+
+      <div id="pair-manual" style="display:none">
+        <div class="pair-label">设备地址 <span class="pair-tag">照抄手机上的「IP 地址和端口」</span></div>
+        <div class="pair-seg-box" id="pair-seg-box">
+          <input class="pair-seg" id="pair-ip1" maxlength="3" inputmode="numeric" autocomplete="off" placeholder="192">
+          <span class="pair-seg-punct">.</span>
+          <input class="pair-seg" id="pair-ip2" maxlength="3" inputmode="numeric" autocomplete="off" placeholder="168">
+          <span class="pair-seg-punct">.</span>
+          <input class="pair-seg" id="pair-ip3" maxlength="3" inputmode="numeric" autocomplete="off" placeholder="1">
+          <span class="pair-seg-punct">.</span>
+          <input class="pair-seg" id="pair-ip4" maxlength="3" inputmode="numeric" autocomplete="off" placeholder="100">
+          <span class="pair-seg-punct">:</span>
+          <input class="pair-seg pair-seg-port" id="pair-port-seg" maxlength="5" inputmode="numeric" autocomplete="off" placeholder="39673">
+        </div>
+      </div>
+
+      <div class="pair-label">配对码 <span class="pair-tag" id="pair-code-tag">在「无线调试」中寻找IP地址和端口及配对码</span></div>
+      <div class="pair-code-box" id="pair-code-box">
+        <input class="pair-code-input" id="pair-code" maxlength="6" inputmode="numeric" autocomplete="off" placeholder="000 000">
+      </div>
+      <div class="pair-fail-pill" id="pair-fail" style="display:none"></div>
+      <button class="btn primary pair-go-btn" id="pair-go">配对</button>
+      <div class="pair-manual-toggle" id="pair-manual-toggle">没对上号？手动输入地址</div>
+      <div class="pair-manual-toggle pair-back-auto" id="pair-back-auto" style="display:none">回到自动发现</div>
+
+      <div class="pair-divider"><span>或</span></div>
+      <div class="pair-qr-hint">手机：无线调试 → <b>用二维码配对设备</b>，扫描下方二维码</div>
+      <div class="pair-qr-wrap">
+        <div class="pair-qr-area" id="pair-qr-area" title="刷新二维码">
+          <canvas id="pair-qr-canvas" width="148" height="148"></canvas>
+          <div class="pair-qr-overlay" id="pair-qr-overlay"><span class="pair-qr-refresh">↻ 刷新二维码</span></div>
+          <div class="pair-qr-expired" id="pair-qr-expired" style="display:none">
+            <div class="pair-qr-expired-label">已失效</div>
+            <span class="pair-qr-refresh">↻ 刷新二维码</span>
+          </div>
+        </div>
+      </div>
+      <div class="pair-steps" id="pair-steps"></div>
+      <div class="pair-qr-hint pair-qr-expire-hint">二维码 2 分钟有效，到期自动刷新</div>
+    </div>
+
+    <!-- 成功态：无头部，绿色对勾 + 步骤条，随后整体淡出自动关闭 -->
+    <div id="pair-success" style="display:none">
+      <div class="pair-success-hero" id="pair-success-hero">
+        <span class="pair-success-check">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5.5 5.5L20 6.5"/></svg>
+        </span>
+        <div class="pair-success-title" id="pair-success-title"></div>
+        <div class="pair-success-sub">正在连接设备，即将自动关闭…</div>
+      </div>
+      <div class="pair-steps pair-steps-success" id="pair-success-steps"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 批量删除确认（gui51：多选删除模态窗） ================= -->
+<div class="modal-mask" id="batch-confirm" style="display:none">
+  <div class="modal-card confirm-card">
+    <div class="c-title">确认删除这些设备吗？</div>
+    <div class="c-sub" id="batch-confirm-sub"></div>
+    <div class="c-btns">
+      <button class="btn ghost" id="batch-confirm-cancel" type="button">取消</button>
+      <button class="btn danger-solid" id="batch-confirm-ok" type="button">删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 指引弹窗（原连接向导精简版） ================= -->
+<div class="modal-mask" id="guide-modal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-head"><b>指引</b><span class="modal-close" id="guide-close">✕</span></div>
+    <div class="guide-mini">
+      <div class="guide-step">
+        <div class="step-num">1</div>
+        <div class="step-body"><b>开启调试</b><div class="note">手机 设置 → 关于手机 → 连点“版本号”7 次打开开发者选项 → 开启 USB 调试（小米还需开启 USB 调试（安全设置））</div></div>
+      </div>
+      <div class="guide-step">
+        <div class="step-num">2</div>
+        <div class="step-body"><b>连接投屏</b><div class="note">USB 线连接电脑后自动发现设备（约 10 秒），点设备卡“投屏”；无线投屏需与电脑同一网络</div></div>
+      </div>
+      <div class="guide-step">
+        <div class="step-num">3</div>
+        <div class="step-body"><b>常用提示</b><div class="note">插上 USB 自动切换有线投屏；投屏中点规格胶囊可调参数；停止投屏在设备卡或总览页点击即可</div></div>
+      </div>
+      <!-- gui53：投屏快捷键排第 4（末位，方便后续在中段拓展步骤）；
+           一个组合键一行（key-row），不再挤在一行 -->
+      <div class="guide-step">
+        <div class="step-num">4</div>
+        <div class="step-body"><b>投屏快捷键</b>
+          <div class="note gm-keys">
+            <div class="key-row"><span class="kbd">Ctrl</span><span class="kbd">F</span><span class="key-desc">参数控件开关（可 Alt 拖动）</span></div>
+            <div class="key-row"><span class="kbd">Ctrl</span><span class="kbd">H</span><span class="key-desc">黑屏省电（再按恢复）</span></div>
+            <div class="key-row"><span class="kbd">Ctrl</span><span class="kbd">T</span><span class="key-desc">窗口置顶开关</span></div>
+            <div class="key-row"><span class="kbd">Alt</span><span class="kbd">F</span><span class="key-desc">全屏</span></div>
+            <div class="key-row"><span class="kbd">Ctrl</span><span class="kbd">G</span><span class="key-desc">复制图片存手机相册</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <button class="btn primary" style="width:100%" id="guide-done">完成</button>
+  </div>
+</div>
+
+<script src="qrcode.js"></script>
+<script>
+/*__JS__*/
+</script>
+</body>
+</html>

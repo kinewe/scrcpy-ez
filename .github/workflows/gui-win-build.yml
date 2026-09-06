@@ -1,0 +1,33 @@
+name: gui-win-build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'gui-*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+
+      - name: Build GUI (trimpath, windowsgui)
+        working-directory: gui
+        shell: pwsh
+        run: |
+          $env:GOPROXY = 'https://goproxy.cn,direct'
+          go build -trimpath -ldflags="-s -w -H windowsgui" -o dist/scrcpy-ez.exe .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrcpy-ez-win64
+          path: gui/dist/scrcpy-ez.exe
+          if-no-files-found: error

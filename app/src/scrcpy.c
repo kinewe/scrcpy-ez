@@ -154,6 +154,8 @@ event_loop(struct scrcpy *s, bool has_screen) {
                 return SCRCPY_EXIT_SUCCESS;
             case SDL_EVENT_QUIT:
                 LOGD("User requested to quit");
+                fprintf(stdout, "SCRCPY_EZ_USER_CLOSE\n");
+                fflush(stdout);
                 restore_device_screen(s, has_screen);
                 return SCRCPY_EXIT_SUCCESS;
             default:

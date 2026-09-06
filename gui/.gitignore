@@ -1,0 +1,7 @@
+# GUI 开发目录：编译产物/日志不入库
+dist/
+bin/
+bridge-*.log
+crash-*.log
+*.exe
+*.dll

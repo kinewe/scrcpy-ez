@@ -2328,6 +2328,8 @@ sc_screen_handle_disconnection(struct sc_screen *screen) {
                 break;
             case SDL_EVENT_QUIT:
                 LOGD("User requested to quit");
+                fprintf(stdout, "SCRCPY_EZ_USER_CLOSE\n");
+                fflush(stdout);
                 sc_screen_interrupt_disconnect(screen);
                 return;
             default:

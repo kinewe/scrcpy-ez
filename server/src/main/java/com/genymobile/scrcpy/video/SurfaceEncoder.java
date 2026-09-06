@@ -638,7 +638,7 @@ public class SurfaceEncoder implements AsyncProcessor {
                                 && nowNs - lastAbrMsgNs >= 500_000_000L) {
                             lastAbrMsgNs = nowNs;
                             deviceMessageSender.send(
-                                    DeviceMessage.createAbrState(currentBitRate, abrFps));
+                                    DeviceMessage.createAbrState(currentBitRate, (int) effectiveMaxFps()));
                         }
                     }
 
@@ -1418,6 +1418,16 @@ public class SurfaceEncoder implements AsyncProcessor {
      * at configure() time) is refreshed on the next encoder rebuild.
      */
     private float effectiveMaxFps() {
+        // At the ABR ceiling (healthy state) the client's exact max-fps
+        // must govern. The previous Math.min(maxFps, abrFps) snapped
+        // non-standard caps down to the highest standard level below
+        // them, because abrFps starts at fpsRestoreCeiling(): 45 -> 30,
+        // 75 -> 60 (the encoder was capped at 30/60 while the client
+        // asked 45/75). Only a real ABR throttle level below the
+        // ceiling may lower the cap further.
+        if (abrFps >= fpsRestoreCeiling()) {
+            return maxFps;
+        }
         return Math.min(maxFps, abrFps);
     }
 
