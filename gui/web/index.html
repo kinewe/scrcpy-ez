@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>scrcpy-ez</title>
+<title>音墨 root 尝试版 v2.2.2-root.1</title>
 <style>
 /*__CSS__*/
 </style>
@@ -12,7 +12,7 @@
 <!-- ================= 顶部共享栏（设备/窗口总览两页共用；常驻，tabs 支持拖拽换位） ================= -->
 <div id="top-chrome">
   <div class="winbar">
-    <div class="title" id="win-title">scrcpy-ez</div>
+    <div class="title" id="win-title">音墨 root 尝试版</div>
     <button class="ver" id="app-ver" type="button" title="检查更新">v0.1</button>
     <div class="spacer"></div>
     <div class="iconbtn" title="刷新" id="btn-refresh">↻</div>
@@ -35,7 +35,7 @@
     <!-- 配对入口不属于排序容器，卡片换位不会移动或挤入入口。 -->
     <div class="device-footer">
       <button class="pair-entry" id="pair-entry" type="button"><span class="pe-plus">+</span>从「无线调试」配对新设备</button>
-      <div class="foot">scrcpy-ez · 轻松易用不折腾</div>
+      <div class="foot">v2.2.2-root.1 · 未实机验证 · 请单独解压使用</div>
     </div>
   </div>
 
@@ -373,10 +373,10 @@
 <!-- 版本信息弹窗（点击顶栏版本号；v2.1.22） -->
 <div class="modal-mask" id="update-modal" style="display:none">
   <div class="modal-card update-card">
-    <div class="modal-head"><b>版本与更新</b><span class="modal-close" id="update-close">✕</span></div>
+    <div class="modal-head"><b>root 尝试版说明</b><span class="modal-close" id="update-close">✕</span></div>
     <div class="update-row"><span class="update-label">当前版本</span><b id="update-current">-</b></div>
     <div class="update-row"><span class="update-label">最新版本</span><b id="update-latest">-</b></div>
-    <div class="update-row"><span class="update-label">下载源</span><b id="update-source">自动选择（GitHub / Gitee）</b></div>
+    <div class="update-row"><span class="update-label">版本通道</span><b id="update-source">root 尝试版独立分支</b></div>
     <div class="update-state" id="update-state"></div>
     <div class="update-note" id="update-notice" style="display:none"></div>
     <div class="update-error" id="update-error" style="display:none" role="alert"></div>
@@ -384,7 +384,7 @@
       <progress id="update-progress-bar" max="100" aria-label="下载进度"></progress>
       <div class="update-note" id="update-progress-text" aria-live="polite"></div>
     </div>
-    <div class="update-note">下载期间可以继续投屏，关闭此弹窗后仍会下载。重启安装会结束投屏窗口，设备档案与设置会保留。</div>
+    <div class="update-note">root 尝试版使用独立分支，正式版自动更新已停用。首次修复可能需要在手机上允许 Shell 的 root 授权。诊断报告保存在 root-repair-logs 文件夹。</div>
     <div class="update-error" id="update-result" style="display:none"></div>
     <div id="update-confirm" class="update-confirm" style="display:none">
       <div id="update-confirm-text"></div>
@@ -394,7 +394,7 @@
       </div>
     </div>
     <div class="update-actions">
-      <button class="btn ghost" id="update-check" type="button">检查更新</button>
+      <button class="btn ghost" id="update-check" type="button">查看版本说明</button>
       <button class="btn ghost" id="update-cancel" type="button" style="display:none">取消下载</button>
       <button class="btn primary" id="update-download" type="button" style="display:none">下载更新</button>
       <button class="btn primary" id="update-install" type="button" style="display:none">重启并更新</button>
@@ -404,7 +404,7 @@
       <button class="update-repo-icon" id="update-repo" type="button" title="GitHub" aria-label="打开 GitHub 仓库">
         <svg class="repo-mark repo-mark-github" viewBox="48 48 288 288" aria-hidden="true" focusable="false"><image width="384" height="384" href="data:image/png;base64,/*__GITHUB_ICON__*/"/></svg>
       </button>
-      <button class="update-repo-icon" id="update-gitee" type="button" title="Gitee" aria-label="打开 Gitee 仓库">
+      <button class="update-repo-icon" id="update-gitee" type="button" title="Gitee" aria-label="打开 Gitee 仓库" style="display:none">
         <img class="repo-mark" src="data:image/svg+xml;base64,/*__GITEE_ICON__*/" alt="" aria-hidden="true" draggable="false">
       </button>
     </div>

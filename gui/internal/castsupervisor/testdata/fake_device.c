@@ -20,7 +20,29 @@ int main(int argc, char **argv) {
         strcat(line, "\n"); record("SCEZ_TEST_ADB_LOG", line);
         const char *id = "PHONE_A";
         if (argc > 2 && (!strcmp(argv[2], "USB_B") || strstr(argv[2], ".99:"))) id = "PHONE_B";
-        if (strstr(line, "ro.serialno")) {
+        if (strstr(line, "shell -T sh") || strstr(line, "shell -T su -c sh")) {
+            char script[16384] = "";
+            fread(script, 1, sizeof(script)-1, stdin);
+            const char *fixed = getenv("SCEZ_TEST_ROOT_FIXED");
+            if (strstr(line, "shell -T su -c sh")) {
+                if (strstr(script, "YINMO_ROOT_AUTH=ok")) {
+                    record("SCEZ_TEST_ADB_LOG", "ROOT_AUTH\n");
+                    if (getenv("SCEZ_TEST_ROOT_DENY")) { puts("Permission denied"); return 1; }
+                    if (getenv("SCEZ_TEST_ROOT_DELAY")) Sleep(atoi(getenv("SCEZ_TEST_ROOT_DELAY")));
+                    puts("YINMO_ROOT_AUTH=ok");
+                    puts("YINMO_ROOT_DIR_META=2000:2000:771");
+                    puts("YINMO_ROOT_DIR_LABEL=u:object_r:system_data_file:s0 /data/local/tmp");
+                } else if (strstr(script, "restorecon -F")) {
+                    record("SCEZ_TEST_ADB_LOG", "ROOT_RESTORE\n");
+                    if (fixed) { FILE *file = fopen(fixed, "w"); if (file) { fputs("fixed", file); fclose(file); } }
+                }
+            } else if (strstr(script, "YINMO_ROOT_WRITABLE")) {
+                puts("YINMO_ROOT_FINGERPRINT=123:456");
+                puts("YINMO_ROOT_DIR_META=2000:2000:771");
+                puts("YINMO_ROOT_UID=2000");
+                puts(fixed && GetFileAttributesA(fixed) == INVALID_FILE_ATTRIBUTES ? "YINMO_ROOT_WRITABLE=no" : "YINMO_ROOT_WRITABLE=yes");
+            } else if (strstr(script, "YINMO_ROOT_PROBE=ok")) puts("YINMO_ROOT_PROBE=ok");
+        } else if (strstr(line, "ro.serialno")) {
             if (argc > 2 && !strcmp(argv[2], "USB_A") && getenv("SCEZ_TEST_ID_DELAY")) Sleep(400);
             puts(id);
         } else if (strstr(line, "ro.product.marketname")) puts("SAME_MODEL");

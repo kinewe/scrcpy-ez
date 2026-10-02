@@ -356,6 +356,8 @@ func (a *App) onAppWinLine(serial, pkg, line string) {
 // ok=false = 该事件不设置状态文字。
 func appWinPhaseText(k bridge.Kind) (string, bool) {
 	switch k {
+	case bridge.KindRootPrepare:
+		return "root 尝试检查中；请留意手机上的 Shell 授权", true
 	case bridge.KindADBReset:
 		return "正在准备 adb…", true
 	case bridge.KindDetect:

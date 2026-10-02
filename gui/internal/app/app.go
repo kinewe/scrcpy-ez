@@ -6880,6 +6880,8 @@ func itoa(n int) string {
 // phaseText 是事件 → 用户可读状态的映射（纯函数，单测覆盖）。
 func phaseText(k bridge.Kind) (string, bool) {
 	switch k {
+	case bridge.KindRootPrepare:
+		return "root 尝试检查中；若手机弹出 Shell 授权，请允许（约 90 秒内结束）", true
 	case bridge.KindADBReset:
 		return "正在准备 adb…", true
 	case bridge.KindDetect:
@@ -6927,7 +6929,7 @@ func (a *App) promptTick() {
 			continue
 		}
 		// 投屏中（casting）/插线监测中（watch-on）bat 长时间静默是正常的，不做判定
-		if c.Phase == "casting" || c.Phase == "watch-on" {
+		if c.Phase == "casting" || c.Phase == "watch-on" || c.Phase == "root-prepare" {
 			if c.Stalled {
 				c.Stalled = false
 				c.StallSecs = 0

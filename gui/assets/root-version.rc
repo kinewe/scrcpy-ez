@@ -1,0 +1,29 @@
+#include <windows.h>
+1 ICON "assets/icon.ico"
+1 VERSIONINFO
+FILEVERSION 2,2,2,1
+PRODUCTVERSION 2,2,2,1
+FILEFLAGSMASK 0x3fL
+FILEFLAGS VS_FF_PRERELEASE
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "CompanyName", "kinewe / PC-kinewe-yinmo\0"
+      VALUE "FileDescription", "Yinmo root experiment - no device validation\0"
+      VALUE "FileVersion", "2.2.2-root.1\0"
+      VALUE "InternalName", "yinmo-root-experiment\0"
+      VALUE "OriginalFilename", "scrcpy-ez.exe\0"
+      VALUE "ProductName", "Yinmo root experimental build\0"
+      VALUE "ProductVersion", "v2.2.2-root.1\0"
+      VALUE "Comments", "Based on scrcpy-ez 2.2.2 b680f551; root-only attempt\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

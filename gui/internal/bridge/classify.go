@@ -36,9 +36,10 @@ const (
 	KindUserClose // scrcpy 用户主动关闭投屏窗口的哨兵行（SCRCPY_EZ_USER_CLOSE）
 	KindError
 	KindPrompt
-	KindTexture    // scrcpy-server INFO: Texture: WxH（真实纹理尺寸，徽标优先数据源）
-	KindVDCreating // [窗口] 虚拟屏 ...（应用窗口虚拟屏启动步骤；主投屏不产生此事件）
-	KindRetryWait  // 连续失败预算耗尽，等待本设备事件或手动重投
+	KindTexture     // scrcpy-server INFO: Texture: WxH（真实纹理尺寸，徽标优先数据源）
+	KindVDCreating  // [窗口] 虚拟屏 ...（应用窗口虚拟屏启动步骤；主投屏不产生此事件）
+	KindRetryWait   // 连续失败预算耗尽，等待本设备事件或手动重投
+	KindRootPrepare // v2.2.2-root.1: bounded root preparation before ordinary cast
 )
 
 // PromptKind 表示 bat 正在等待的 stdin 输入类型（choice/pause）。
@@ -105,6 +106,8 @@ func (k Kind) String() string {
 		return "vd-creating"
 	case KindRetryWait:
 		return "retry-wait"
+	case KindRootPrepare:
+		return "root-prepare"
 	default:
 		return "none"
 	}
@@ -229,6 +232,8 @@ func ClassifyLine(line string) Event {
 	ev := Event{Kind: KindNone, Text: t}
 
 	switch {
+	case strings.HasPrefix(t, "[root 尝试版] "):
+		ev.Kind = KindRootPrepare
 	case reTexture.MatchString(t):
 		// scrcpy-server 真实纹理尺寸（INFO: Texture: WxH，可能带 [server] 前缀）：
 		// 徽标优先数据源——自定义长边档的短边按此真实值显示。

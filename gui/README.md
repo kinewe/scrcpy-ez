@@ -1,5 +1,7 @@
 # scrcpy-ez GUI
 
+当前分支产品版号为 **音墨 v2.2.2-root.1**，没有 root 实机验证。根目录的 root 说明与验证记录优先于以下继承文档。`internal/rootrepair` 提供修复与诊断，监管器在每次路由启动前调用；正式版更新被禁用。
+
 基于 Go、WebView2 和 systray 的 Windows 图形界面。GUI 管理设备、主投屏与应用窗口，通过隐藏控制台调用投屏支持脚本。
 
 ## 构建
@@ -14,6 +16,8 @@ go build -mod=readonly -trimpath -ldflags="-s -w -H windowsgui" -o dist/scrcpy-e
 ```
 
 也可运行 `scripts/build_win.cmd`；WSL 可通过 `scripts/build_win.sh` 调用。`GOEXE`、`CC`、`CXX` 支持环境变量覆盖。发布构建使用 `-trimpath` 和 Windows GUI 子系统，版本信息由 `icon_windows_amd64.syso` 提供。
+
+此分支的 `scripts/build_win.cmd` 会先用 `windres` 编译 `assets/root-version.rc`，确保 Windows 文件属性也显示 root.1。若手动构建，请先执行同样的资源编译。模块缓存应置于仓库根目录 `build/` 或其他模块外目录，避免 `go test ./...` 扫描缓存中的第三方源码。
 
 ## 目录
 

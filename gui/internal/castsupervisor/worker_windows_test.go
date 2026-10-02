@@ -138,7 +138,7 @@ func (f *fixture) waitStarts(n int) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	f.t.Fatalf("starts=%d want %d, log=%s", f.starts(), n, f.log("cast.log"))
+	f.t.Fatalf("starts=%d want %d, log=%s adb=%s output=%s", f.starts(), n, f.log("cast.log"), f.log("adb.log"), f.output.String())
 }
 func (f *fixture) assertStable(n int, duration time.Duration) {
 	f.t.Helper()

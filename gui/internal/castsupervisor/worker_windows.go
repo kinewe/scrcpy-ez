@@ -21,11 +21,16 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"scrcpy-ez/gui/internal/deviceevents"
+	"scrcpy-ez/gui/internal/rootrepair"
 	"scrcpy-ez/gui/internal/sessioncontrol"
 )
 
 type identityResult struct{ key, id string }
 type learningResult struct{ serial, addr string }
+type preparationResult struct {
+	key string
+	err error
+}
 type childMessage struct {
 	line string
 	done bool
@@ -311,6 +316,7 @@ func run(bat string, args []string) int {
 	identities := map[string]string{}
 	resolving := map[string]bool{}
 	blocked := map[string]bool{}
+	rootFailedKeys := map[string]bool{}
 	failures := map[string]int{}
 	identityFailures := map[string]int{}
 	results := make(chan identityResult, 64)
@@ -339,6 +345,16 @@ func run(bat string, args []string) int {
 		}
 	}()
 	generation := 0
+	// v2.2.2-root.1: prepare asynchronously so Stop and transport events remain
+	// responsive during phone-side authorization. Only a fresh route may start.
+	preparations := make(chan preparationResult, 1)
+	preparing, preparedKey, preparingKey := false, "", ""
+	var cancelPreparation context.CancelFunc
+	defer func() {
+		if cancelPreparation != nil {
+			cancelPreparation()
+		}
+	}()
 	var deadline, transition, retry <-chan time.Time
 	var deadlineTimer, transitionTimer, retryTimer *time.Timer
 	var absentAt time.Time
@@ -389,6 +405,9 @@ func run(bat string, args []string) int {
 	recover()
 	for {
 		snapshot = hub.Current() // queued notifications never authorize an older snapshot
+		if preparing && !current(snapshot, preparingKey) && cancelPreparation != nil {
+			cancelPreparation()
+		}
 		if snapshot.Available && snapshot.Epoch != observedEpoch {
 			observedEpoch = snapshot.Epoch
 			if p == nil {
@@ -450,7 +469,28 @@ func run(bat string, args []string) int {
 			if p == nil && generation == 0 && want.Kind == "wifi" && (learningSerial != "" || startupWaitsForUSB(snapshot, target, lockedUSB, identities, blocked, identityFailures)) {
 				want = deviceevents.Transport{}
 			}
-			if p == nil && want.Serial != "" && retry == nil {
+			if p == nil && want.Serial != "" && retry == nil && !preparing && preparedKey != transportKey(snapshot, want) {
+				if target == "" {
+					target = identities[transportKey(snapshot, want)]
+				}
+				preparing = true
+				preparingKey = transportKey(snapshot, want)
+				prepCtx, prepCancel := context.WithTimeout(ctx, rootrepair.Budget)
+				cancelPreparation = prepCancel
+				key, serial, identity := preparingKey, want.Serial, target
+				say("[root 尝试版] %s：检查 %s，未验证实机", rootrepair.Version, serial)
+				go func() {
+					defer prepCancel()
+					_, prepErr := rootrepair.PrepareLocked(prepCtx, rootrepair.Options{
+						ADB: adb, Serial: serial, Identity: identity,
+						LogDir: rootRepairLogDir(dir), Execute: rootrepair.CommandExecutor(adb),
+						Say: func(text string) { say("[root 尝试版] %s", text) },
+					})
+					preparations <- preparationResult{key: key, err: prepErr}
+				}()
+			}
+			if p == nil && want.Serial != "" && retry == nil && !preparing && preparedKey == transportKey(snapshot, want) {
+				preparedKey = ""
 				if target == "" {
 					target = identities[transportKey(snapshot, want)]
 				}
@@ -508,7 +548,7 @@ func run(bat string, args []string) int {
 			if !stopping {
 				stopping = true
 				stop.Signal()
-				if p == nil {
+				if p == nil && !preparing {
 					return 0
 				}
 				if deadlineTimer != nil {
@@ -516,6 +556,30 @@ func run(bat string, args []string) int {
 				}
 				deadlineTimer = time.NewTimer(5 * time.Second)
 				deadline = deadlineTimer.C
+			}
+		case prepared := <-preparations:
+			preparing = false
+			if stopping || ctx.Err() != nil {
+				return 0
+			}
+			if !current(hub.Current(), prepared.key) {
+				continue
+			}
+			if prepared.err != nil {
+				blocked[prepared.key] = true
+				// Do not ask again on a second current USB/WiFi route of the same
+				// physical phone. Manual restart or a new arrival can try again.
+				for _, route := range hub.Current().Transports {
+					k := transportKey(hub.Current(), route)
+					rootFailedKeys[k] = true
+					if identities[k] == target {
+						blocked[k] = true
+					}
+				}
+				say("[错误] root 尝试未通过：%v", prepared.err)
+				say("SCRCPY_EZ_RETRY_WAIT")
+			} else {
+				preparedKey = prepared.key
 			}
 		case _, ok := <-events:
 			if !ok {
@@ -539,6 +603,9 @@ func run(bat string, args []string) int {
 			}
 			if r.id != "" {
 				identities[r.key] = r.id
+				if r.id == target && rootFailedKeys[r.key] {
+					blocked[r.key] = true
+				}
 				if r.id == target {
 					for _, t := range snapshot.Transports {
 						if transportKey(snapshot, t) == r.key && t.Kind == "wifi" {
@@ -650,4 +717,15 @@ func run(bat string, args []string) int {
 			}
 		}
 	}
+}
+
+func rootRepairLogDir(dir string) string {
+	path := filepath.Join(dir, "root-repair-logs")
+	if err := os.MkdirAll(path, 0700); err == nil {
+		return path
+	}
+	if base, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(base, "yinmo-root-2.2.2", "root-repair-logs")
+	}
+	return path
 }

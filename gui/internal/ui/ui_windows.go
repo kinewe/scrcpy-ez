@@ -158,7 +158,7 @@ func Run(a *app.App, html string) error {
 	w := webview.New(false)
 	defer w.Destroy()
 
-	w.SetTitle("scrcpy-ez")
+	w.SetTitle("音墨 root 尝试版 " + a.Version())
 	// v2.1.95：高度 760→900——应用窗口设置弹窗加编码两行后，最长形态全高可见。
 	w.SetSize(520, 900, webview.HintNone)
 

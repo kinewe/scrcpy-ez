@@ -23,8 +23,8 @@ import (
 	"scrcpy-ez/gui/internal/app"
 	"scrcpy-ez/gui/internal/bridge"
 	"scrcpy-ez/gui/internal/castsupervisor"
+	"scrcpy-ez/gui/internal/rootrepair"
 	"scrcpy-ez/gui/internal/ui"
-	"scrcpy-ez/gui/internal/updater"
 )
 
 // gui54 退出体验优化：「假关」+ 并行清理 + 15s 全局兜底。
@@ -155,7 +155,7 @@ var githubMarkPNG []byte
 var giteeMarkSVG []byte
 
 const (
-	version = "v2.2.2"
+	version = rootrepair.Version
 )
 
 // appDir gui53 产品级修复：返回 exe 所在目录（发行包内 bat 与 GUI 同级解压）。
@@ -194,7 +194,7 @@ func migrateLegacyProfile(newPath string) {
 	}
 	dir := filepath.Dir(newPath)
 	if base, err := os.UserConfigDir(); err == nil {
-		legacy := filepath.Join(base, "scrcpy-ez", "profiles.json")
+		legacy := filepath.Join(base, "yinmo-root-2.2.2", "profiles.json")
 		if _, err := os.Stat(legacy); err != nil {
 			return // 没有旧档案，无需迁移
 		}
@@ -219,12 +219,7 @@ func main() {
 	if castsupervisor.RunIfRequested(os.Args[1:]) {
 		return
 	}
-	if updater.RunIfRequested(os.Args[1:]) {
-		return
-	}
-	if updater.RecoverIfNeeded(appDir()) {
-		return
-	}
+	// Experimental root packages have no stable updater helper or recovery path.
 	log.SetFlags(log.Ltime)
 
 	// gui53：bat/adb/config 默认取 exe 同目录（发行包结构）；环境变量可显式覆盖。
@@ -251,13 +246,13 @@ func main() {
 			return filepath.Join(dir, "profiles.json")
 		}
 		if base, err := os.UserConfigDir(); err == nil {
-			return filepath.Join(base, "scrcpy-ez", "profiles.json")
+			return filepath.Join(base, "yinmo-root-2.2.2", "profiles.json")
 		}
 		return ""
 	}())
 	// 迁移：老版本（AppData 全局档案）首次在新逻辑下启动时，
 	// 若软件目录还没有档案而 AppData 有 → 复制过去，之后以软件目录为准。
-	migrateLegacyProfile(profilesPath)
+	// No import from an official installation into this experimental package.
 
 	// 全局设置（设置面板两个开关）：独立 settings.json，不混入设备档案 profiles.json。
 	// 位置与 profiles.json 同目录（软件目录优先、受限位回退 %APPDATA%\scrcpy-ez\），
@@ -267,7 +262,7 @@ func main() {
 			return filepath.Join(filepath.Dir(profilesPath), "settings.json")
 		}
 		if base, err := os.UserConfigDir(); err == nil {
-			return filepath.Join(base, "scrcpy-ez", "settings.json")
+			return filepath.Join(base, "yinmo-root-2.2.2", "settings.json")
 		}
 		return ""
 	}())
@@ -306,8 +301,8 @@ func main() {
 		runtime.LockOSThread()
 		systray.Run(func() {
 			systray.SetIcon(iconICO)
-			systray.SetTitle("scrcpy-ez")
-			systray.SetTooltip("scrcpy-ez · 轻松易用不折腾")
+			systray.SetTitle("音墨 root 尝试版")
+			systray.SetTooltip("音墨 " + version + " · 未实机验证")
 			show := systray.AddMenuItem("显示主窗口", "打开 scrcpy-ez 窗口")
 			systray.AddSeparator()
 			quit := systray.AddMenuItem("退出", "退出 scrcpy-ez")

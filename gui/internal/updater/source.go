@@ -88,6 +88,9 @@ func AllowedURL(raw string) bool {
 
 // Browser links are a smaller allowlist than the updater's API/CDN requests.
 func AllowedPageURL(raw string) bool {
+	if raw == "https://github.com/kinewe/PC-kinewe-yinmo" {
+		return true
+	}
 	for _, repo := range []string{RepoURL, GiteeRepoURL} {
 		if raw == repo || raw == repo+"/releases/latest" {
 			return true
