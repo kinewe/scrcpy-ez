@@ -6881,7 +6881,7 @@ func itoa(n int) string {
 func phaseText(k bridge.Kind) (string, bool) {
 	switch k {
 	case bridge.KindRootPrepare:
-		return "root 尝试检查中；若手机弹出 Shell 授权，请允许（约 90 秒内结束）", true
+		return "正在准备 adb…", true
 	case bridge.KindADBReset:
 		return "正在准备 adb…", true
 	case bridge.KindDetect:

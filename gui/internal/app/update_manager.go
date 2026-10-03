@@ -28,7 +28,7 @@ func (a *App) updates() *updater.Manager {
 		a.update.manager = updater.New(updater.Options{Install: install, Version: a.cfg.Version,
 			Fetch: func(context.Context) (updater.ReleaseInfo, error) {
 				return updater.ReleaseInfo{Current: a.cfg.Version, Latest: a.cfg.Version,
-					RepoURL: rootrepair.RepoURL, Notice: "root 尝试版独立分支；未实机验证。请单独解压后使用，正式版自动更新已停用。"}, nil
+					RepoURL: rootrepair.RepoURL}, nil
 			}})
 	})
 	return a.update.manager

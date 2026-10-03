@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeDevice struct {
@@ -15,6 +16,27 @@ type fakeDevice struct {
 	fixAt                                                         string
 	rootCalls, pushCalls                                          int
 	mutations                                                     []string
+}
+
+// Check the deadline actually delivered to the executor, so an older outer
+// budget cannot silently cut the extended authorization window short.
+func TestRootAuthorizationUsesExtendedDeadline(t *testing.T) {
+	f := fakeDevice{t: t, fixAt: "restore-policy-label"}
+	var remaining time.Duration
+	execute := func(ctx context.Context, args []string, script string) (string, error) {
+		if strings.Contains(script, "YINMO_ROOT_AUTH=ok") {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("authorization has no deadline")
+			}
+			remaining = time.Until(deadline)
+		}
+		return f.exec(ctx, args, script)
+	}
+	r, e := Prepare(context.Background(), Options{Serial: "192.0.2.1:40075", Identity: "PHONE_A", LogDir: t.TempDir(), Execute: execute})
+	if e != nil || r.Status != "repaired" || remaining < 170*time.Second || remaining > 180*time.Second {
+		t.Fatalf("extended wait truncated: remaining=%s status=%s err=%v", remaining, r.Status, e)
+	}
 }
 
 func (f *fakeDevice) exec(ctx context.Context, args []string, script string) (string, error) {

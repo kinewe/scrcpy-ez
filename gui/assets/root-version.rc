@@ -1,8 +1,11 @@
 #include <windows.h>
+LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 1 ICON "assets/icon.ico"
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+1 RT_MANIFEST "assets/scrcpy-ez.manifest"
 1 VERSIONINFO
-FILEVERSION 2,2,2,1
-PRODUCTVERSION 2,2,2,1
+FILEVERSION 2,2,2,2
+PRODUCTVERSION 2,2,2,2
 FILEFLAGSMASK 0x3fL
 FILEFLAGS VS_FF_PRERELEASE
 FILEOS VOS_NT_WINDOWS32
@@ -12,13 +15,13 @@ BEGIN
   BEGIN
     BLOCK "040904b0"
     BEGIN
-      VALUE "CompanyName", "kinewe / PC-kinewe-yinmo\0"
-      VALUE "FileDescription", "Yinmo root experiment - no device validation\0"
-      VALUE "FileVersion", "2.2.2-root.1\0"
-      VALUE "InternalName", "yinmo-root-experiment\0"
+      VALUE "CompanyName", "kinewe\0"
+      VALUE "FileDescription", "scrcpy-ez\0"
+      VALUE "FileVersion", "2.2.2-root.2\0"
+      VALUE "InternalName", "scrcpy-ez\0"
       VALUE "OriginalFilename", "scrcpy-ez.exe\0"
-      VALUE "ProductName", "Yinmo root experimental build\0"
-      VALUE "ProductVersion", "v2.2.2-root.1\0"
+      VALUE "ProductName", "scrcpy-ez\0"
+      VALUE "ProductVersion", "v2.2.2-root.2\0"
       VALUE "Comments", "Based on scrcpy-ez 2.2.2 b680f551; root-only attempt\0"
     END
   END

@@ -1,8 +1,8 @@
 # 🖥️📱 scrcpy-ez — Easy Android Screen Mirroring, Enhanced
 
-> **This branch is Yinmo v2.2.2-root.1, an unvalidated root-user experiment.** It starts from ez 2.2.2 commit `b680f551` and stays separate from ez 2.2.2 and Yinmo 2.2.16r2. Extract into a separate folder. Stable automatic updates are disabled.
+> **This branch is Yinmo v2.2.2-root.2, an unvalidated root-user experiment.** It starts from ez 2.2.2 commit `b680f551` and stays separate from ez 2.2.2 and Yinmo 2.2.16r2. Extract into a separate folder. Stable automatic updates are disabled.
 >
-> See the [user guide](doc/root-user-guide-v2.2.2-root.1.md), [research](doc/root-research-v2.2.2-root.1.md) and [validation record](doc/root-validation-v2.2.2-root.1.md). The inherited stable-release update instructions below do not apply to this branch.
+> See the [user guide](doc/root-user-guide-v2.2.2-root.2.md), [research](doc/root-research-v2.2.2-root.2.md) and [validation record](doc/root-validation-v2.2.2-root.2.md). The inherited stable-release update instructions below do not apply to this branch.
 
 > **English | [中文](README.md)**
 

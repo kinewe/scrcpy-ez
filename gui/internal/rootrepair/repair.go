@@ -1,4 +1,4 @@
-// Package rootrepair is exclusive to the v2.2.2-root.1 experimental branch.
+// Package rootrepair is exclusive to the v2.2.2-root.2 experimental branch.
 // It repairs metadata, then verifies access through ordinary ADB again.
 package rootrepair
 
@@ -15,10 +15,14 @@ import (
 	"time"
 )
 
-const Version = "v2.2.2-root.1"
+const Version = "v2.2.2-root.2"
 const RepoURL = "https://github.com/kinewe/PC-kinewe-yinmo"
 const Branch = "codex/root-tmp-repair-v2.2.2"
-const Budget = 90 * time.Second
+
+// AuthorizationWait is a PC-side limit, not a root-manager policy. The total
+// budget also includes the per-device mutex and ordinary ADB verification.
+const AuthorizationWait = 3 * time.Minute
+const Budget = 5 * time.Minute
 
 var safeID = regexp.MustCompile(`^[A-Za-z0-9_.:\[\]-]+$`)
 var fingerprint = regexp.MustCompile(`^[0-9]+:[0-9]+$`)
@@ -267,12 +271,12 @@ func Prepare(ctx context.Context, o Options) (r Report, err error) {
 	if a.rootDirect {
 		a.say("检测到已有 root adbd，校验 root 权限（不会重启 adbd）")
 	} else {
-		a.say("上传检查失败；请在手机解锁后允许 Shell 的 root 授权（最多等待 45 秒）")
+		a.say("上传检查失败；请在手机解锁后允许 Shell 的 root 授权（最多等待 3 分钟）")
 	}
 	base := guard(o.Identity, inode, true)
 	// Separate root authorization/inspection from any mutation, preserving the
 	// before state on disk before changing metadata.
-	out, e := a.shell(ctx, "root-authorization", true, 45*time.Second, base+inspect(o.Identity)+"echo YINMO_ROOT_AUTH=ok\n")
+	out, e := a.shell(ctx, "root-authorization", true, AuthorizationWait, base+inspect(o.Identity)+"echo YINMO_ROOT_AUTH=ok\n")
 	if e != nil {
 		return r, fmt.Errorf("root 授权或目录校验失败，未执行修复：%w（%s）", e, strings.TrimSpace(out))
 	}

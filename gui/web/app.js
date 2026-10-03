@@ -3767,9 +3767,9 @@
     else el('app-ver').classList.remove('has-new');
     el('update-current').textContent = info.current || (lastState && lastState.version) || '-';
     el('update-latest').textContent = info.latest || (s.phase === 'checking' ? '检查中…' : '未知');
-    el('update-source').textContent = 'root 尝试版独立分支（自动更新停用）';
+    el('update-source').textContent = m.source;
     el('update-notice').textContent = m.notice; updateVisible('update-notice', !!m.notice);
-    el('update-state').textContent = '此版本尚未进行 root 设备实测';
+    el('update-state').textContent = m.message;
     el('update-state').className = 'update-state' + (s.error ? ' warn' : info.hasNew ? ' new' : '');
     el('update-error').textContent = updateLocalError || m.error; updateVisible('update-error', !!(updateLocalError || m.error));
     updateVisible('update-progress', m.progress);
@@ -3828,7 +3828,7 @@
     if (!updateState || el('update-modal').style.display !== 'none' || ['checking','selecting','downloading','validating','installing'].indexOf(updateState.phase) >= 0) readUpdate();
   }, 700);
   function openUpdateLink(kind) {
-    var url = 'https://github.com/kinewe/PC-kinewe-yinmo';
+    var url = kind === 'gitee' ? 'https://gitee.com/kinewe/scrcpy-ez' : 'https://github.com/kinewe/scrcpy-ez';
     if (typeof window.OpenURL === 'function') {
       window.OpenURL(url).catch(function (e) {
         toast('打开失败：' + (e && e.message ? e.message : e));
@@ -3849,7 +3849,7 @@
   el('update-confirm-ok').addEventListener('click', function () { installUpdate(true); });
   el('update-confirm-cancel').addEventListener('click', closeUpdateModal);
   el('update-result-dismiss').addEventListener('click', function () { updateCall('DismissUpdateResult'); });
-  el('app-ver').title = 'root 尝试版说明';
+  el('app-ver').title = '检查更新';
   el('app-ver').style.cursor = 'pointer';
   el('app-ver').addEventListener('click', openUpdateModal);
 

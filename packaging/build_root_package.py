@@ -1,4 +1,4 @@
-"""Build the isolated v2.2.2-root.1 ZIP from a digest-verified ez baseline.
+"""Build the isolated v2.2.2-root.2 ZIP from a digest-verified ez baseline.
 
 No official install directory is read or overwritten. Supply an already built GUI.
 """
@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import zipfile
 
-VERSION = "v2.2.2-root.1"
+VERSION = "v2.2.2-root.2"
 BASE_COMMIT = "b680f55158a38ff8c042a57559f8930372e608e6"
 BASE_DIGEST = "5b55695f2edb249db33e6b7cc5e5ecb34b16619718678e35c0af429dda5920a5"
 
@@ -49,9 +49,9 @@ def main():
     entries["scrcpy-ez.exe"] = args.gui.read_bytes()
     entries["投屏支持.bat"] = (source / "packaging/投屏启动.bat").read_bytes()
     entries["profiles.json"] = b"{}\n"
-    entries["README-ROOT.txt"] = (source / "doc/root-user-guide-v2.2.2-root.1.md").read_bytes()
-    entries["ROOT-RESEARCH.md"] = (source / "doc/root-research-v2.2.2-root.1.md").read_bytes()
-    entries["ROOT-VALIDATION.md"] = (source / "doc/root-validation-v2.2.2-root.1.md").read_bytes()
+    entries["README-ROOT.txt"] = (source / "doc/root-user-guide-v2.2.2-root.2.md").read_bytes()
+    entries["ROOT-RESEARCH.md"] = (source / "doc/root-research-v2.2.2-root.2.md").read_bytes()
+    entries["ROOT-VALIDATION.md"] = (source / "doc/root-validation-v2.2.2-root.2.md").read_bytes()
     entries["ROOT-EXPERIMENT.json"] = json.dumps({
         "version": VERSION,
         "repository": "https://github.com/kinewe/PC-kinewe-yinmo",
@@ -62,6 +62,8 @@ def main():
         "baselineArchiveSHA256": BASE_DIGEST,
         "deviceValidated": False,
         "stableAutoUpdate": False,
+        "rootAuthorizationTimeoutSeconds": 180,
+        "rootPreparationBudgetSeconds": 300,
         "filesSHA256": {name: digest(data) for name, data in sorted(entries.items())},
         "unchangedBaselineFilesSHA256": unchanged,
     }, ensure_ascii=False, indent=2).encode("utf-8")
@@ -69,7 +71,7 @@ def main():
     # A single distinctive directory prevents accidental extraction over stable.
     with zipfile.ZipFile(args.output, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as package:
         for name, data in sorted(entries.items()):
-            info = zipfile.ZipInfo("yinmo-2.2.2-root.1/" + name, (2026, 10, 3, 0, 0, 0))
+            info = zipfile.ZipInfo("yinmo-2.2.2-root.2/" + name, (2026, 10, 3, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
             package.writestr(info, data)
@@ -77,7 +79,7 @@ def main():
         if package.testzip() is not None:
             raise SystemExit("Package CRC verification failed")
         for name, data in entries.items():
-            if package.read("yinmo-2.2.2-root.1/" + name) != data:
+            if package.read("yinmo-2.2.2-root.2/" + name) != data:
                 raise SystemExit("Package content differs: " + name)
     checksum = digest(args.output.read_bytes())
     args.output.with_suffix(".sha256.txt").write_text(checksum + "  " + args.output.name + "\n", encoding="ascii")

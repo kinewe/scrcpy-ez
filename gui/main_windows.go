@@ -301,8 +301,8 @@ func main() {
 		runtime.LockOSThread()
 		systray.Run(func() {
 			systray.SetIcon(iconICO)
-			systray.SetTitle("音墨 root 尝试版")
-			systray.SetTooltip("音墨 " + version + " · 未实机验证")
+			systray.SetTitle("scrcpy-ez")
+			systray.SetTooltip("scrcpy-ez · 轻松易用不折腾")
 			show := systray.AddMenuItem("显示主窗口", "打开 scrcpy-ez 窗口")
 			systray.AddSeparator()
 			quit := systray.AddMenuItem("退出", "退出 scrcpy-ez")
