@@ -76,3 +76,11 @@ Get-ChildItem gui/web -File | Where-Object {
 - `rootAuthorizationTimeoutSeconds=180`、`rootPreparationBudgetSeconds=300` 记录在包内清单；原始输出和使用说明同步。手机管理器主动拒绝或自行超时仍不能由电脑端覆盖。
 
 本版日志另保存在 `build/go-test-root2-app.log` 和 `build/go-test-root2-repair.log`。没有扩大为 Android 实机验证，实际 WebView2 主窗口也未进行屏幕截图核对；外观复核使用基线源文件、图标与显示清单对照。
+
+## 用户反馈与发布核对
+
+2026-10-03，用户确认普通设备投屏测试通过。设备型号及更细的交互情况未提供，不推导为所有普通设备或应用窗口、声音、控制、剪贴板都已实测。root 实机仍未验证；自动测试与本段用户反馈分别记录。
+
+ez 发布包命名 `scrcpy-ez-2.2.2-root.zip`，外层目录同步命名 `scrcpy-ez-2.2.2-root`，内部 GUI／PE 版本仍为 `v2.2.2-root.2`。同名配套 `scrcpy-ez-2.2.2-root.sha256.txt` 校验该 ZIP，原 `SHA256SUMS.txt` 不变。只追加 v2.2.2 Release 附件及说明末尾的 root 段落，不移动正式标签、不覆盖已有附件。打包器进行 CRC、逐文件比对、GUI 哈希、正式组件哈希及验证状态分离检查；发布前后另留远端资产快照以复核原包 ID、大小与摘要。
+
+源码以相同提交推送音墨 `codex/root-tmp-repair-v2.2.2` 与 ez `root-experimental-v2.2.2`。正式更新器按稳定 tag 的精确包名选择 `scrcpy-ez-2.2.2.zip`；root 后缀包名不会被选作正式更新包。

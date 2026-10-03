@@ -1,6 +1,6 @@
 # scrcpy-ez GUI
 
-当前分支产品版号为 **音墨 v2.2.2-root.2**，没有 root 实机验证。根目录的 root 说明与验证记录优先于以下继承文档。`internal/rootrepair` 提供修复与诊断，监管器在每次路由启动前调用；正式版更新被禁用。
+当前分支产品版号为 **v2.2.2-root.2**，普通设备投屏已由用户确认通过，root 尚未实机验证。开发分支位于音墨，ez 的 `root-experimental-v2.2.2` 同步镜像源码。根目录的 root 说明与验证记录优先于以下继承文档。`internal/rootrepair` 提供修复与诊断，监管器在每次路由启动前调用；正式版更新被禁用。
 
 基于 Go、WebView2 和 systray 的 Windows 图形界面。GUI 管理设备、主投屏与应用窗口，通过隐藏控制台调用投屏支持脚本。
 

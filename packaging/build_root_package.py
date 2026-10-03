@@ -9,6 +9,7 @@ from pathlib import Path
 import zipfile
 
 VERSION = "v2.2.2-root.2"
+EZ_ARCHIVE = "scrcpy-ez-2.2.2-root.zip"
 BASE_COMMIT = "b680f55158a38ff8c042a57559f8930372e608e6"
 BASE_DIGEST = "5b55695f2edb249db33e6b7cc5e5ecb34b16619718678e35c0af429dda5920a5"
 
@@ -23,12 +24,16 @@ def main():
     parser.add_argument("--gui", type=Path, required=True)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--distribution", choices=("yinmo", "ez"), default="yinmo")
     args = parser.parse_args()
     source = Path(__file__).resolve().parents[1]
     if digest(args.baseline.read_bytes()) != BASE_DIGEST:
         raise SystemExit("Baseline digest differs from GitHub v2.2.2 release")
     if args.output.resolve().parent != (source / "dist").resolve():
         raise SystemExit("Package output must be this branch's own dist directory")
+    if args.distribution == "ez" and args.output.name != EZ_ARCHIVE:
+        raise SystemExit("ez root archive must be named " + EZ_ARCHIVE)
+    prefix = "scrcpy-ez-2.2.2-root/" if args.distribution == "ez" else "yinmo-2.2.2-root.2/"
     entries = {}
     with zipfile.ZipFile(args.baseline) as baseline:
         for entry in baseline.infolist():
@@ -56,11 +61,23 @@ def main():
         "version": VERSION,
         "repository": "https://github.com/kinewe/PC-kinewe-yinmo",
         "branch": "codex/root-tmp-repair-v2.2.2",
+        "mirrorRepository": "https://github.com/kinewe/scrcpy-ez",
+        "mirrorBranch": "root-experimental-v2.2.2",
         "sourceCommit": args.source_commit,
+        "distribution": args.distribution,
+        "distributionArchive": args.output.name,
+        "releaseRepository": "https://github.com/kinewe/scrcpy-ez" if args.distribution == "ez" else None,
+        "releaseTag": "v2.2.2" if args.distribution == "ez" else None,
         "baselineCommit": BASE_COMMIT,
         "baselineRelease": "https://github.com/kinewe/scrcpy-ez/releases/tag/v2.2.2",
         "baselineArchiveSHA256": BASE_DIGEST,
-        "deviceValidated": False,
+        "rootDeviceValidated": False,
+        "ordinaryDeviceValidation": {
+            "status": "passed",
+            "reportedBy": "user",
+            "reportedOn": "2026-10-03",
+            "scope": "ordinary-device mirroring; device model and further interactions not provided",
+        },
         "stableAutoUpdate": False,
         "rootAuthorizationTimeoutSeconds": 180,
         "rootPreparationBudgetSeconds": 300,
@@ -71,7 +88,7 @@ def main():
     # A single distinctive directory prevents accidental extraction over stable.
     with zipfile.ZipFile(args.output, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as package:
         for name, data in sorted(entries.items()):
-            info = zipfile.ZipInfo("yinmo-2.2.2-root.2/" + name, (2026, 10, 3, 0, 0, 0))
+            info = zipfile.ZipInfo(prefix + name, (2026, 10, 3, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
             package.writestr(info, data)
@@ -79,7 +96,7 @@ def main():
         if package.testzip() is not None:
             raise SystemExit("Package CRC verification failed")
         for name, data in entries.items():
-            if package.read("yinmo-2.2.2-root.2/" + name) != data:
+            if package.read(prefix + name) != data:
                 raise SystemExit("Package content differs: " + name)
     checksum = digest(args.output.read_bytes())
     args.output.with_suffix(".sha256.txt").write_text(checksum + "  " + args.output.name + "\n", encoding="ascii")

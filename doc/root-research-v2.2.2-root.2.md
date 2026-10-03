@@ -8,6 +8,7 @@
 - [ez 2.2.2 发布包](https://github.com/kinewe/scrcpy-ez/releases/tag/v2.2.2) 的 API 摘要与下载后 SHA-256 相同：`5b55695f2edb249db33e6b7cc5e5ecb34b16619718678e35c0af429dda5920a5`。
 - 音墨正式 `v2.2.16-r2^{}` 为 `e6fb342c138832401e606bed23be0e80822d622b`。不合并此分支、不移动标签、不发布稳定版本。
 - 独立分支 `codex/root-tmp-repair-v2.2.2`，唯一产品版号 `v2.2.2-root.2`。原始 ez 发布包仅作为只读构建输入。
+- 后续按用户明确要求，将相同源码镜像至 ez 的 `root-experimental-v2.2.2` 分支，并向原 v2.2.2 Release 追加 root 附件。开发、构建仍在音墨工作区；两仓库正式分支及标签不改动，原正式包与校验文件不替换。
 
 ## 原始证据与推断
 
@@ -63,6 +64,8 @@ AOSP [Android 14 init.rc](https://raw.githubusercontent.com/aosp-mirror/platform
 Windows GUI 使用 Go 与 MinGW 构建，PE 文件版本为 `2.2.2-root.2`，数值四段为 `2.2.2.2` 且标记 prerelease。包内目录与清单标记 root.2；SHA-256 清单记录所有复用组件。完整测试结果及实际命令见同目录的验证记录。
 
 **未验证**：Magisk／KernelSU／APatch 实际弹窗与 stdin 行为、具体 ROM 的 restorecon/chcon 权限、SELinux AVC 变化、应用窗口显示、音视频、输入／通知／剪贴板及多窗口启动的真实设备效果。测试通过不能推导这些已成功。本分支是可以交给 root 用户尝试、收集证据并继续迭代的候选方案。
+
+2026-10-03 用户确认普通设备投屏测试通过；这是用户提供的普通投屏验证信息，不能扩展成 root 修复或所有交互功能已实测。打包清单分别记录普通设备反馈和 `rootDeviceValidated=false`。
 
 ## root.2 外观修订
 

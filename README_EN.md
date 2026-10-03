@@ -1,6 +1,6 @@
 # 🖥️📱 scrcpy-ez — Easy Android Screen Mirroring, Enhanced
 
-> **This branch is Yinmo v2.2.2-root.2, an unvalidated root-user experiment.** It starts from ez 2.2.2 commit `b680f551` and stays separate from ez 2.2.2 and Yinmo 2.2.16r2. Extract into a separate folder. Stable automatic updates are disabled.
+> **This branch is v2.2.2-root.2, a root-user experiment.** The user confirmed ordinary-device mirroring works; root devices remain unvalidated. It starts from ez 2.2.2 commit `b680f551` and stays separate from ez 2.2.2 and Yinmo 2.2.16r2. Development remains on the Yinmo branch, with a [source mirror on the independent ez root branch](https://github.com/kinewe/scrcpy-ez/tree/root-experimental-v2.2.2). Extract into a separate folder. Stable automatic updates are disabled.
 >
 > See the [user guide](doc/root-user-guide-v2.2.2-root.2.md), [research](doc/root-research-v2.2.2-root.2.md) and [validation record](doc/root-validation-v2.2.2-root.2.md). The inherited stable-release update instructions below do not apply to this branch.
 

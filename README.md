@@ -1,6 +1,6 @@
 # 🖥️📱 scrcpy-ez — 轻松易用的安卓投屏增强版
 
-> **当前分支：音墨 v2.2.2-root.2（root 用户尝试版，未实机验证）。** 基于 GitHub ez 2.2.2 的 `b680f551`，独立于 ez 2.2.2 与音墨 2.2.16r2。请单独解压，正式版自动更新已停用。
+> **当前分支：v2.2.2-root.2（root 用户尝试版；普通设备投屏已由用户确认通过，root 尚未实机验证）。** 基于 GitHub ez 2.2.2 的 `b680f551`，独立于 ez 2.2.2 与音墨 2.2.16r2。请单独解压，正式版自动更新已停用。开发分支位于音墨，源码同时镜像至 [ez root 独立分支](https://github.com/kinewe/scrcpy-ez/tree/root-experimental-v2.2.2)。
 >
 > [尝试版使用说明](doc/root-user-guide-v2.2.2-root.2.md) · [调研与交互分析](doc/root-research-v2.2.2-root.2.md) · [验证记录](doc/root-validation-v2.2.2-root.2.md)。以下为继承的 ez 功能介绍；其中正式版更新说明不适用于此分支。
 
