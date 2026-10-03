@@ -11,7 +11,7 @@
 - 使用最终编译 EXE 的假设备验证：上述三种 root 交互及无线／USB 切换、恢复、用户关闭通过（4 项）。
 - 实际传输 shell 脚本：收集修复器输出的脚本，使用 POSIX shell `-n` 检查全部语法，通过；不执行特权脚本。
 - 前端现有 16 个 JavaScript 测试文件全部通过，包括更新弹窗、设备卡、输入保留、设置、会话绑定和应用窗口状态。
-- Windows 资源：`FileVersion=2.2.2-root.1`、`ProductVersion=v2.2.2-root.1`、`ProductName=Yinmo root experimental build`、`IsPreRelease=True`。
+- Windows 资源：`FileVersion=2.2.2-root.1`、`ProductVersion=v2.2.2-root.1`、`IsPreRelease=True`；root.1 当时使用尝试版产品名。
 - Git `diff --check` 通过。未添加新的运行时 Go 依赖。
 
 ## 可复现命令
@@ -45,7 +45,7 @@ Get-ChildItem gui/web -File | Where-Object {
 } | ForEach-Object { node $_.FullName; if ($LASTEXITCODE) { throw $_.Name } }
 ```
 
-独立包由 `packaging/build_root_package.py` 制作，仅接受与 GitHub API 摘要完全相符的 ez 2.2.2 ZIP。输出必须位于此分支根目录的 `dist`；所有包内文件进行 CRC 和逐字节复核，清单记录 SHA-256。压缩包自带 `yinmo-2.2.2-root.1` 独立目录，配置不携带开发者设备数据。
+独立包由 `packaging/build_root_package.py` 制作，仅接受与 GitHub API 摘要完全相符的 ez 2.2.2 ZIP。输出必须位于此分支根目录的 `dist`；所有包内文件进行 CRC 和逐字节复核，清单记录 SHA-256。压缩包自带独立目录，配置不携带开发者设备数据。
 
 ## 发现并修正的问题
 
@@ -57,6 +57,6 @@ Get-ChildItem gui/web -File | Where-Object {
 
 ## 证据与限制
 
-本地 `build/go-test-final.log`、`build/go-test-root-final.log`、`build/go-test-production-helper.log` 保留命令结果；尝试包有 `ROOT-EXPERIMENT.json` 与旁置 SHA-256。测试文件、使用说明和调研说明进入音墨独立分支。
+本地 `build/go-test-final.log`、`build/go-test-root-final.log`、`build/go-test-production-helper.log` 保留命令结果；尝试包有 `ROOT-EXPERIMENT.json` 与旁置 SHA-256。测试文件、使用说明和调研说明可从公开 root 分支查看。
 
 未运行 Android 模拟器或真实 root 手机。无法验证 OEM 策略、root 管理器授权界面、远端 stdin/进程取消行为、实际 JAR 上传后执行、画面／声音／控制、通知或剪贴板表现。GUI 主窗口的实际 WebView2 渲染也没有作为 root 实机效果验证；此记录不宣称任何实机修复成功。

@@ -6,7 +6,7 @@
 
 ## 使用方法
 
-1. 将 ZIP 解压到独立文件夹：ez 发布附件为 `scrcpy-ez-2.2.2-root.zip`，包内目录为 `scrcpy-ez-2.2.2-root`；音墨包内目录为 `yinmo-2.2.2-root.2`。不覆盖 ez 2.2.2 或音墨 2.2.16r2，也不要将尝试版 EXE 单独复制进正式版。
+1. 将 ZIP 解压到独立文件夹：发布附件为 `scrcpy-ez-2.2.2-root.zip`，包内目录为 `scrcpy-ez-2.2.2-root`。不覆盖正式版，也不要将尝试版 EXE 单独复制进正式版。
 2. 打开此文件夹的 `scrcpy-ez.exe`，确认窗口显示 **scrcpy-ez**，版本为 **v2.2.2-root.2**。首次尝试建议使用 USB。
 3. 按原流程授权 USB 调试并开始投屏。支持独立 BAT、主投屏、应用窗口及 USB／无线切换。
 4. 正常 ADB 上传通过时，不调用 `su`。失败时，请保持手机解锁，在 root 管理器中允许 **Shell / ADB shell（uid 2000）** 的授权；等待授权最多 **3 分钟**。修复全过程包含同设备排队，最多约 **5 分钟**。这是电脑程序的超时设置；手机管理器若自行超时或主动拒绝，仍会提前停止。
@@ -42,9 +42,9 @@ KernelSU、APatch 或隐藏 root 的模块可能让 Shell 看不到 `su`。需�
 
 ## 版本隔离与撤回
 
-源码分支：[音墨 codex/root-tmp-repair-v2.2.2](https://github.com/kinewe/PC-kinewe-yinmo/tree/codex/root-tmp-repair-v2.2.2)。GUI 和 EXE 产品版本均为 `v2.2.2-root.2`；底层客户端与服务端保持 ez 2.2.2 包中的原配对版本，不改变握手版号。
+源码分支：[ez root-experimental-v2.2.2](https://github.com/kinewe/scrcpy-ez/tree/root-experimental-v2.2.2)。GUI 和 EXE 产品版本均为 `v2.2.2-root.2`；底层客户端与服务端保持 ez 2.2.2 包中的原配对版本，不改变握手版号。
 
-源码同时镜像至 [ez root-experimental-v2.2.2](https://github.com/kinewe/scrcpy-ez/tree/root-experimental-v2.2.2)。ez 的 `v2.2.2` 标签仍指向正式版源码；Release 中默认的 Source code ZIP／tar.gz 也属于正式版。root 源码请使用上述独立分支。
+ez 的 `v2.2.2` 标签仍指向正式版源码；Release 中默认的 Source code ZIP／tar.gz 也属于正式版。root 源码请使用上述独立分支。
 
 ez 的 [v2.2.2 Release](https://github.com/kinewe/scrcpy-ez/releases/tag/v2.2.2) 追加 root ZIP 及 `scrcpy-ez-2.2.2-root.sha256.txt`，原 `scrcpy-ez-2.2.2.zip` 和 `SHA256SUMS.txt` 保留不变。SHA-256 文件内使用 root ZIP 的实际文件名；内部产品版号仍为 `v2.2.2-root.2`。
 

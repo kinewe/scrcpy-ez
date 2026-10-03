@@ -59,10 +59,8 @@ def main():
     entries["ROOT-VALIDATION.md"] = (source / "doc/root-validation-v2.2.2-root.2.md").read_bytes()
     entries["ROOT-EXPERIMENT.json"] = json.dumps({
         "version": VERSION,
-        "repository": "https://github.com/kinewe/PC-kinewe-yinmo",
-        "branch": "codex/root-tmp-repair-v2.2.2",
-        "mirrorRepository": "https://github.com/kinewe/scrcpy-ez",
-        "mirrorBranch": "root-experimental-v2.2.2",
+        "repository": "https://github.com/kinewe/scrcpy-ez",
+        "branch": "root-experimental-v2.2.2",
         "sourceCommit": args.source_commit,
         "distribution": args.distribution,
         "distributionArchive": args.output.name,

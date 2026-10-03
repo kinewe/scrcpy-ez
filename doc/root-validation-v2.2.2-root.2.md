@@ -11,7 +11,7 @@
 - 使用最终编译 EXE 的假设备验证：上述三种 root 交互及无线／USB 切换、恢复、用户关闭通过（4 项）。
 - 实际传输 shell 脚本：收集修复器输出的脚本，使用 POSIX shell `-n` 检查全部语法，通过；不执行特权脚本。
 - 前端现有 16 个 JavaScript 测试文件全部通过，包括更新弹窗、设备卡、输入保留、设置、会话绑定和应用窗口状态。
-- Windows 资源：`FileVersion=2.2.2-root.1`、`ProductVersion=v2.2.2-root.1`、`ProductName=Yinmo root experimental build`（root.1）、`IsPreRelease=True`。
+- Windows 资源：`FileVersion=2.2.2-root.1`、`ProductVersion=v2.2.2-root.1`、`IsPreRelease=True`；root.1 当时使用尝试版产品名，root.2 已恢复 `scrcpy-ez`。
 - Git `diff --check` 通过。未添加新的运行时 Go 依赖。
 
 ## 可复现命令
@@ -45,7 +45,7 @@ Get-ChildItem gui/web -File | Where-Object {
 } | ForEach-Object { node $_.FullName; if ($LASTEXITCODE) { throw $_.Name } }
 ```
 
-独立包由 `packaging/build_root_package.py` 制作，仅接受与 GitHub API 摘要完全相符的 ez 2.2.2 ZIP。输出必须位于此分支根目录的 `dist`；所有包内文件进行 CRC 和逐字节复核，清单记录 SHA-256。压缩包自带 `yinmo-2.2.2-root.2` 独立目录，配置不携带开发者设备数据。
+独立包由 `packaging/build_root_package.py` 制作，仅接受与 GitHub API 摘要完全相符的 ez 2.2.2 ZIP。输出必须位于此分支根目录的 `dist`；所有包内文件进行 CRC 和逐字节复核，清单记录 SHA-256。公开压缩包自带 `scrcpy-ez-2.2.2-root` 独立目录，配置不携带开发者设备数据。
 
 ## 发现并修正的问题
 
@@ -57,7 +57,7 @@ Get-ChildItem gui/web -File | Where-Object {
 
 ## 证据与限制
 
-本地 `build/go-test-final.log`、`build/go-test-root-final.log`、`build/go-test-production-helper.log` 保留命令结果；尝试包有 `ROOT-EXPERIMENT.json` 与旁置 SHA-256。测试文件、使用说明和调研说明进入音墨独立分支。
+本地 `build/go-test-final.log`、`build/go-test-root-final.log`、`build/go-test-production-helper.log` 保留命令结果；尝试包有 `ROOT-EXPERIMENT.json` 与旁置 SHA-256。测试文件、使用说明和调研说明进入公开 root 独立分支。
 
 未运行 Android 模拟器或真实 root 手机。无法验证 OEM 策略、root 管理器授权界面、远端 stdin/进程取消行为、实际 JAR 上传后执行、画面／声音／控制、通知或剪贴板表现。GUI 主窗口的实际 WebView2 渲染也没有作为 root 实机效果验证；此记录不宣称任何实机修复成功。
 
@@ -81,6 +81,8 @@ Get-ChildItem gui/web -File | Where-Object {
 
 2026-10-03，用户确认普通设备投屏测试通过。设备型号及更细的交互情况未提供，不推导为所有普通设备或应用窗口、声音、控制、剪贴板都已实测。root 实机仍未验证；自动测试与本段用户反馈分别记录。
 
-ez 发布包命名 `scrcpy-ez-2.2.2-root.zip`，外层目录同步命名 `scrcpy-ez-2.2.2-root`，内部 GUI／PE 版本仍为 `v2.2.2-root.2`。同名配套 `scrcpy-ez-2.2.2-root.sha256.txt` 校验该 ZIP，原 `SHA256SUMS.txt` 不变。只追加 v2.2.2 Release 附件及说明末尾的 root 段落，不移动正式标签、不覆盖已有附件。打包器进行 CRC、逐文件比对、GUI 哈希、正式组件哈希及验证状态分离检查；发布前后另留远端资产快照以复核原包 ID、大小与摘要。
+ez 发布包命名 `scrcpy-ez-2.2.2-root.zip`，外层目录同步命名 `scrcpy-ez-2.2.2-root`，内部 GUI／PE 版本仍为 `v2.2.2-root.2`。同名配套 `scrcpy-ez-2.2.2-root.sha256.txt` 校验该 ZIP，原 `SHA256SUMS.txt` 不变。追加 v2.2.2 Release 附件及说明末尾的 root 段落，不移动正式标签、不覆盖正式版附件。打包器进行 CRC、逐文件比对、GUI 哈希、正式组件哈希及验证状态分离检查；发布前后另留远端资产快照以复核原包 ID、大小与摘要。
 
-源码以相同提交推送音墨 `codex/root-tmp-repair-v2.2.2` 与 ez `root-experimental-v2.2.2`。正式更新器按稳定 tag 的精确包名选择 `scrcpy-ez-2.2.2.zip`；root 后缀包名不会被选作正式更新包。
+公开源码位于 ez `root-experimental-v2.2.2`。正式更新器按稳定 tag 的精确包名选择 `scrcpy-ez-2.2.2.zip`；root 后缀包名不会被选作正式更新包。
+
+公开说明修订仅调整文档、清单的源码引用及包来源信息，统一使用可访问的公开 root 分支；GUI 和运行组件不变，版本仍为 `v2.2.2-root.2`。重新制作 root 包并更新配套 SHA-256，原正式包与原校验文件保留。

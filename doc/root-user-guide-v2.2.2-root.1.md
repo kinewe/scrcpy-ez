@@ -1,11 +1,11 @@
-# 音墨 v2.2.2-root.1：root 用户尝试版
+# scrcpy-ez v2.2.2-root.1：历史尝试版记录
 
 这是一次没有 root 实机验证的修复尝试，面向“上传 `/data/local/tmp/scrcpy-server.jar` 被拒绝”的问题。不保证解决所有 root 模块、ROM 或 SELinux 策略异常。
 
 ## 使用方法
 
-1. 将 ZIP 解压到独立的 `yinmo-2.2.2-root.1` 文件夹，不覆盖 ez 2.2.2 或音墨 2.2.16r2，也不要将尝试版 EXE 单独复制进正式版。
-2. 打开此文件夹的 `scrcpy-ez.exe`，确认窗口显示 **音墨 root 尝试版**，版本为 **v2.2.2-root.1**。首次尝试建议使用 USB。
+1. 将 ZIP 解压到独立文件夹，不覆盖正式版，也不要将尝试版 EXE 单独复制进正式版。
+2. 打开此文件夹的 `scrcpy-ez.exe`，确认版本为 **v2.2.2-root.1**。root.1 当时使用尝试版窗口名称，root.2 已恢复原版外观。首次尝试建议使用 USB。
 3. 按原流程授权 USB 调试并开始投屏。支持独立 BAT、主投屏、应用窗口及 USB／无线切换。
 4. 正常 ADB 上传通过时，不调用 `su`。失败时，请保持手机解锁，在 root 管理器中允许 **Shell / ADB shell（uid 2000）** 的授权；等待授权最多 45 秒。修复全过程包含同设备排队，最多约 90 秒。
 5. 拒绝或未授权会停止本次尝试。先检查手机的 root 管理器，再点击重新投屏。即使电脑端已允许所有权限，手机的 root 授权仍由手机管理器决定。
@@ -36,7 +36,7 @@ KernelSU、APatch 或隐藏 root 的模块可能让 Shell 看不到 `su`。需�
 
 ## 版本隔离与撤回
 
-源码分支：[音墨 codex/root-tmp-repair-v2.2.2](https://github.com/kinewe/PC-kinewe-yinmo/tree/codex/root-tmp-repair-v2.2.2)。GUI 和 EXE 产品版本均为 `v2.2.2-root.1`；底层客户端与服务端保持 ez 2.2.2 包中的原配对版本，不改变握手版号。
+历史源码：[root.1 提交](https://github.com/kinewe/scrcpy-ez/tree/2846331622c0b9829c7fe334e9d9b1f4ad7d1da3)。GUI 和 EXE 产品版本均为 `v2.2.2-root.1`；底层客户端与服务端保持 ez 2.2.2 包中的原配对版本，不改变握手版号。
 
 正式版更新与安装入口已停用，设备档案默认存于此独立解压文件夹，系统配置回退使用独立目录，不导入正式版全局档案。显式环境变量路径覆盖仍由用户自行控制；本次交付不配置任何覆盖变量。
 
