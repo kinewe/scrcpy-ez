@@ -289,6 +289,8 @@ if not "!VD_ON!"=="1" (
     if "!AUDIO_MODE!"=="phone" set "CAST_ARGS=!CAST_ARGS! --no-audio"
     if "!AUDIO_MODE!"=="both" set "CAST_ARGS=!CAST_ARGS! --audio-dup"
 )
+rem Global ez idle-sleep policy applies after both main and virtual-display arguments.
+if "%SCEZ_KEEP_ACTIVE%"=="1" set "CAST_ARGS=!CAST_ARGS! --keep-active"
 "%~dp0scrcpy.exe" --serial !PICK! !CAST_ARGS! !VD_ARGS! !CLIP_START_PUSH! %*
 set "CAST_RC=!ERRORLEVEL!"
 chcp !OLD_CP! >nul 2>&1
