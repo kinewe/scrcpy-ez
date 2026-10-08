@@ -93,6 +93,20 @@ Open the **Specs panel** to adjust the mirroring parameters for the current devi
 
 <p align="center"><img src="images/gui-spec.png" alt="Specs panel" width="480"></p>
 
+### 🔔 Phone Notifications and Verification Codes
+
+New phone notifications can appear in Windows whenever a paired device has an active ADB connection. **Mirroring and a companion phone app are not required.** Configure global, per-device and per-app rules, code-only delivery, message previews and copy retention. Notification management is available from the app-window panel and batch management.
+
+Copy a detected code by clicking its body or copy button. On Xiaomi system SMS notifications, a separate code field may remain available while the phone is locked; ez can display and copy that field. If both text and code are hidden, ez only has the system-supplied summary, and code-only mode skips notifications without a recognizable code. This depends on the ROM and source app; tested on REDMI K80 / Android 16, with other brands not yet individually verified.
+
+### 🔋 Keep the Phone Awake During Main Mirroring
+
+The global **keep-awake setting is enabled by default** for wired and wireless main mirroring on all devices. Changes apply after restarting main mirroring. Ending main mirroring restores normal idle sleep; app mirroring does not enable keep-awake. **Ctrl+P** still locks or wakes the phone manually, and holding the shortcut does not send a long power-button press.
+
+### 🔧 Upload Permission Repair for Rooted Devices
+
+Normal devices retain the usual startup flow. On an already rooted device, enable automatic root repair in its specs panel. Repair starts only after a server upload permission error and requires authorizing the Shell `su` request on the phone. It repairs the server directory/file permissions and labels, then runs the server as ordinary Shell. Automated regression tests pass; repair on a physical rooted device remains unverified.
+
 ### 🎮 Shortcuts
 
 | Shortcut | Function |
@@ -100,6 +114,7 @@ Open the **Specs panel** to adjust the mirroring parameters for the current devi
 | **Ctrl+F** | Toggle the overlay controls (drag them while holding **Alt**) |
 | **Ctrl+G** | Save the image copied on the PC to the device gallery |
 | **Ctrl+H** | Black out the device screen to save power (the device may enter power-saving mode limiting the refresh rate) |
+| **Ctrl+P** | Short press of the phone power button to lock or wake it, in main or app mirroring |
 | **Ctrl+T** | Toggle always-on-top for the mirroring window (or hold **Alt** and click the indicator on the left of the controls, same effect) |
 | **Alt+F** | Fullscreen |
 
@@ -121,6 +136,7 @@ While mirroring, a persistent "scrcpy-ez is mirroring" notification appears on t
 
 | Version | Features |
 |---|---|
+| **[v2.3.0](https://github.com/kinewe/scrcpy-ez/releases/tag/v2.3.0)** | Phone notification sync with per-device/app rules, code-only mode, previews and copy retention; Xiaomi SMS code metadata on locked phones where available, with no companion app; default global keep-awake for main mirroring only and Ctrl+P power-button shortcut; optional authorized root repair after upload permission failures; background reconnect for paired devices, notification recovery and battery refresh. See [release notes](docs/release-2.3.0.md) and the [Gitee download](https://gitee.com/kinewe/scrcpy-ez/releases/tag/v2.3.0) |
 | **v2.2.2** | Event-driven USB switching without 2-second polling; fixes missed batch starts and delayed device cards; improves profile identity/address isolation and application icon caching; protects Xiaomi/REDMI/POCO physical-screen gestures and widget sizes during application mirroring, with a compatibility setting for other brands; coordinates multi-window image/text clipboard and keeps Windows images pasteable after all sessions close; consistent UHID/SDK labels and clearer settings; fixes repeated update-success notices and bundled protocol mismatches in application list/icon queries; keeps device renaming focused and uninterrupted during mirroring |
 | **v2.2.1** | In-app updates with automatic GitHub / Gitee source selection, resumable downloads, restart installation and rollback; improved USB learning, wireless address synchronization, app-list refresh and UI layout |
 | **v2.2.0** | New "App windows": run a single phone app in its own desktop window (multi-open / window-follow / UI density / per-app settings memory); selectable A/V codecs — H.264/H.265/AV1/VP8/VP9 × Opus/AAC/FLAC/RAW; fixed pairing/startup "operation failed" caused by old adb servers |
@@ -140,7 +156,7 @@ gradle --no-daemon assembleRelease
 # Output → copy as dist/scrcpy-server
 
 # Client (Windows side):
-cd build && PATH=/f/msys64/mingw64/bin:$PATH ninja
+ninja -C build
 # Output → copy as dist/scrcpy.exe
 ```
 

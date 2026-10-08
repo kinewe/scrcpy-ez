@@ -3,6 +3,11 @@
 Actions can be performed on the scrcpy window using keyboard and mouse
 shortcuts.
 
+In ez, <kbd>Ctrl</kbd>+<kbd>p</kbd> sends one short press of the phone's power
+button from the focused casting window (also in app casting). Holding the
+shortcut does not trigger a long press. <kbd>Ctrl</kbd>+<kbd>h</kbd> only toggles
+the physical screen's display power while keeping mirroring active.
+
 In the following list, <kbd>MOD</kbd> is the shortcut modifier. By default, it's
 (left) <kbd>Alt</kbd> or (left) <kbd>Super</kbd>.
 
