@@ -20,6 +20,8 @@ local.properties
 /.env.*
 /profiles.json
 /settings.json
+/root-repair.json
+/root-repair-logs/
 /config.txt
 /config.identity.txt
 /icons/

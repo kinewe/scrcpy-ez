@@ -29,6 +29,9 @@ import (
 	"scrcpy-ez/gui/internal/bridge"
 	"scrcpy-ez/gui/internal/deviceevents"
 	"scrcpy-ez/gui/internal/discovery"
+	"scrcpy-ez/gui/internal/notifications"
+	"scrcpy-ez/gui/internal/rootrepair"
+	"scrcpy-ez/gui/internal/wirelessconnect"
 )
 
 // Runner 是单个会话的 bat 子进程桥接抽象：windows 下由 bridge.BatRunner 实现。
@@ -234,7 +237,8 @@ type Snapshot struct {
 	AppWins []AppWinItem `json:"appWins"`
 	// Settings 全局设置（设置面板两个开关；独立 settings.json 持久化）。
 	// 前端每次快照刷新拿到当前值，设置面板按它渲染开关状态。
-	Settings Settings `json:"settings"`
+	Settings           Settings               `json:"settings"`
+	NotificationStatus []notifications.Status `json:"notificationStatus,omitempty"`
 }
 
 // sessionState 是一个投屏会话的全部后端状态（map[serial]*sessionState 的一个值）。
@@ -330,15 +334,22 @@ type App struct {
 	// profiles=设备档案（identity 唯一化，全局共享只读）；
 	// 无线探测（mDNS + 并行 connect）：disc=adb 探测器；lastDisc=探测节流时间戳；
 	// discStatus=最近一次探测结果（Snapshot.Discovery 输出）。
-	profiles *ProfileStore
+	rootRepair *rootrepair.Coordinator
+	profiles   *ProfileStore
 	// settings=全局设置（设置面板两个开关：参数控件默认可见性 / 关闭窗口最小化到
 	// 托盘）。与设备档案分文件存放（settings.json），互不干扰；自带锁，可被
 	// UI 线程（窗口过程读"关闭是否最小化"）与 JS 绑定并发读取。
-	settings   *SettingsStore
-	disc       *discovery.Connector
-	lastDisc   time.Time
-	discBusy   bool // 探测 in-flight 标记（gui22 防抖）：runDiscovery 期间 true，ForceDiscover 幂等
-	discStatus DiscoveryStatus
+	settings            *SettingsStore
+	notificationService notificationService
+	notificationMu      sync.Mutex
+	notificationClosing bool
+	wirelessConnector   *wirelessconnect.Coordinator
+	wirelessConnectMu   sync.Mutex
+	wirelessStartupDone chan struct{}
+	disc                *discovery.Connector
+	lastDisc            time.Time
+	discBusy            bool // 探测 in-flight 标记（gui22 防抖）：runDiscovery 期间 true，ForceDiscover 幂等
+	discStatus          DiscoveryStatus
 
 	// mDNS 服务快照（gui48-mdns）：由自管 zeroconf 浏览事件维护（mdnsMu 保护），
 	// 供待配对设备卡、TLS 标/副行 IP、配对端口自动发现使用。
@@ -668,6 +679,10 @@ func (a *App) SetOtherAppWinSystemDecorations(enabled bool) error {
 	return err
 }
 
+func (a *App) SetKeepDeviceAwake(enabled bool) error {
+	return a.settings.SetKeepDeviceAwake(enabled)
+}
+
 // --- panic 防护与崩溃日志 ---
 // GUI 静默死是最恶劣的失败模式：所有桥接回调/轮询 goroutine 都经 guard 包裹，
 // panic 时恢复现场并落盘 crash-YYYYMMDD.log（含堆栈 + cast 状态 + 日志尾部 50 行）。
@@ -725,6 +740,9 @@ func (a *App) StartDevicePolling(ctx context.Context) {
 	a.cancel = cancel
 	a.mu.Unlock()
 
+	a.startRootRepair(ctx)
+	a.startWirelessConnect(ctx)
+	a.startNotificationEvents(ctx)
 	endpoint, token, err := deviceevents.Serve(ctx, a.adb.EventHub())
 	if err == nil {
 		os.Setenv("SCEZ_EVENT_ENDPOINT", endpoint)
@@ -785,7 +803,8 @@ func (a *App) StartDevicePolling(ctx context.Context) {
 	// 冷启动 5555 搜索（仅一次，与冷启动 mDNS 查询并行）：每台档案设备的
 	// 5555 地址并行 connect（≈2s 级），成功入档 active，失败不动。
 	go a.guard("mdns-cold-search-5555", func() {
-		a.coldSearch5555(context.Background())
+		defer close(a.wirelessStartupDone)
+		a.coldSearch5555(ctx)
 	})
 }
 
@@ -1555,6 +1574,9 @@ func (a *App) DeleteDevices(keys []string) error {
 		if !ok {
 			continue
 		}
+		if _, overridden := a.settings.Get().NotificationDevices[key]; overridden {
+			_ = a.settings.SetNotificationDevice(key, "inherit")
+		}
 		for i := range e.Addrs {
 			addr := e.Addrs[i].Addr
 			if !IsIPPort(addr) {
@@ -1960,6 +1982,9 @@ func (a *App) commitDisplay(devs []adb.Device, src ...string) {
 	a.adbHealTried = false
 	a.devices = devs
 	a.mu.Unlock()
+	a.reconcileNotifications()
+
+	a.reconcileWirelessConnect()
 
 	// 二期 Step 1：就绪边沿 → 应用列表枚举（覆盖"配对完成 / 离线→在线"两类稳定信号）。
 	a.kickAppListOnReadyChange(devs)
@@ -5321,22 +5346,23 @@ func (a *App) snapshotRaw() Snapshot {
 		pair = &c
 	}
 	return Snapshot{
-		Version:          a.cfg.Version,
-		BatPath:          a.cfg.BatPath,
-		AdbOK:            a.adbOK,
-		AdbFailing:       a.adbOK && a.adbFail > 0,     // 真空期去抖：可用但正在连续失败 → 前端"刷新中"软提示
-		Devices:          a.devicesWithAppBusyLocked(), // 二期：填充「应用」按钮枚举遮罩态（锁内）
-		Pending:          append([]PendingDevice{}, a.pending...),
-		Discovery:        disc,
-		Cast:             a.activeCastLocked(),
-		Sessions:         sessions,
-		Profiles:         a.listProfiles(),
-		DevOrder:         a.profiles.DeviceOrder(),
-		NewDevice:        a.popup.info,
-		PairStatus:       pair,
-		AppWins:          a.appWinsListLocked(),
-		ProfileSaveError: a.profiles.SaveError(),
-		Settings:         a.settings.Get(), // 设置面板两个开关的当前值
+		Version:            a.cfg.Version,
+		BatPath:            a.cfg.BatPath,
+		AdbOK:              a.adbOK,
+		AdbFailing:         a.adbOK && a.adbFail > 0,     // 真空期去抖：可用但正在连续失败 → 前端"刷新中"软提示
+		Devices:            a.devicesWithAppBusyLocked(), // 二期：填充「应用」按钮枚举遮罩态（锁内）
+		Pending:            append([]PendingDevice{}, a.pending...),
+		Discovery:          disc,
+		Cast:               a.activeCastLocked(),
+		Sessions:           sessions,
+		Profiles:           a.listProfiles(),
+		DevOrder:           a.profiles.DeviceOrder(),
+		NewDevice:          a.popup.info,
+		PairStatus:         pair,
+		AppWins:            a.appWinsListLocked(),
+		ProfileSaveError:   a.profiles.SaveError(),
+		Settings:           a.settings.Get(), // 设置面板两个开关的当前值
+		NotificationStatus: a.notificationStatusLocked(),
 	}
 }
 
@@ -5542,9 +5568,11 @@ func (a *App) StartCast(serial string) error {
 	// SCEZ_PARAM_OVERLAY（1=启动可见，0=启动隐藏），由 bat 转交 scrcpy.exe
 	// 客户端（环境变量随进程树继承），客户端在浮层初始化时读取。
 	// 投屏中 Ctrl+F 的手动切换不受影响（客户端会话内状态）。
-	ov := a.settings.Get().ShowParamOverlay
-	params.OverlayVisible = ov
+	settings := a.settings.Get()
+	params.OverlayVisible = settings.ShowParamOverlay
 	params.OverlayVisibleSet = true
+	params.KeepDeviceAwake = settings.KeepDeviceAwake
+	params.KeepDeviceAwakeSet = true
 	// 主投屏与应用投屏使用相同的稳定身份与当前档案地址。
 	locked := a.deviceLockParams(lookupKey, a.devices)
 	params.Serial, params.Addr, params.Addr2 = locked.Serial, locked.Addr, locked.Addr2
@@ -6810,7 +6838,7 @@ func (a *App) applyEventLocked(st *sessionState, ev bridge.Event) {
 		c.Phase, c.PhaseText = "done", "投屏已结束"
 	default:
 		if txt, ok := phaseText(ev.Kind); ok {
-			c.Phase, c.PhaseText = ev.Kind.String(), txt
+			c.Phase, c.PhaseText = ev.Kind.String(), bridge.RootPhaseText(ev, txt)
 		}
 	}
 }
@@ -6880,6 +6908,10 @@ func itoa(n int) string {
 // phaseText 是事件 → 用户可读状态的映射（纯函数，单测覆盖）。
 func phaseText(k bridge.Kind) (string, bool) {
 	switch k {
+	case bridge.KindRootRequired:
+		return "上传权限受阻；已有 root 的设备可启用修复", true
+	case bridge.KindRootPrepare:
+		return "root 诊断与修复中（授权最多 3 分钟，可停止）", true
 	case bridge.KindADBReset:
 		return "正在准备 adb…", true
 	case bridge.KindDetect:
@@ -6927,7 +6959,7 @@ func (a *App) promptTick() {
 			continue
 		}
 		// 投屏中（casting）/插线监测中（watch-on）bat 长时间静默是正常的，不做判定
-		if c.Phase == "casting" || c.Phase == "watch-on" {
+		if c.Phase == "casting" || c.Phase == "watch-on" || c.Phase == "root-prepare" || c.Phase == "root-required" {
 			if c.Stalled {
 				c.Stalled = false
 				c.StallSecs = 0
@@ -7442,6 +7474,9 @@ func (a *App) BeginClose() <-chan struct{} {
 		a.updates().Close()
 		a.mu.Lock()
 		cancel := a.cancel
+		a.notificationClosing = true
+		notificationService := a.notificationService
+		wirelessConnector := a.wirelessConnector
 		runners := make([]Runner, 0, len(a.sessions)+len(a.appWins))
 		for _, st := range a.sessions {
 			if st.runner != nil {
@@ -7478,6 +7513,14 @@ func (a *App) BeginClose() <-chan struct{} {
 		go func() {
 			defer close(done)
 			var wg sync.WaitGroup
+			if wirelessConnector != nil {
+				wg.Add(1)
+				go func() { defer wg.Done(); wirelessConnector.Close() }()
+			}
+			if notificationService != nil {
+				wg.Add(1)
+				go func() { defer wg.Done(); notificationService.Close() }()
+			}
 			for _, r := range runners {
 				wg.Add(1)
 				go func(r Runner) {

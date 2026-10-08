@@ -2,9 +2,13 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
+
+	"scrcpy-ez/gui/internal/notifications"
 )
 
 // Settings 是 GUI 全局设置（与设备档案 profiles.json 分离，独立落盘 settings.json）。
@@ -20,22 +24,35 @@ import (
 type Settings struct {
 	ShowParamOverlay bool `json:"showParamOverlay"`
 	CloseToTray      bool `json:"closeToTray"`
+	// KeepDeviceAwake prevents idle sleep for future main cast sessions only.
+	KeepDeviceAwake bool `json:"keepDeviceAwake"`
 	// Xiaomi always disables virtual-display decorations. This compatibility
 	// setting only affects other/unknown manufacturers and future app sessions.
-	OtherAppWinSystemDecorations bool `json:"otherAppWinSystemDecorations"`
+	OtherAppWinSystemDecorations bool                            `json:"otherAppWinSystemDecorations"`
+	NotificationDefault          bool                            `json:"notificationDefault"`
+	NotificationPreview          bool                            `json:"notificationPreview"`
+	NotificationDevices          map[string]bool                 `json:"notificationDevices,omitempty"`
+	NotificationCopyMinutes      int                             `json:"notificationCopyMinutes"`
+	NotificationPolicies         map[string]notifications.Policy `json:"notificationPolicies,omitempty"`
 }
 
 // DefaultSettings 返回出厂默认：参数控件显示（现状不变）、关闭窗口完整退出（现状不变）。
 func DefaultSettings() Settings {
-	return Settings{ShowParamOverlay: true, CloseToTray: false, OtherAppWinSystemDecorations: true}
+	return Settings{ShowParamOverlay: true, CloseToTray: false, KeepDeviceAwake: true, OtherAppWinSystemDecorations: true, NotificationDefault: true, NotificationPreview: true, NotificationCopyMinutes: 1440}
 }
 
 // settingsFile 是 settings.json 的落盘形状：指针字段区分"键缺失"（用默认值）
 // 与"显式 false"——否则旧文件里缺的键会被零值 false 覆盖掉默认 true。
 type settingsFile struct {
-	ShowParamOverlay             *bool `json:"showParamOverlay"`
-	CloseToTray                  *bool `json:"closeToTray"`
-	OtherAppWinSystemDecorations *bool `json:"otherAppWinSystemDecorations"`
+	ShowParamOverlay             *bool                           `json:"showParamOverlay"`
+	CloseToTray                  *bool                           `json:"closeToTray"`
+	KeepDeviceAwake              *bool                           `json:"keepDeviceAwake"`
+	OtherAppWinSystemDecorations *bool                           `json:"otherAppWinSystemDecorations"`
+	NotificationDefault          *bool                           `json:"notificationDefault"`
+	NotificationPreview          *bool                           `json:"notificationPreview"`
+	NotificationDevices          map[string]bool                 `json:"notificationDevices"`
+	NotificationCopyMinutes      int                             `json:"notificationCopyMinutes"`
+	NotificationPolicies         map[string]notifications.Policy `json:"notificationPolicies"`
 }
 
 // SettingsStore 持久化全局设置（独立文件，绝不写进 profiles.json）。
@@ -80,8 +97,37 @@ func (s *SettingsStore) Load() error {
 	if f.CloseToTray != nil {
 		s.data.CloseToTray = *f.CloseToTray
 	}
+	if f.KeepDeviceAwake != nil {
+		s.data.KeepDeviceAwake = *f.KeepDeviceAwake
+	}
 	if f.OtherAppWinSystemDecorations != nil {
 		s.data.OtherAppWinSystemDecorations = *f.OtherAppWinSystemDecorations
+	}
+	if f.NotificationDefault != nil {
+		s.data.NotificationDefault = *f.NotificationDefault
+	}
+	if f.NotificationPreview != nil {
+		s.data.NotificationPreview = *f.NotificationPreview
+	}
+	s.data.NotificationDevices = f.NotificationDevices
+	s.data.NotificationPolicies = make(map[string]notifications.Policy, len(f.NotificationPolicies))
+	for id, policy := range f.NotificationPolicies {
+		if !validNotificationMode(policy.Mode) {
+			policy.Mode = notifications.ModeOff
+		}
+		packages, err := notificationPackages(policy.Packages)
+		if err != nil {
+			policy.Mode = notifications.ModeOff
+			packages = nil
+		}
+		policy.Packages = packages
+		if policy.Mode == notifications.ModeWhitelist && len(packages) == 0 && !policy.Other {
+			policy.Mode = notifications.ModeOff
+		}
+		s.data.NotificationPolicies[id] = policy.Clone()
+	}
+	if f.NotificationCopyMinutes >= 1 && f.NotificationCopyMinutes <= 4320 {
+		s.data.NotificationCopyMinutes = f.NotificationCopyMinutes
 	}
 	return nil
 }
@@ -90,7 +136,223 @@ func (s *SettingsStore) Load() error {
 func (s *SettingsStore) Get() Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.data
+	result := s.data
+	result.NotificationPolicies = cloneNotificationPolicies(s.data.NotificationPolicies)
+	if s.data.NotificationDevices != nil {
+		result.NotificationDevices = make(map[string]bool, len(s.data.NotificationDevices))
+		for id, enabled := range s.data.NotificationDevices {
+			result.NotificationDevices[id] = enabled
+		}
+	}
+	return result
+}
+
+func (s Settings) NotificationsEnabled(identity string) bool {
+	return s.NotificationPolicy(identity).Enabled()
+}
+
+// Preserve rc.9 defaults/overrides until a device receives an explicit new rule.
+func (s Settings) NotificationPolicy(identity string) notifications.Policy {
+	if policy, exists := s.NotificationPolicies[identity]; exists {
+		return policy.Clone()
+	}
+	enabled := s.NotificationDefault
+	if enabled, overridden := s.NotificationDevices[identity]; overridden {
+		if enabled {
+			return notifications.Policy{Mode: notifications.ModeAll}
+		}
+		return notifications.Policy{Mode: notifications.ModeOff}
+	}
+	if enabled {
+		return notifications.Policy{Mode: notifications.ModeAll}
+	}
+	return notifications.Policy{Mode: notifications.ModeOff}
+}
+
+func validNotificationMode(mode string) bool {
+	return mode == notifications.ModeOff || mode == notifications.ModeAll || mode == notifications.ModeOTP || mode == notifications.ModeWhitelist
+}
+
+func notificationPackages(packages []string) ([]string, error) {
+	if len(packages) > 4096 {
+		return nil, errors.New("应用数量过多")
+	}
+	unique := make(map[string]bool, len(packages))
+	for _, pkg := range packages {
+		if len(pkg) > 512 || !rePkgName.MatchString(pkg) {
+			return nil, errors.New("无效的应用包名")
+		}
+		unique[pkg] = true
+	}
+	result := make([]string, 0, len(unique))
+	for pkg := range unique {
+		result = append(result, pkg)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func cloneNotificationPolicies(policies map[string]notifications.Policy) map[string]notifications.Policy {
+	result := make(map[string]notifications.Policy, len(policies))
+	for id, policy := range policies {
+		result[id] = policy.Clone()
+	}
+	return result
+}
+
+// Write the complete batch once; failed persistence leaves the previous rules intact.
+func (s *SettingsStore) SetNotificationModes(identities []string, mode string) error {
+	if !validNotificationMode(mode) || mode == notifications.ModeWhitelist {
+		return errors.New("无效的通知模式")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.data.NotificationPolicies
+	s.data.NotificationPolicies = cloneNotificationPolicies(previous)
+	for _, id := range identities {
+		policy := s.data.NotificationPolicy(id)
+		policy.Mode = mode
+		s.data.NotificationPolicies[id] = policy
+	}
+	if err := s.persistLocked(); err != nil {
+		s.data.NotificationPolicies = previous
+		return err
+	}
+	return nil
+}
+
+func (s *SettingsStore) SetNotificationWhitelist(identity string, packages []string) error {
+	return s.SetNotificationSelection(identity, packages, false, false)
+}
+
+func (s *SettingsStore) SetNotificationSelection(identity string, packages []string, other, all bool) error {
+	packages, err := notificationPackages(packages)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.data.NotificationPolicies
+	s.data.NotificationPolicies = cloneNotificationPolicies(previous)
+	policy := s.data.NotificationPolicy(identity)
+	policy.Mode, policy.Packages = notifications.ModeWhitelist, packages
+	policy.Other = other
+	if all {
+		policy.Mode = notifications.ModeAll
+	}
+	if len(packages) == 0 && !other {
+		policy.Mode = notifications.ModeOff
+	}
+	s.data.NotificationPolicies[identity] = policy
+	if err := s.persistLocked(); err != nil {
+		s.data.NotificationPolicies = previous
+		return err
+	}
+	return nil
+}
+
+func (s *SettingsStore) SetNotificationPreview(identity string, preview bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.data.NotificationPolicies
+	s.data.NotificationPolicies = cloneNotificationPolicies(previous)
+	policy := s.data.NotificationPolicy(identity)
+	policy.Preview = &preview
+	s.data.NotificationPolicies[identity] = policy
+	if err := s.persistLocked(); err != nil {
+		s.data.NotificationPolicies = previous
+		return err
+	}
+	return nil
+}
+
+// A notification view is edited locally; optional fields are committed together
+// once when leaving. Omitted fields preserve changes made elsewhere meanwhile.
+type NotificationSelection struct {
+	Packages []string `json:"packages"`
+	Other    bool     `json:"other"`
+}
+
+type NotificationEdit struct {
+	Selection   *NotificationSelection `json:"selection,omitempty"`
+	Preview     *bool                  `json:"preview,omitempty"`
+	CopyMinutes *int                   `json:"copyMinutes,omitempty"`
+}
+
+func (s *SettingsStore) ApplyNotificationEdit(identity string, edit NotificationEdit, all bool) error {
+	var packages []string
+	var err error
+	if edit.Selection != nil {
+		packages, err = notificationPackages(edit.Selection.Packages)
+		if err != nil {
+			return err
+		}
+	}
+	if edit.CopyMinutes != nil && (*edit.CopyMinutes < 1 || *edit.CopyMinutes > 4320) {
+		return errors.New("复制期限须为1至4320分钟")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.data
+	s.data.NotificationPolicies = cloneNotificationPolicies(previous.NotificationPolicies)
+	policy := s.data.NotificationPolicy(identity)
+	if edit.Selection != nil {
+		policy.Mode, policy.Packages, policy.Other = notifications.ModeWhitelist, packages, edit.Selection.Other
+		if all {
+			policy.Mode = notifications.ModeAll
+		}
+		if len(packages) == 0 && !edit.Selection.Other {
+			policy.Mode = notifications.ModeOff
+		}
+	}
+	if edit.Preview != nil {
+		preview := *edit.Preview
+		policy.Preview = &preview
+	}
+	if edit.Selection != nil || edit.Preview != nil {
+		s.data.NotificationPolicies[identity] = policy
+	}
+	if edit.CopyMinutes != nil {
+		s.data.NotificationCopyMinutes = *edit.CopyMinutes
+	}
+	if err := s.persistLocked(); err != nil {
+		s.data = previous
+		return err
+	}
+	return nil
+}
+
+func (s *SettingsStore) SetNotificationSettings(enabled, preview bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data.NotificationDefault = enabled
+	s.data.NotificationPreview = preview
+	return s.persistLocked()
+}
+
+func (s *SettingsStore) SetNotificationCopyMinutes(minutes int) error {
+	if minutes < 1 || minutes > 4320 {
+		return errors.New("复制期限须为1至4320分钟")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data.NotificationCopyMinutes = minutes
+	return s.persistLocked()
+}
+
+func (s *SettingsStore) SetNotificationDevice(identity, mode string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.data.NotificationPolicies, identity)
+	if s.data.NotificationDevices == nil {
+		s.data.NotificationDevices = make(map[string]bool)
+	}
+	if mode == "inherit" {
+		delete(s.data.NotificationDevices, identity)
+	} else {
+		s.data.NotificationDevices[identity] = mode == "on"
+	}
+	return s.persistLocked()
 }
 
 // Set 写入原有两个开关，保留独立的应用窗口兼容设置（原子写：tmp+rename）。
@@ -108,6 +370,18 @@ func (s *SettingsStore) SetOtherAppWinSystemDecorations(enabled bool) error {
 	defer s.mu.Unlock()
 	s.data.OtherAppWinSystemDecorations = enabled
 	return s.persistLocked()
+}
+
+func (s *SettingsStore) SetKeepDeviceAwake(enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.data.KeepDeviceAwake
+	s.data.KeepDeviceAwake = enabled
+	if err := s.persistLocked(); err != nil {
+		s.data.KeepDeviceAwake = previous
+		return err
+	}
+	return nil
 }
 
 // persistLocked 落盘（调用方必须持锁）。

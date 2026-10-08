@@ -39,11 +39,11 @@ class Element {
 }
 const nodes={};
 const document={activeElement:null,getElementById: id => nodes[id] || (nodes[id]=new Element('div')), createElement: tag => new Element(tag),createTextNode: txt => Object.assign(new Element('text'),{textContent:txt}),querySelectorAll: s => nodes['device-list'].querySelectorAll(s.split(' ').pop())};
-const scope={document,Date,setTimeout:()=>0,clearTimeout:()=>{},batchMode:false,renameMode:false,batchSel:{},renameDraft:{},batchDeviceKeys:{},lastState:null,appBarLeaving:{},renderedBars:{},deletingKeys:{},devOrder:[],appWins:{},openAppCards:{},fieldSticky:{},
+const scope={document,Date,setTimeout:()=>0,clearTimeout:()=>{},batchMode:false,renameMode:false,batchSel:{},renameDraft:{},batchDeviceKeys:{},lastState:null,appBarLeaving:{},renderedBars:{},deletingKeys:{},devOrder:[],appWins:{},openAppCards:{},fieldSticky:{},settingsState:{notificationDefault:false},notificationSaving:false,appWinNotificationView:false,notificationDraft:null,
   AppWinBar:require('./appwin_bar'),SessionMap:require('./session_map'),DragOrder:require('./drag_order'),
   sweepDeletingKeys:()=>{},saveOrderBackend:()=>{},scheduleAppBarRefresh:()=>{},profileKeysFor:()=>[],deviceIdentityOf:()=>'',openDeleteBubble:()=>{},startCast:()=>{},switchView:()=>{},openAppWin:()=>{},activateSession:()=>{},switchToDeviceAppWin:()=>{},stopAllAppWins:()=>{},refreshNow:()=>{},StopCast:()=>Promise.resolve(),toast:()=>{},toggleBatchSelect: (key,st)=>{scope.batchSel[key]=!scope.batchSel[key];scope.renderDevices(st);}};
 vm.createContext(scope);
-for(const name of ['devKey','devDisplayName','el','vtSafeName','fmtSub','stickyKey','stickyFill','batchSelectedDevices','syncBatchUI','collectRenameObj','reconcileBatchDeviceKeys','collectRenameCards','commitDeviceCards','renderDevices']) {
+for(const name of ['devKey','devDisplayName','el','vtSafeName','fmtSub','stickyKey','stickyFill','batchSelectedDevices','syncBatchUI','collectRenameObj','reconcileBatchDeviceKeys','collectRenameCards','commitDeviceCards','notificationPolicyFor','notificationDetailFor','renderDevices']) {
   const start=source.indexOf('  function '+name+'('); assert.ok(start>=0,name);
   const lineEnd=source.indexOf('\n',start);
   const line=source.slice(start,lineEnd);
@@ -55,11 +55,13 @@ const pending={serial:addr,identity:'pending:'+addr,identityEpoch:1,state:'devic
 const phone={serial:'192.0.2.12:5555',identity:'device:PHONE',identityEpoch:2,state:'device',connType:'wifi',name:'Xiaomi Pad 8 Pro',stableSerial:'PHONE',wirelessIP:'192.0.2.12:5555',wirelessRes:'1920x864',fps:60};
 function render(devices) {scope.lastState={adbOK:true,devices,sessions:[],profiles:[],devOrder:[]};scope.renderDevices(scope.lastState);return nodes['device-list'].children;}
 assert.equal(render([pending,phone]).length,2,'ordinary cards');
+assert.equal(nodes['device-list'].querySelectorAll('.dev-notification-detail').length,0,'normal cards must hide notification details');
 assert.ok(!scope.fmtSub(phone).includes('序列号'));
 assert.ok(scope.fmtSub({serial:'USB_A',state:'device',connType:'usb',res:'3200x2136',fps:120}).includes('USB_A'));
 scope.batchMode=true;
 let cards=render([pending,phone]);
 assert.equal(cards.length,2,'batch mode must render every card without exceptions');
+assert.equal(nodes['device-list'].querySelectorAll('.dev-notification-detail').length,2,'bulk cards show notification details');
 cards[0].events.click({target:cards[0]});
 assert.equal(scope.batchSelectedDevices(scope.lastState).length,1);
 scope.renameMode=true; cards=render([pending,phone]);

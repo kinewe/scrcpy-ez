@@ -266,10 +266,12 @@
     el('batch-del').style.display = renameMode ? 'none' : '';
     el('batch-rename').style.display = renameMode ? 'none' : '';
     el('batch-cast').style.display = renameMode ? 'none' : '';
+    el('batch-notifications').style.display = renameMode ? 'none' : '';
     el('batch-rename-ok').style.display = renameMode ? '' : 'none';
     el('batch-del').disabled = n === 0;
     el('batch-rename').disabled = n === 0;
     el('batch-cast').disabled = n === 0;
+    el('batch-notifications').disabled = n === 0 || notificationSaving;
     el('batch-rename-ok').disabled = n === 0;
   }
 
@@ -669,6 +671,14 @@
         info.appendChild(sub);
       }
 
+      // Notification details belong to bulk management, never the normal device cards.
+      if (batchMode && !inRename && !deletingCard) {
+        var notificationDetail = document.createElement('div');
+        notificationDetail.className = 'dev-notification-detail';
+        notificationDetail.textContent = notificationDetailFor(d.identity || key, st);
+        info.appendChild(notificationDetail);
+      }
+
       card.appendChild(dot);
       card.appendChild(info);
 
@@ -831,6 +841,10 @@
   // 数据（应用列表）经 GetAppList RPC 拉取；枚举未完成时空列表 + 轮询重试（≤40 次≈28s）。
   var appWins = {}; // serial → {name, tab, pane, apps, loaded, pollLeft, identity}（蓝灯表；收编/升级态 tab/pane=null）
   var appWinModalSerial = null; // 当前浮窗展示的 serial（null=浮窗关闭）
+  var appWinNotificationView = false;
+  var notificationOptionsOpen = false;
+  var notificationSaving = false;
+  var notificationBatchTargets = [];
 
   // ---------- 同设备多形态键归一（v2.1.52） ----------
   // 背景：同一设备在不同时刻的「键」形态不同（USB serial / IP:port）——应用窗口可能用
@@ -1309,7 +1323,18 @@
           restartTag.textContent = '重新连接中…';
           actions.appendChild(restartTag);
         } else {
-          if (a.phase === 'retry-wait') {
+          if (a.phase === 'root-required') {
+            var bRoot = document.createElement('button');
+            bRoot.type = 'button';
+            bRoot.className = 'openapp-btn';
+            bRoot.textContent = '启用 / 再试 root 修复';
+            bRoot.addEventListener('click', function (ev) {
+              ev.stopPropagation();
+              window.RetryRootRepair(serial, a.pkg).catch(function (e) { toast('修复启动失败：' + e); });
+            });
+            actions.appendChild(bRoot);
+          }
+          if (a.phase === 'retry-wait' || a.phase === 'root-required') {
             var bRetry = document.createElement('button');
             bRetry.type = 'button';
             bRetry.className = 'openapp-btn';
@@ -1466,6 +1491,9 @@
     var w = appWins[serial];
     if (!w) return;
     appWinModalSerial = serial;
+    appWinNotificationView = false;
+    notificationDraft = null;
+    notificationOptionsOpen = false;
     checkAppListSilently(serial);
     el('appwin-modal-title').textContent = (w.name || serial) + ' · 应用窗口';
     el('appwin-modal-search').value = '';
@@ -1478,15 +1506,22 @@
     m.classList.add('fade-in');
   }
 
-  function closeAppWinModal() {
-    appWinModalSerial = null;
-    el('appwin-modal').style.display = 'none';
+  function closeAppWinModal(afterClose) {
+    leaveNotificationView(function () {
+      appWinModalSerial = null;
+      appWinNotificationView = false;
+      el('appwin-modal').style.display = 'none';
+      if (typeof afterClose === 'function') afterClose();
+    });
   }
 
   // 浮窗交互（顶层绑定；同参数浮窗模式）：✕ / 点遮罩关闭；搜索过滤。
   el('appwin-modal-close').addEventListener('click', closeAppWinModal);
   el('appwin-modal').addEventListener('click', function (ev) {
     if (ev.target === el('appwin-modal')) closeAppWinModal();
+  });
+  el('appwin-modal').addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape') { ev.preventDefault(); closeAppWinModal(); }
   });
   el('appwin-modal-search').addEventListener('input', function () {
     if (appWinModalSerial) renderAppWinGrid(appWinModalSerial);
@@ -1990,7 +2025,7 @@
   // 主人 0919：蓝灯是中间态；未选任何应用就回设备页 = 撤销本次选择，全部清掉。
   // （将来"已开应用窗口"的标签另行保留策略，见后续步骤。）
   function clearAppWins() {
-    closeAppWinModal(); // 中间态浮窗一并关闭（幂等）
+    closeAppWinModal(function () { // 保存成功后再清理中间态，失败仍可重试。
     var had = Object.keys(appWins);
     if (had.length === 0) return;
     had.forEach(function (serial) {
@@ -2003,6 +2038,7 @@
     });
     if (activeSerial && had.indexOf(activeSerial) >= 0 && !appWins[activeSerial]) activeSerial = null;
     updateTabs();
+    });
   }
 
   // pruneEmptyAppWins：清理"孤儿空蓝灯页"（v2.1.29）——真的有页面（tab/pane）、
@@ -2185,35 +2221,42 @@
     var w = appWins[serial];
     if (!w || appWinModalSerial !== serial) return;
     var box = el('appwin-modal-grid');
-    var q = (el('appwin-modal-search').value || '').trim().toLowerCase();
-    var list = w.apps || [];
+    renderAppNotificationControls(serial);
+    var notificationPolicy = notificationPolicyFor(w.identity || deviceIdentityOf(serial));
     el('appwin-modal-search').disabled = !!w.initialIconBusy;
     if (w.initialIconBusy) {
       box.innerHTML = '<div class="appwin-loading">正在读取应用图标…</div>';
       return;
     }
-    if (!w.loaded && list.length === 0) {
+    if (!w.loaded && (w.apps || []).length === 0) {
       box.innerHTML = '<div class="appwin-loading">正在读取应用列表…</div>';
       return;
     }
     // v2.1.18 搜索升级：名称/包名子串（原有）+ 拼音模糊（app_search.js：
     // 全拼/首字母/混拼/部分前缀——「文件」← wenjian / wenj / wj / jian）。
     // 模块缺失时降级=原名称/包名子串（同 build 内嵌，理论不可达，防御）。
-    var filtered = (typeof SCEZAppSearch !== 'undefined')
-      ? SCEZAppSearch.filterApps(list, q)
-      : list.filter(function (a) {
-          if (!q) return true;
-          return (a.name || '').toLowerCase().indexOf(q) >= 0 || (a.pkg || '').toLowerCase().indexOf(q) >= 0;
-        });
+    var filtered = appWinVisibleApps(w);
     if (filtered.length === 0) {
       box.innerHTML = '<div class="appwin-loading">没有匹配的应用</div>';
       return;
     }
     box.innerHTML = '';
     filtered.forEach(function (a) {
-      var card = document.createElement('div');
+      var card = document.createElement('button');
+      card.type = 'button';
       card.className = 'appwin-app';
-      card.title = a.pkg;
+      card.title = a.notificationOther ? '应用列表之外的通知来源，与列表内应用互为补集' : a.pkg;
+      if (appWinNotificationView) {
+        var allowed = notificationPolicy.mode === 'all' || notificationPolicy.mode === 'otp' || notificationPolicy.mode === 'whitelist' && (a.notificationOther ? !!notificationPolicy.other : (notificationPolicy.packages || []).indexOf(a.pkg) >= 0);
+        card.setAttribute('role', 'checkbox');
+        card.setAttribute('aria-checked', String(allowed));
+        card.setAttribute('aria-label', (a.name || a.pkg) + (allowed ? '，已允许通知' : '，未允许通知'));
+        card.dataset.notificationPkg = a.pkg;
+        card.dataset.notificationOther = String(!!a.notificationOther);
+        card.disabled = notificationSaving || !w.identity || !a.pkg;
+      } else card.setAttribute('aria-label', '打开 ' + (a.name || a.pkg) + ' 应用窗口');
+      var iconWrap = document.createElement('div');
+      iconWrap.className = 'appwin-icon-wrap';
       var icon = document.createElement('div');
       icon.className = 'appwin-icon';
       // 必须用 backgroundColor 独立属性：background 简写会把 background-size/
@@ -2221,12 +2264,21 @@
       // cover/center 失效、真图标按"原图左上角 1:1 裁切"显示（v2.1.13 修复）。
       icon.style.backgroundColor = appColor(a.pkg || a.name || '?');
       icon.textContent = (a.name || '?').charAt(0);
-      if (a.pkg) requestIcon(serial, a.pkg, icon); // 有 PNG 则替换彩块（懒加载+缓存）
+      if (a.notificationOther) {
+        icon.classList.add('notification-other-icon');
+        icon.style.backgroundColor = '#26382f';
+        icon.innerHTML = SCEZNotificationIcons.svg('moon-star');
+      } else if (a.pkg) requestIcon(serial, a.pkg, icon); // 有 PNG 则替换彩块（懒加载+缓存）
       var label = document.createElement('span');
       label.textContent = a.name || a.pkg;
-      card.appendChild(icon);
+      iconWrap.appendChild(icon);
+      if (appWinNotificationView) {
+        var check = document.createElement('span'); check.className = 'appwin-check'; check.innerHTML = allowed ? SCEZNotificationIcons.svg('check') : ''; check.setAttribute('aria-hidden', 'true'); iconWrap.appendChild(check);
+      }
+      card.appendChild(iconWrap);
       card.appendChild(label);
       card.addEventListener('click', function () {
+        if (appWinNotificationView) { toggleNotificationApp(serial, a.pkg, !!a.notificationOther); return; }
         // v2.1.21：点击应用 = 开窗（虚拟屏会话）+ 浮窗退出 + 卡片出现。
         // 乐观加卡（立即可见）；启动失败回滚卡片并提示。
         closeAppWinModal();
@@ -2251,6 +2303,7 @@
       '<div class="spec-row" title="点击调整参数（有线/无线两套独立）"></div>' +
     '</div>' +
     '<div class="banner error" style="display:none"></div>' +
+    '<div class="banner warn root-repair" style="display:none">仅适用于已 root 的手机。<button class="btn tiny primary act-root">启用 / 再试 root 修复</button> <button class="btn tiny act-root-off">关闭自动修复</button></div>' +
     '<div class="banner warn stalled" style="display:none">⚠️ 已 <span class="stalled-secs">0</span> 秒无输出，可点击 <button class="btn tiny primary restart">重启投屏</button>（不自动干预 bat）</div>' +
     '<div class="prompt-bar" style="display:none"></div>' +
     '<div class="session-actions">' +
@@ -2270,6 +2323,14 @@
   // bindSessionPaneHandlers：会话页交互绑定（会话级操作全部带 serial；所有按钮
   // stopPropagation——多会话「点了 A 全动」防御闸）。
   function bindSessionPaneHandlers(pane, serial, info) {
+    pane.querySelector('.act-root').addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      window.RetryRootRepair(serial, '').then(refreshNow).catch(function (e) { toast('修复启动失败：' + e); });
+    });
+    pane.querySelector('.act-root-off').addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      window.DisableRootRepair(serial).then(function () { toast('已关闭此设备自动 root 修复'); }).catch(function (e) { toast('设置失败：' + e); });
+    });
     pane.querySelector('.spec-row').addEventListener('click', function (ev) {
       ev.stopPropagation();
       openSpecModal(serial);
@@ -2668,6 +2729,8 @@
   function renderSessionPane(s, k, st) {
     var c = k.cast;
     var r = s.refs;
+    var rootBanner = s.pane.querySelector('.root-repair');
+    if (rootBanner) rootBanner.style.display = (c.active && c.phase === 'root-required') ? '' : 'none';
     r.pulse.style.display = c.active ? '' : 'none';
     // 模式显示（修复误判）：casting 且规格未到时用 c.mode（最近一次真实模式行，
     // classify 精确短语判定；"保存无线地址"等学习行不改变模式）；规格到达后用 spec.wired 定案
@@ -3741,6 +3804,7 @@
   el('batch-rename').addEventListener('click', function () { if (lastState) startBatchRename(lastState); });
   el('batch-rename-ok').addEventListener('click', function () { if (lastState) finishBatchRename(lastState); });
   el('batch-cast').addEventListener('click', function () { if (lastState) batchStartCast(lastState); });
+  el('batch-notifications').addEventListener('click', openBatchNotifications);
   el('batch-confirm-cancel').addEventListener('click', function () { el('batch-confirm').style.display = 'none'; });
   el('batch-confirm-ok').addEventListener('click', function () { batchDeleteConfirm(lastState); });
   el('batch-confirm').addEventListener('click', function (ev) {
@@ -4124,6 +4188,17 @@
     }
     GetProfile(serial).then(function (p) {
       paramState = makeParamState(serial, name, mode, p);
+      var rootState = paramState, rootBox = el('param-root-repair');
+      rootBox.checked = false;
+      rootBox.disabled = true;
+      window.GetRootRepairEnabled(serial).then(function (enabled) {
+        if (paramState === rootState) {
+          rootBox.checked = !!enabled;
+          rootBox.disabled = false;
+        }
+      }).catch(function (e) {
+        if (paramState === rootState) toast('读取修复设置失败：' + e);
+      });
       renderParamModal();
       el('param-modal').style.display = '';
     }).catch(function (e) {
@@ -4131,6 +4206,20 @@
     });
   }
 
+  el('param-root-repair').addEventListener('change', function (ev) {
+    if (!paramState) return;
+    var state = paramState, box = ev.currentTarget, value = box.checked;
+    box.disabled = true;
+    window.SetRootRepairEnabled(state.serial, value).then(function () {
+      if (paramState === state) box.disabled = false;
+    }).catch(function (e) {
+      if (paramState === state) {
+        box.checked = !value;
+        box.disabled = false;
+        toast('修复设置保存失败：' + e);
+      }
+    });
+  });
   function renderParamModal() {
     if (!paramState) return;
     var modeName = paramState.mode === 'usb' ? '有线模式' : '无线模式';
@@ -4221,7 +4310,289 @@
   // ---------- 设置面板（右上角齿轮；两个开关即时保存，重启后保持） ----------
   // Go 侧 settings.json 是权威值：每次快照回家；面板打开时按它渲染开关状态。
   // 点击开关先本地翻转（即时反馈）再调 SetSettings 落盘，失败提示（快照下一轮会纠正）。
-  var settingsState = { showParamOverlay: true, closeToTray: false, otherAppWinSystemDecorations: true };
+  var settingsState = { showParamOverlay: true, closeToTray: false, keepDeviceAwake: true, otherAppWinSystemDecorations: true, notificationDefault: true, notificationPreview: true, notificationDevices: {}, notificationCopyMinutes: 1440 };
+  var notificationDraft = null;
+  // ---------- Device notification policies (rc.9 settings migrate in the backend) ----------
+  function notificationPolicyFor(identity) {
+    if (appWinNotificationView && notificationDraft && notificationDraft.identity === identity) return notificationDraft.policy;
+    var settings = settingsState || {};
+    var policy = (settings.notificationPolicies || {})[identity];
+    if (policy) {
+      if (policy.mode === 'whitelist' && !(policy.packages || []).length && !policy.other) return Object.assign({}, policy, {mode: 'off'});
+      return policy;
+    }
+    var overrides = settings.notificationDevices || {};
+    var enabled = Object.prototype.hasOwnProperty.call(overrides, identity) ? overrides[identity] : settings.notificationDefault;
+    return { mode: enabled ? 'all' : 'off', packages: [] };
+  }
+
+  function notificationDetailFor(identity, st) {
+    var policy = notificationPolicyFor(identity);
+    var names = { off: '通知已关闭', otp: '仅验证码 · 所有应用', all: '所有应用通知' };
+    var label = policy.mode === 'whitelist' ? ('应用白名单 · ' + (policy.packages || []).length + ' 个应用' + (policy.other ? ' + 暗之通知' : '')) : (names[policy.mode] || '通知已关闭');
+    var enabled = policy.mode !== 'off' && (policy.mode !== 'whitelist' || (policy.packages || []).length > 0 || policy.other);
+    if (enabled) {
+      var status = ((st && st.notificationStatus) || []).filter(function (item) { return item.identity === identity; })[0];
+      if (status && status.state !== 'active') label += ' · ' + status.text;
+      else if (!status) label += ' · 等待设备连接';
+    }
+    return label;
+  }
+
+  function renderAppNotificationControls(serial) {
+    var w = appWins[serial];
+    if (!w || appWinModalSerial !== serial) return;
+    var identity = w.identity || deviceIdentityOf(serial);
+    var policy = notificationPolicyFor(identity);
+    var toggle = el('appwin-notifications');
+    el('appwin-notifications-label').textContent = appWinNotificationView ? '通知白名单' : '消息通知';
+    toggle.setAttribute('aria-pressed', String(appWinNotificationView));
+    toggle.setAttribute('aria-label', appWinNotificationView ? '返回应用窗口视图' : '切换消息通知视图');
+    el('appwin-modal-title').textContent = (w.name || serial) + (appWinNotificationView ? ' · 应用通知' : ' · 应用窗口');
+    el('appwin-modal-title').title = el('appwin-modal-title').textContent;
+    el('notification-options').style.display = appWinNotificationView ? '' : 'none';
+    el('notification-options').setAttribute('aria-expanded', String(notificationOptionsOpen));
+    el('notification-options-panel').style.display = appWinNotificationView && notificationOptionsOpen ? '' : 'none';
+    var hint = '点击应用 → 在独立窗口打开';
+    if (appWinNotificationView) {
+      hint = policy.mode === 'whitelist' ? ((policy.packages || []).length || policy.other ? '已允许 ' + (policy.packages || []).length + ' 个应用' + (policy.other ? ' + 暗之通知' : '') + ' · 点击切换勾选' : '未选择通知来源 · 此设备不推送通知') : (policy.mode === 'otp' ? '仅验证码 · 所有来源' : policy.mode === 'all' ? '所有来源通知' : '通知已关闭') + ' · 修改勾选后使用白名单';
+      hint += ' · 右键反选';
+      if (notificationDraft && Object.keys(notificationDraft.edit).length) hint = '待保存 · 退出通知视图时保存 · 右键反选';
+      if (notificationSaving) hint = '正在保存通知设置…';
+    }
+    el('appwin-modal-hint').textContent = hint;
+    var preview = policy.preview === undefined ? settingsState.notificationPreview : policy.preview;
+    Array.prototype.forEach.call(el('notification-preview').querySelectorAll('input'), function (input) { input.checked = input.value === (preview ? 'full' : 'hidden'); });
+    el('notification-preview').disabled = notificationSaving || !identity;
+    var copyMinutes = notificationDraft ? notificationDraft.copyMinutes : settingsState.notificationCopyMinutes;
+    Array.prototype.forEach.call(el('notification-copy-minutes').querySelectorAll('input'), function (input) { input.checked = input.value === String(copyMinutes); });
+    el('notification-copy-minutes').disabled = notificationSaving;
+  }
+
+  function notificationWrite(request, success) {
+    if (notificationSaving) return;
+    var focusedOption = typeof document !== 'undefined' && document.activeElement && document.activeElement.type === 'radio' ? document.activeElement : null;
+    notificationSaving = true;
+    syncBatchUI(lastState);
+    renderBatchNotificationChoices();
+    if (appWinModalSerial) renderAppWinGrid(appWinModalSerial);
+    var saved = false;
+    Promise.resolve().then(request).then(function () {
+      saved = true;
+      return GetState().then(function (st) {
+        lastState = st; syncSettings(st); lastJson = ''; renderDevices(st);
+        if (success) success();
+      });
+    }).catch(function (e) {
+      toast((saved ? '设置已保存，刷新状态失败：' : '通知设置保存失败：') + (e && e.message ? e.message : e));
+      refreshNow();
+    }).then(function () {
+      notificationSaving = false;
+      syncBatchUI(lastState); renderBatchNotificationChoices();
+      if (appWinModalSerial) renderAppWinGrid(appWinModalSerial);
+      // Disabling a fieldset blurs its active radio. Restore keyboard navigation
+      // after saving unless the user deliberately focused another control.
+      if (focusedOption && focusedOption.isConnected && document.activeElement === document.body) focusedOption.focus();
+    });
+  }
+
+  function toggleNotificationApp(serial, pkg, isOther) {
+    var w = appWins[serial];
+    if (!w || notificationSaving) return;
+    var identity = w.identity || deviceIdentityOf(serial);
+    if (!identity) { toast('设备尚未完成建档，请稍后重试'); return; }
+    var policy = notificationPolicyFor(identity);
+    // Search is presentation-only: always materialize the complete device list.
+    var full = policy.mode === 'all' || policy.mode === 'otp';
+    var packages = full ? (w.apps || []).map(function (app) { return app.pkg; }).filter(Boolean) : policy.mode === 'whitelist' ? (policy.packages || []).slice() : [];
+    var other = full || policy.mode === 'whitelist' && !!policy.other;
+    if (isOther) other = !other;
+    else {
+      var index = packages.indexOf(pkg);
+      if (index >= 0) packages.splice(index, 1); else packages.push(pkg);
+    }
+    updateNotificationDraftSelection(packages, other);
+  }
+
+  function beginNotificationDraft() {
+    var w = appWins[appWinModalSerial];
+    if (!w) return;
+    var identity = w.identity || deviceIdentityOf(appWinModalSerial);
+    var policy = JSON.parse(JSON.stringify(notificationPolicyFor(identity)));
+    policy.preview = policy.preview === undefined ? settingsState.notificationPreview : policy.preview;
+    notificationDraft = {identity: identity, policy: policy, copyMinutes: settingsState.notificationCopyMinutes, edit: {}};
+  }
+
+  function updateNotificationDraftSelection(packages, other) {
+    if (!notificationDraft) beginNotificationDraft();
+    if (!notificationDraft) return;
+    var w = appWins[appWinModalSerial];
+    var selected = new Set(packages);
+    var all = other && (w.apps || []).every(function (app) { return selected.has(app.pkg); });
+    notificationDraft.policy.mode = all ? 'all' : !packages.length && !other ? 'off' : 'whitelist';
+    notificationDraft.policy.packages = packages.slice();
+    notificationDraft.policy.other = other;
+    notificationDraft.edit.selection = {packages: packages.slice(), other: other};
+    renderNotificationDraft();
+  }
+
+  function renderNotificationDraft() {
+    if (!appWinModalSerial || !notificationDraft) return;
+    var policy = notificationDraft.policy;
+    // Update badges in place so cached app artwork and keyboard focus stay put.
+    Array.prototype.forEach.call(el('appwin-modal-grid').querySelectorAll('[data-notification-pkg]'), function (card) {
+      var allowed = policy.mode === 'all' || policy.mode === 'otp' || policy.mode === 'whitelist' && (card.dataset.notificationOther === 'true' ? !!policy.other : (policy.packages || []).indexOf(card.dataset.notificationPkg) >= 0);
+      card.setAttribute('aria-checked', String(allowed));
+      var label = card.lastElementChild;
+      card.setAttribute('aria-label', label.textContent + (allowed ? '，已允许通知' : '，未允许通知'));
+      card.querySelector('.appwin-check').innerHTML = allowed ? SCEZNotificationIcons.svg('check') : '';
+    });
+    renderAppNotificationControls(appWinModalSerial);
+  }
+
+  function leaveNotificationView(done) {
+    if (notificationSaving) return;
+    var draft = notificationDraft;
+    if (!draft || !Object.keys(draft.edit).length) { notificationDraft = null; done(); return; }
+    if (!draft.identity) { toast('设备尚未完成建档，请稍后重试'); return; }
+    notificationSaving = true;
+    renderAppNotificationControls(appWinModalSerial);
+    el('appwin-notifications').disabled = true;
+    renderAppWinGrid(appWinModalSerial);
+    Promise.resolve().then(function () { return ApplyNotificationEdit(draft.identity, draft.edit); }).then(function () {
+      // Apply exactly the committed fields locally; a failed subsequent poll
+      // must never strand an already-saved draft or issue the same write twice.
+      settingsState.notificationPolicies = settingsState.notificationPolicies || {};
+      var policy = settingsState.notificationPolicies[draft.identity] || {mode: draft.policy.mode};
+      if (draft.edit.selection) { policy.mode = draft.policy.mode; policy.packages = draft.policy.packages.slice(); policy.other = draft.policy.other; }
+      if (Object.prototype.hasOwnProperty.call(draft.edit, 'preview')) policy.preview = draft.edit.preview;
+      if (draft.edit.selection || Object.prototype.hasOwnProperty.call(draft.edit, 'preview')) settingsState.notificationPolicies[draft.identity] = policy;
+      if (Object.prototype.hasOwnProperty.call(draft.edit, 'copyMinutes')) settingsState.notificationCopyMinutes = draft.edit.copyMinutes;
+      notificationSaving = false;
+      notificationDraft = null;
+      el('appwin-notifications').disabled = false;
+      done();
+      refreshNow();
+    }).catch(function (error) {
+      notificationSaving = false;
+      el('appwin-notifications').disabled = false;
+      renderAppWinGrid(appWinModalSerial);
+      toast('通知设置保存失败，修改已保留，请再次退出重试：' + (error && error.message ? error.message : error));
+    });
+  }
+
+  // Rendering and right-click inversion share the same search, including pinyin.
+  // Hidden search results keep their selections; an empty search includes @other.
+  function appWinVisibleApps(w) {
+    var list = w.apps || [];
+    if (appWinNotificationView) list = list.concat([{pkg: '@other', name: '暗之通知', notificationOther: true}]);
+    var q = (el('appwin-modal-search').value || '').trim().toLowerCase();
+    return typeof SCEZAppSearch !== 'undefined' ? SCEZAppSearch.filterApps(list, q) : list.filter(function (app) {
+      return !q || (app.name || '').toLowerCase().indexOf(q) >= 0 || (app.pkg || '').toLowerCase().indexOf(q) >= 0;
+    });
+  }
+
+  function invertNotificationApps() {
+    var w = appWins[appWinModalSerial];
+    if (!appWinNotificationView || !w || !w.loaded || w.initialIconBusy || notificationSaving) return;
+    var identity = w.identity || deviceIdentityOf(appWinModalSerial);
+    var visible = appWinVisibleApps(w);
+    if (!identity || !visible.length) return;
+    var policy = notificationPolicyFor(identity);
+    var full = policy.mode === 'all' || policy.mode === 'otp';
+    var packages = new Set(full ? (w.apps || []).map(function (app) { return app.pkg; }).filter(Boolean) : policy.mode === 'whitelist' ? policy.packages || [] : []);
+    var other = full || policy.mode === 'whitelist' && !!policy.other;
+    visible.forEach(function (app) {
+      if (app.notificationOther) other = !other;
+      else if (packages.has(app.pkg)) packages.delete(app.pkg);
+      else packages.add(app.pkg);
+    });
+    updateNotificationDraftSelection(Array.from(packages), other);
+  }
+
+  function renderBatchNotificationChoices() {
+    var buttons = el('notification-batch-modal').querySelectorAll('.notification-mode');
+    Array.prototype.forEach.call(buttons, function (button) {
+      button.disabled = notificationSaving;
+      button.setAttribute('aria-pressed', String(notificationBatchTargets.length > 0 && notificationBatchTargets.every(function (id) { return notificationPolicyFor(id).mode === button.dataset.mode; })));
+    });
+    el('notification-batch-close').disabled = notificationSaving;
+  }
+
+  function openBatchNotifications() {
+    if (notificationSaving || !lastState) return;
+    var selected = batchSelectedDevices(lastState);
+    if (!selected.length) { toast('请先选择设备'); return; }
+    notificationBatchTargets = [];
+    for (var i = 0; i < selected.length; i++) {
+      var identity = selected[i].identity;
+      if (!identity || !((lastState.profiles || []).some(function (profile) { return profile.key === identity; }))) { toast('所选设备尚未完成建档，请刷新后重试'); return; }
+      if (notificationBatchTargets.indexOf(identity) < 0) notificationBatchTargets.push(identity);
+    }
+    el('notification-batch-target').textContent = '应用于已选 ' + notificationBatchTargets.length + ' 台设备';
+    renderBatchNotificationChoices();
+    showBatchNotifications(true);
+    el('notification-batch-close').focus();
+  }
+
+  function showBatchNotifications(visible) {
+    el('notification-batch-modal').style.display = visible ? '' : 'none';
+    ['top-chrome', 'view-devices', 'view-cast'].forEach(function (id) { el(id).inert = visible; });
+    if (!visible) el('batch-notifications').focus();
+  }
+
+  function closeBatchNotifications() {
+    if (!notificationSaving) showBatchNotifications(false);
+  }
+
+  el('appwin-notifications').addEventListener('click', function () {
+    if (!appWinModalSerial || notificationSaving) return;
+    if (appWinNotificationView) leaveNotificationView(function () { appWinNotificationView = false; renderAppWinGrid(appWinModalSerial); });
+    else { beginNotificationDraft(); appWinNotificationView = true; renderAppWinGrid(appWinModalSerial); }
+  });
+  el('notification-options').addEventListener('click', function () {
+    notificationOptionsOpen = !notificationOptionsOpen;
+    if (appWinModalSerial) renderAppNotificationControls(appWinModalSerial);
+  });
+  el('appwin-modal-grid').addEventListener('contextmenu', function (ev) {
+    if (!appWinNotificationView) return;
+    ev.preventDefault();
+    invertNotificationApps();
+  });
+  el('notification-preview').addEventListener('change', function (ev) {
+    if (!notificationDraft || notificationSaving) return;
+    var preview = ev.target.value === 'full';
+    notificationDraft.policy.preview = preview;
+    notificationDraft.edit.preview = preview;
+    renderNotificationDraft();
+  });
+  el('notification-copy-minutes').addEventListener('change', function (ev) {
+    if (!notificationDraft || notificationSaving) return;
+    var minutes = Number(ev.target.value);
+    notificationDraft.copyMinutes = minutes;
+    notificationDraft.edit.copyMinutes = minutes;
+    renderNotificationDraft();
+  });
+  el('notification-batch-close').addEventListener('click', closeBatchNotifications);
+  el('notification-batch-modal').addEventListener('click', function (ev) { if (ev.target === el('notification-batch-modal')) closeBatchNotifications(); });
+  el('notification-batch-modal').addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape') { ev.preventDefault(); closeBatchNotifications(); }
+    if (ev.key !== 'Tab') return;
+    var buttons = Array.prototype.filter.call(el('notification-batch-modal').querySelectorAll('button'), function (button) { return !button.disabled; });
+    if (!buttons.length) { ev.preventDefault(); return; }
+    if (ev.shiftKey && document.activeElement === buttons[0]) { ev.preventDefault(); buttons[buttons.length - 1].focus(); }
+    else if (!ev.shiftKey && document.activeElement === buttons[buttons.length - 1]) { ev.preventDefault(); buttons[0].focus(); }
+  });
+  Array.prototype.forEach.call(el('notification-batch-modal').querySelectorAll('.notification-mode'), function (button) {
+    button.addEventListener('click', function () {
+      var targets = notificationBatchTargets.slice(), mode = button.dataset.mode;
+      notificationWrite(function () { return SetNotificationModes(targets, mode); }, function () {
+        showBatchNotifications(false);
+        var labels = { off: '已关闭通知同步', otp: '已设为仅验证码', all: '已开启所有应用通知同步' };
+        toast(targets.length + ' 台设备' + labels[mode]);
+      });
+    });
+  });
 
   function setSwitch(node, on) {
     if (!node) return;
@@ -4232,6 +4603,7 @@
   function renderSettings() {
     setSwitch(el('set-overlay'), settingsState.showParamOverlay);
     setSwitch(el('set-tray'), settingsState.closeToTray);
+    setSwitch(el('set-keep-awake'), settingsState.keepDeviceAwake);
     setSwitch(el('set-appwin-decor'), settingsState.otherAppWinSystemDecorations);
   }
 
@@ -4239,9 +4611,17 @@
     if (!st || !st.settings) return;
     settingsState.showParamOverlay = !!st.settings.showParamOverlay;
     settingsState.closeToTray = !!st.settings.closeToTray;
+    settingsState.keepDeviceAwake = st.settings.keepDeviceAwake !== false;
     settingsState.otherAppWinSystemDecorations = st.settings.otherAppWinSystemDecorations !== false;
+    settingsState.notificationDefault = !!st.settings.notificationDefault;
+    settingsState.notificationPreview = st.settings.notificationPreview !== false;
+    settingsState.notificationDevices = st.settings.notificationDevices || {};
+    settingsState.notificationPolicies = st.settings.notificationPolicies || {};
+    settingsState.notificationCopyMinutes = Number(st.settings.notificationCopyMinutes) || 1440;
     // 面板没开时不碰 DOM（避免与用户点击抢状态）
     if (el('settings-modal').style.display !== 'none') renderSettings();
+    if (appWinModalSerial) renderAppNotificationControls(appWinModalSerial);
+    renderBatchNotificationChoices();
   }
 
   function saveSettings() {
@@ -4273,6 +4653,17 @@
     settingsState.otherAppWinSystemDecorations = !settingsState.otherAppWinSystemDecorations;
     renderSettings();
     SetOtherAppWinSystemDecorations(settingsState.otherAppWinSystemDecorations).catch(function (e) {
+      toast('设置保存失败：' + (e && e.message ? e.message : e));
+    });
+  });
+
+  el('set-keep-awake').addEventListener('click', function () {
+    var previous = settingsState.keepDeviceAwake;
+    settingsState.keepDeviceAwake = !previous;
+    renderSettings();
+    SetKeepDeviceAwake(settingsState.keepDeviceAwake).catch(function (e) {
+      settingsState.keepDeviceAwake = previous;
+      renderSettings();
       toast('设置保存失败：' + (e && e.message ? e.message : e));
     });
   });

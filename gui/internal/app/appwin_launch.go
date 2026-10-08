@@ -197,9 +197,12 @@ func (a *App) StartAppWin(serial, pkg, name string) error {
 	// 此前虚拟屏未注入 SCEZ_PARAM_OVERLAY → scrcpy 客户端回退历史默认=可见，
 	// 表现为"GUI 设置里关了参数控件，主投屏不显示、应用窗口却默认开着"。
 	// 显式注入（Set=true）才能覆盖客户端默认；投屏中 Ctrl+F 手动切换不受影响。
-	ov := a.settings.Get().ShowParamOverlay
-	params.OverlayVisible = ov
+	settings := a.settings.Get()
+	params.OverlayVisible = settings.ShowParamOverlay
 	params.OverlayVisibleSet = true
+	// App windows work independently of the phone's lock screen.
+	params.KeepDeviceAwake = false
+	params.KeepDeviceAwakeSet = true
 
 	// 会话级 runner（bat 实例）：回调按 serial#pkg 绑定，App 侧按 runner 身份防串
 	// （陈旧 runner 的迟到回调不污染替换后的新会话）。
@@ -319,6 +322,7 @@ func (a *App) onAppWinLine(serial, pkg, line string) {
 	// 同款措辞——主人拍板"用主投屏插拔转换时的文字"）；投屏继续类事件清空回
 	// 默认"正在窗口"（新规格/开始投屏/监测开启/纹理就绪 = 本轮转换已走完）。
 	if txt, ok := appWinPhaseText(ev.Kind); ok {
+		txt = bridge.RootPhaseText(ev, txt)
 		if st.phaseText != txt {
 			st.phase, st.phaseText = ev.Kind.String(), txt
 		}
@@ -356,6 +360,10 @@ func (a *App) onAppWinLine(serial, pkg, line string) {
 // ok=false = 该事件不设置状态文字。
 func appWinPhaseText(k bridge.Kind) (string, bool) {
 	switch k {
+	case bridge.KindRootRequired:
+		return "上传权限受阻；已有 root 的设备可启用修复", true
+	case bridge.KindRootPrepare:
+		return "root 诊断与修复中（授权最多 3 分钟，可停止）", true
 	case bridge.KindADBReset:
 		return "正在准备 adb…", true
 	case bridge.KindDetect:

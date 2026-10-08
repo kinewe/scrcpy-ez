@@ -221,7 +221,7 @@ body {
 .batch-bar {
   flex: none;
   position: sticky; bottom: 0; z-index: 5;
-  margin-top: 6px; display: flex; align-items: center; gap: 8px;
+  margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   background: #fff; border: 1px solid #e3e4e6; border-radius: 12px;
   padding: 10px 12px; box-shadow: 0 -4px 16px rgba(0,0,0,.06);
 }
@@ -572,7 +572,7 @@ body {
 .appwin-app {
   display: flex; flex-direction: column; align-items: center; gap: 5px;
   padding: 8px 2px; border-radius: 10px; cursor: pointer;
-  transition: background .12s;
+  transition: background .12s; border: 0; background: transparent; font-family: inherit;
 }
 .appwin-app:hover { background: #F7F8F9; }
 .appwin-icon {
@@ -682,6 +682,73 @@ body {
 .set-main { flex: 1; min-width: 0; }
 .set-title { font-size: 13.5px; }
 .set-note { font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
+#settings-modal .modal-card { max-height: 85vh; overflow-y: auto; }
+#settings-modal button.switch { border: 0; padding: 0; }
+#settings-modal .switch:focus-visible { outline: 2px solid var(--green-dark); outline-offset: 3px; }
+.notification-device-select { max-width: 130px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); }
+
+/* Device notification controls share the existing app grid and bulk toolbar. */
+.appwin-card .modal-head { gap: 8px; }
+#appwin-modal-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.appwin-card { display: flex; flex-direction: column; max-width: 450px; max-height: 90vh; }
+.appwin-card .modal-head, .appwin-card .appwin-search, .appwin-bottom { flex: none; }
+.appwin-card .appwin-grid { flex: 0 1 auto; min-height: 72px; }
+.appwin-notification-toggle { display: inline-flex; align-items: center; gap: 5px; flex: none; border: 1px solid var(--green); border-radius: 999px; background: var(--card); color: var(--green-dark); padding: 6px 10px; }
+.appwin-notification-toggle[aria-pressed="true"] { background: var(--green); color: #fff; }
+.appwin-icon-wrap { position: relative; }
+.appwin-app .appwin-check { position: absolute; top: -5px; right: -6px; display: flex; align-items: center; justify-content: center; width: 19px; height: 19px; border-radius: 50%; border: 2px solid #d6dfda; box-shadow: 0 0 0 2px var(--card); background: var(--card); color: #fff; font-size: 13px; font-weight: 600; }
+.appwin-app[aria-checked="true"] .appwin-check { border-color: var(--green); background: var(--green); }
+.appwin-check svg { width: 14px; height: 14px; stroke-width: 3; stroke-linecap: butt; stroke-linejoin: miter; }
+.notification-other-icon { color: #d5ebde; }
+.notification-other-icon .notification-symbol { width: 30px; height: 30px; stroke-width: 1.8; }
+.appwin-app:disabled { opacity: .65; cursor: wait; }
+.appwin-bottom { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-top: 10px; }
+.appwin-bottom .appwin-hint { text-align: left; margin: 0; }
+.notification-symbol, .notification-chevron { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.notification-options-trigger { display: inline-flex; align-items: center; gap: 4px; flex: none; border: 1px solid transparent; border-radius: 8px; padding: 5px 6px; background: transparent; color: var(--green-dark); font: inherit; font-size: 11px; cursor: pointer; }
+.notification-options-trigger:hover, .notification-options-trigger[aria-expanded="true"] { background: #edf7f1; border-color: #d3e9de; }
+.notification-chevron { width: 13px; height: 13px; transition: transform .16s; }
+.notification-options-trigger[aria-expanded="true"] .notification-chevron { transform: rotate(180deg); }
+.notification-options-panel { flex: none; max-height: 48vh; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 12px; margin-top: 10px; }
+.notification-option-group { border: 0; min-width: 0; padding: 0; margin: 0 0 12px; }
+.notification-option-group legend { display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--text); }
+.notification-option-group legend > span { margin-left: auto; padding: 2px 6px; border-radius: 5px; background: #f2f4f3; font-size: 10px; font-weight: 400; color: var(--muted); }
+.notification-content-choices { display: grid; gap: 6px; }
+.notification-choice { position: relative; display: block; cursor: pointer; }
+.notification-choice input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.notification-choice-body { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; color: var(--text); background: var(--card); transition: background .12s, border-color .12s; }
+.notification-choice-body > span { flex: 1; }
+.notification-choice-body b { display: block; font-size: 12px; font-weight: 500; }
+.notification-choice-body small { display: block; font-size: 10px; color: var(--muted); margin-top: 3px; }
+.notification-choice input:checked + .notification-choice-body { border-color: var(--green); background: #edf7f1; color: var(--green-dark); }
+.notification-choice input:focus-visible + .notification-choice-body { outline: 2px solid var(--green-dark); outline-offset: 2px; }
+.notification-choice:hover .notification-choice-body { border-color: var(--green); }
+.notification-choice input:disabled + .notification-choice-body { opacity: .6; cursor: wait; }
+.notification-choice-check, .notification-mode-check { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: butt; stroke-linejoin: miter; }
+.notification-choice-check { visibility: hidden; }
+.notification-choice input:checked + .notification-choice-body .notification-choice-check { visibility: visible; }
+.notification-expiry-choices { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+.notification-expiry-choices .notification-choice-body { justify-content: center; gap: 0; padding: 7px 2px; font-size: 11px; white-space: nowrap; }
+.notification-option-note { margin: 6px 0 0; font-size: 10px; line-height: 1.5; color: var(--muted); }
+.notification-privacy-note { display: flex; align-items: center; gap: 6px; padding: 8px 9px; background: #f4f6f5; border-radius: 8px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.notification-options-trigger:focus-visible, .notification-mode:focus-visible, .appwin-notification-toggle:focus-visible { outline: 2px solid var(--green-dark); outline-offset: 2px; }
+.dev-notification-detail { font-size: 12px; color: var(--green-dark); margin-top: 3px; }
+.notification-batch-card { max-width: 330px; }
+.notification-batch-modes { display: grid; gap: 10px; margin-top: 15px; }
+.notification-mode { display: flex; align-items: center; gap: 12px; text-align: left; padding: 14px; background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 10px; font: inherit; font-size: 13px; cursor: pointer; }
+.notification-mode > span { flex: 1; }
+.notification-mode > .notification-symbol { width: 21px; height: 21px; color: var(--muted); }
+.notification-mode:hover, .notification-mode[aria-pressed="true"] { background: #edf7f1; border-color: var(--green); color: var(--green-dark); }
+.notification-mode[aria-pressed="true"] > .notification-symbol { color: var(--green-dark); }
+.notification-mode-check { visibility: hidden; }
+.notification-mode[aria-pressed="true"] .notification-mode-check { visibility: visible; }
+.notification-mode:disabled { opacity: .6; cursor: wait; }
+.notification-close { border: 0; background: transparent; font: inherit; }
+@media (max-width: 400px) {
+  .appwin-notification-toggle { font-size: 11px; padding: 5px 7px; }
+  .batch-bar { gap: 6px; padding: 8px; }
+  .batch-bar .btn { padding: 5px 8px; }
+}
 .switch {
   flex: none; width: 42px; height: 24px; border-radius: 12px; background: #d8d8d8;
   position: relative; cursor: pointer; user-select: none; transition: background .18s;

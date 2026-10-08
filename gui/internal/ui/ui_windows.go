@@ -193,6 +193,10 @@ func Run(a *app.App, html string) error {
 			bridge.DebugLog("[js] StopCast serial=%q", serial)
 			return a.StopCast(serial)
 		}},
+		{"RetryRootRepair", func(serial, pkg string) error { return a.RetryRootRepair(serial, pkg) }},
+		{"GetRootRepairEnabled", func(serial string) bool { return a.GetRootRepairEnabled(serial) }},
+		{"SetRootRepairEnabled", func(serial string, enabled bool) error { return a.SetRootRepairEnabled(serial, enabled) }},
+		{"DisableRootRepair", func(serial string) error { return a.DisableRootRepair(serial) }},
 		{"RestartCast", func(serial string) error {
 			bridge.DebugLog("[js] RestartCast serial=%q", serial)
 			return a.RestartCast(serial)
@@ -342,6 +346,21 @@ func Run(a *app.App, html string) error {
 		}},
 		{"SetOtherAppWinSystemDecorations", func(enabled bool) error {
 			return a.SetOtherAppWinSystemDecorations(enabled)
+		}},
+		{"SetKeepDeviceAwake", func(enabled bool) error { return a.SetKeepDeviceAwake(enabled) }},
+		{"SetNotificationSettings", func(enabled, preview bool) error {
+			return a.SetNotificationSettings(enabled, preview)
+		}},
+		{"SetNotificationCopyMinutes", func(minutes int) error { return a.SetNotificationCopyMinutes(minutes) }},
+		{"SetNotificationModes", func(identities []string, mode string) error { return a.SetNotificationModes(identities, mode) }},
+		{"SetNotificationWhitelist", func(identity string, packages []string) error { return a.SetNotificationWhitelist(identity, packages) }},
+		{"SetNotificationSelection", func(identity string, packages []string, other bool) error {
+			return a.SetNotificationSelection(identity, packages, other)
+		}},
+		{"SetNotificationPreview", func(identity string, preview bool) error { return a.SetNotificationPreview(identity, preview) }},
+		{"ApplyNotificationEdit", func(identity string, edit app.NotificationEdit) error { return a.ApplyNotificationEdit(identity, edit) }},
+		{"SetNotificationDevice", func(identity, mode string) error {
+			return a.SetNotificationDevice(identity, mode)
 		}},
 		// 设备卡顺序写回（gui45：后端持久化；前端两处触发、后端幂等）
 		{"SetDeviceOrder", func(order []string) error {

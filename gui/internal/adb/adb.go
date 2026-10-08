@@ -90,6 +90,7 @@ type Manager struct {
 	connectFn   func(ctx context.Context, addr string) error                     // 测试注入
 	pairFn      func(ctx context.Context, ip, port, code string) (string, error) // 测试注入
 	getpropFn   func(ctx context.Context, serial, prop string) (string, error)   // 测试注入
+	runFn       func(context.Context, ...string) (string, error)                 // Property-refresh tests; nil uses adb.
 	tcpipFn     func(ctx context.Context, serial, port string) error             // 测试注入
 	getSerialFn func(ctx context.Context, serial string) (string, error)         // 测试注入
 
@@ -117,6 +118,9 @@ func New(adbPath, configPath string) *Manager {
 }
 
 func (m *Manager) run(ctx context.Context, args ...string) (string, error) {
+	if m.runFn != nil {
+		return m.runFn(ctx, args...)
+	}
 	c := exec.CommandContext(ctx, m.adbPath, args...)
 	HideConsole(c) // Windows: 禁止弹控制台窗口；其他平台空实现
 	out, err := c.Output()

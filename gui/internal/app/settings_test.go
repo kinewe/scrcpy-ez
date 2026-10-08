@@ -59,7 +59,7 @@ func TestSettingsFileContentIsolated(t *testing.T) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("settings.json 非法 JSON: %v", err)
 	}
-	if len(m) != 3 || m["showParamOverlay"] != true || m["closeToTray"] != true || m["otherAppWinSystemDecorations"] != true {
+	if len(m) != 7 || m["showParamOverlay"] != true || m["closeToTray"] != true || m["keepDeviceAwake"] != true || m["otherAppWinSystemDecorations"] != true || m["notificationDefault"] != true || m["notificationPreview"] != true || m["notificationCopyMinutes"] != float64(1440) {
 		t.Fatalf("settings.json 应只含全局设置: %v", m)
 	}
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
@@ -180,7 +180,7 @@ func TestSettingsSeparateFromProfiles(t *testing.T) {
 		t.Fatalf("设备档案写入不应影响 settings.json: %v", err)
 	}
 	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil || len(m) != 3 {
+	if err := json.Unmarshal(b, &m); err != nil || len(m) != 7 || m["notificationDefault"] != true || m["notificationPreview"] != true || m["notificationCopyMinutes"] != float64(1440) {
 		t.Fatalf("settings.json 被设备档案污染: %s (err=%v)", b, err)
 	}
 }

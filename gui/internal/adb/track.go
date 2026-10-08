@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"scrcpy-ez/gui/internal/deviceevents"
 	"strings"
+	"time"
 )
 
 // track-devices 协议（实测 2026-08-28，adb 37.0.0）：
@@ -47,28 +48,61 @@ func (t *Track) run(ctx context.Context) error {
 	// The raw reader is independent of property enrichment and GUI callbacks.
 	events := hub.Subscribe(ctx)
 	go deviceevents.Track(ctx, t.m.adbPath, hub)
+	refresh := time.NewTicker(5 * time.Second)
+	defer refresh.Stop()
+	return t.runSnapshots(ctx, events, refresh.C)
+}
+
+// Topology remains event driven. Refresh only the current connected transports'
+// cached properties; battery/spec TTLs control actual ADB queries.
+func (t *Track) runSnapshots(ctx context.Context, events <-chan deviceevents.Snapshot, refresh <-chan time.Time) error {
+	hub := t.m.EventHub()
 	var dispatched *deviceevents.Snapshot
-	for s := range events {
+	for {
+		periodic := false
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case _, ok := <-events:
+			if !ok {
+				return ctx.Err()
+			}
+		case <-refresh:
+			periodic = true
+		}
 		// Coalesce queued property-query work to the latest raw transport set.
-		s = hub.Current()
+		s := hub.Current()
 		if !s.Available {
 			continue
 		}
-		if dispatched != nil && deviceevents.SameTransports(*dispatched, s) {
+		same := dispatched != nil && deviceevents.SameTransports(*dispatched, s)
+		if same && !periodic {
 			continue // learning notifications do not create device-list changes
 		}
-		if !t.consumeSnapshot(ctx, s) {
+		qctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		accepted := t.consumeSnapshotProperties(qctx, s, periodic && same)
+		cancel()
+		if !accepted {
 			continue
 		}
 		dispatched = &s
 	}
-	return ctx.Err()
 }
 
 func (t *Track) consumeSnapshot(ctx context.Context, s deviceevents.Snapshot) bool {
+	return t.consumeSnapshotProperties(ctx, s, false)
+}
+
+func (t *Track) consumeSnapshotProperties(ctx context.Context, s deviceevents.Snapshot, propertiesOnly bool) bool {
 	devs := t.m.DevicesFromSnapshot(ctx, s)
-	if !deviceevents.SameTransports(s, t.m.EventHub().Current()) {
+	if ctx.Err() != nil || !deviceevents.SameTransports(s, t.m.EventHub().Current()) {
 		return false // USB changed during enrichment; do not replay old topology
+	}
+	if propertiesOnly {
+		added, removed, changed := DiffDevices(t.prev, devs)
+		if len(added)+len(removed)+len(changed) == 0 {
+			return true
+		}
 	}
 	t.dispatchSnapshot(devs, &s)
 	return true

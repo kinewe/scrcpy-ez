@@ -44,6 +44,7 @@
     <button class="btn primary tiny" id="batch-del" type="button">删除</button>
     <button class="btn ghost tiny" id="batch-rename" type="button">改名</button>
     <button class="btn ghost tiny" id="batch-cast" type="button">启动投屏</button>
+    <button class="btn ghost tiny notification-entry" id="batch-notifications" type="button">通知管理</button>
     <button class="btn primary tiny" id="batch-rename-ok" type="button" style="display:none">改好了</button>
     <div class="spacer"></div>
     <div class="xbtn" id="batch-x" title="退出批量管理"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l10 10M12 2L2 12"/></svg></div>
@@ -112,6 +113,7 @@
       </div>
 
       <div class="param-note" id="param-note"></div>
+ <label class="param-sub"><input id="param-root-repair" type="checkbox">上传权限失败时自动 root 修复（仅适用于已 root 手机）</label>
       <div class="param-foot">
         <button class="btn ghost" id="param-cancel">取消</button>
         <button class="btn primary" id="param-save">保存并重新投屏</button>
@@ -142,11 +144,36 @@
   <div class="modal-card appwin-card">
     <div class="modal-head">
       <b id="appwin-modal-title">应用窗口</b>
-      <span class="modal-close" id="appwin-modal-close">✕</span>
+      <button class="btn tiny appwin-notification-toggle" id="appwin-notifications" type="button" aria-pressed="false"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="bell"></svg><span id="appwin-notifications-label">消息通知</span></button>
+      <span class="modal-close" id="appwin-modal-close"><svg class="notification-symbol" viewBox="0 0 24 24" data-notification-icon="x" aria-hidden="true"></svg></span>
     </div>
     <input class="appwin-search" id="appwin-modal-search" placeholder="搜索应用…">
     <div class="appwin-grid" id="appwin-modal-grid"><div class="appwin-loading">正在读取应用列表…</div></div>
-    <div class="appwin-hint">点击应用 → 在独立窗口打开</div>
+    <div class="appwin-bottom">
+      <div class="appwin-hint" id="appwin-modal-hint" role="status">点击应用 → 在独立窗口打开</div>
+      <button class="notification-options-trigger" id="notification-options" type="button" aria-expanded="false" aria-controls="notification-options-panel" style="display:none"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="sliders-horizontal"></svg>通知选项<svg class="notification-chevron" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="chevron-down"></svg></button>
+    </div>
+    <div id="notification-options-panel" class="notification-options-panel" style="display:none">
+      <fieldset id="notification-preview" class="notification-option-group">
+        <legend><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="file-text"></svg>通知内容<span>当前设备</span></legend>
+        <div class="notification-content-choices">
+          <label class="notification-choice"><input type="radio" name="notification-preview" value="full"><span class="notification-choice-body"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="message-square"></svg><span><b>显示消息正文</b><small>可直接查看消息与复制验证码</small></span><svg class="notification-choice-check" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="check"></svg></span></label>
+          <label class="notification-choice"><input type="radio" name="notification-preview" value="hidden"><span class="notification-choice-body"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="lock-keyhole"></svg><span><b>仅提示应用与设备</b><small>隐藏正文，不提供验证码复制入口</small></span><svg class="notification-choice-check" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="check"></svg></span></label>
+        </div>
+      </fieldset>
+      <fieldset id="notification-copy-minutes" class="notification-option-group">
+        <legend><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="clock-3"></svg>验证码复制期限<span>所有设备</span></legend>
+        <div class="notification-expiry-choices">
+          <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="15"><span class="notification-choice-body">15 分钟</span></label>
+          <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="60"><span class="notification-choice-body">1 小时</span></label>
+          <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="360"><span class="notification-choice-body">6 小时</span></label>
+          <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="1440"><span class="notification-choice-body">24 小时</span></label>
+          <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="4320"><span class="notification-choice-body">3 天</span></label>
+        </div>
+        <p class="notification-option-note">仅用于未注明有效期的新验证码，原文有效期优先；不延长验证码本身的有效期。</p>
+      </fieldset>
+      <div class="notification-privacy-note"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="info"></svg><span>消息正文也可能出现在 Windows 通知中心与锁屏。</span></div>
+    </div>
   </div>
 </div>
 
@@ -236,6 +263,17 @@
 </div>
 
 <!-- ================= 设置面板（右上角齿轮；两个开关，独立 settings.json 持久化） ================= -->
+<div class="modal-mask" id="notification-batch-modal" style="display:none">
+  <div class="modal-card notification-batch-card" role="dialog" aria-modal="true" aria-labelledby="notification-batch-title">
+    <div class="modal-head"><b id="notification-batch-title">通知管理</b><button class="modal-close notification-close" id="notification-batch-close" type="button" aria-label="关闭通知管理"><svg class="notification-symbol" viewBox="0 0 24 24" data-notification-icon="x" aria-hidden="true"></svg></button></div>
+    <div class="set-note" id="notification-batch-target">应用于已选设备</div>
+    <div class="notification-batch-modes">
+      <button class="notification-mode" type="button" data-mode="off" aria-pressed="false"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="bell-off"></svg><span>关闭通知同步</span><svg class="notification-mode-check" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="check"></svg></button>
+      <button class="notification-mode" type="button" data-mode="otp" aria-pressed="false"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="key-round"></svg><span>仅验证码</span><svg class="notification-mode-check" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="check"></svg></button>
+      <button class="notification-mode" type="button" data-mode="all" aria-pressed="false"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="bell"></svg><span>开启所有应用通知同步</span><svg class="notification-mode-check" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="check"></svg></button>
+    </div>
+  </div>
+</div>
 <div class="modal-mask" id="settings-modal" style="display:none">
   <div class="modal-card">
     <div class="modal-head"><b>设置</b><span class="modal-close" id="settings-close">✕</span></div>
@@ -245,6 +283,13 @@
         <div class="set-note">投屏窗口上的 fps/码率/状态浮层，投屏中 Ctrl+F 可随时开关</div>
       </div>
       <div class="switch" id="set-overlay" role="switch" aria-checked="true"><span class="knob"></span></div>
+    </div>
+    <div class="set-row">
+      <div class="set-main">
+        <div class="set-title">主投屏期间手机不自动休眠</div>
+        <div class="set-note">所有设备的主投屏均适用，有线、无线均可；修改后重新主投屏生效，结束主投屏后恢复正常休眠。应用投屏不受影响，Ctrl+P 仍可手动锁屏</div>
+      </div>
+      <div class="switch" id="set-keep-awake" role="switch" aria-checked="true"><span class="knob"></span></div>
     </div>
     <div class="set-row">
       <div class="set-main">
@@ -358,6 +403,7 @@
           <div class="note gm-keys">
             <div class="key-row"><span class="kbd">Ctrl</span><span class="kbd">F</span><span class="key-desc">参数控件开关（可 Alt 拖动）</span></div>
             <div class="key-row"><span class="kbd">Ctrl</span><span class="kbd">H</span><span class="key-desc">黑屏省电（再按恢复）</span></div>
+            <div class="key-row"><span class="kbd">Ctrl</span><span class="kbd">P</span><span class="key-desc">按手机电源键（锁屏／唤醒）</span></div>
             <div class="key-row"><span class="kbd">Ctrl</span><span class="kbd">T</span><span class="key-desc">窗口置顶开关</span></div>
             <div class="key-row"><span class="kbd">Alt</span><span class="kbd">F</span><span class="key-desc">全屏</span></div>
             <div class="key-row"><span class="kbd">Ctrl</span><span class="kbd">G</span><span class="key-desc">复制图片存手机相册</span></div>

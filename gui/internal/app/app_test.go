@@ -837,12 +837,13 @@ func TestSaveProfileAndRestartInjectsParams(t *testing.T) {
 	f.waitStarts(t, 2)
 	f.waitParams(t, 2)
 	want := bridge.CastParams{
-		Usb: bridge.ModeParams{Res: 2400, FPS: 75, Bitrate: 55, Set: true, Audio: "pc", VCodec: "h264", ACodec: "opus"},
+		Usb:    bridge.ModeParams{Res: 2400, FPS: 75, Bitrate: 55, Set: true, Audio: "pc", VCodec: "h264", ACodec: "opus"},
 		Serial: "X", ExpectedSerial: "X",
 		// v2.1.78：声音档位无条件注入（空档 → 主屏默认 pc）
 		Wifi: bridge.ModeParams{Audio: "pc", VCodec: "h264", ACodec: "opus"},
 		// 设置面板开关 A：GUI 会话总是显式注入参数控件启动可见性（默认=显示）
 		OverlayVisible: true, OverlayVisibleSet: true,
+		KeepDeviceAwake: true, KeepDeviceAwakeSet: true,
 	}
 	// 两次 Start 的 goroutine 调度顺序不定：重启那一次必须带该模式覆盖参数
 	// （usb 套；wifi 未保存自定义 → 不注入）
@@ -885,11 +886,12 @@ func TestStartCastAppliesSavedProfile(t *testing.T) {
 	_ = a.StartCast("X")
 	got := f.waitParams(t, 1)
 	want := bridge.CastParams{
-		Usb:  bridge.ModeParams{Res: 2400, FPS: 75, Bitrate: 55, Set: true, Audio: "pc", VCodec: "h264", ACodec: "opus"},
-		Wifi: bridge.ModeParams{Res: 1280, FPS: 30, Bitrate: 15, Set: true, Audio: "pc", VCodec: "h264", ACodec: "opus"},
+		Usb:    bridge.ModeParams{Res: 2400, FPS: 75, Bitrate: 55, Set: true, Audio: "pc", VCodec: "h264", ACodec: "opus"},
+		Wifi:   bridge.ModeParams{Res: 1280, FPS: 30, Bitrate: 15, Set: true, Audio: "pc", VCodec: "h264", ACodec: "opus"},
 		Serial: "X", ExpectedSerial: "X",
 		// 设置面板开关 A：GUI 会话总是显式注入参数控件启动可见性（默认=显示）
 		OverlayVisible: true, OverlayVisibleSet: true,
+		KeepDeviceAwake: true, KeepDeviceAwakeSet: true,
 	}
 	if got != want {
 		t.Fatalf("记忆档未按模式注入: %+v, want %+v", got, want)
@@ -907,11 +909,12 @@ func TestStartCastAppliesSavedProfile(t *testing.T) {
 	_ = a2.StartCast("W")
 	got2 := f2.waitParams(t, 1)
 	want2 := bridge.CastParams{
-		Usb:  bridge.ModeParams{Audio: "pc", VCodec: "h264", ACodec: "opus"},
-		Wifi: bridge.ModeParams{Res: 720, FPS: 30, Bitrate: 15, Set: true, Audio: "pc", VCodec: "h264", ACodec: "opus"},
+		Usb:    bridge.ModeParams{Audio: "pc", VCodec: "h264", ACodec: "opus"},
+		Wifi:   bridge.ModeParams{Res: 720, FPS: 30, Bitrate: 15, Set: true, Audio: "pc", VCodec: "h264", ACodec: "opus"},
 		Serial: "W", ExpectedSerial: "W",
 		// 设置面板开关 A：GUI 会话总是显式注入参数控件启动可见性（默认=显示）
 		OverlayVisible: true, OverlayVisibleSet: true,
+		KeepDeviceAwake: true, KeepDeviceAwakeSet: true,
 	}
 	if got2 != want2 {
 		t.Fatalf("仅无线自定义应只注入 wifi 套: %+v, want %+v", got2, want2)

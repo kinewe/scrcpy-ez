@@ -23,6 +23,7 @@ import (
 	"scrcpy-ez/gui/internal/app"
 	"scrcpy-ez/gui/internal/bridge"
 	"scrcpy-ez/gui/internal/castsupervisor"
+	"scrcpy-ez/gui/internal/notifications"
 	"scrcpy-ez/gui/internal/ui"
 	"scrcpy-ez/gui/internal/updater"
 )
@@ -136,6 +137,9 @@ var appIconCacheJS string
 //go:embed web/app_search.js
 var appSearchJS string
 
+//go:embed web/notification_icons.js
+var notificationIconsJS string
+
 //go:embed web/appwin_text.js
 var appWinTextJS string
 
@@ -155,7 +159,7 @@ var githubMarkPNG []byte
 var giteeMarkSVG []byte
 
 const (
-	version = "v2.2.2"
+	version = "v2.3.0"
 )
 
 // appDir gui53 产品级修复：返回 exe 所在目录（发行包内 bat 与 GUI 同级解压）。
@@ -216,6 +220,12 @@ func migrateLegacyProfile(newPath string) {
 }
 
 func main() {
+	if notifications.RunIfPassiveRequested(os.Args[1:]) {
+		return
+	}
+	if notifications.RunDiagnosticIfRequested(os.Args[1:]) {
+		return
+	}
 	if castsupervisor.RunIfRequested(os.Args[1:]) {
 		return
 	}
@@ -276,6 +286,7 @@ func main() {
 		CrashDir: crashDir, ProfilesPath: profilesPath, SettingsPath: settingsPath,
 		Version: version}
 	a := app.New(cfg)
+	a.SetNotificationService(notifications.NewManager(context.Background(), &notifications.ADBSource{ADB: adbPath, Server: filepath.Join(filepath.Dir(batPath), "scrcpy-server")}, notifications.NewWindowsSink, a.NotificationArtwork))
 	// 轮 B 多会话：工厂按 serial 创建独立 bat 实例；onLine/onExit 由 App 侧
 	// 绑定到对应会话（每个会话一个 bridge 读 goroutine 对，N≤5 无压力）。
 	a.SetRunnerFactory(func(serial string, onLine func(string), onExit func(int)) (app.Runner, error) {
@@ -288,7 +299,7 @@ func main() {
 	// v2.1.18：pinyin_pro（拼音库，全局 pinyinPro）+ app_search（搜索过滤模块）
 	// 在业务脚本前内联（app.js 依赖 SCEZAppSearch）。
 	pageTemplate := strings.NewReplacer("/*__GITHUB_ICON__*/", base64.StdEncoding.EncodeToString(githubMarkPNG), "/*__GITEE_ICON__*/", base64.StdEncoding.EncodeToString(giteeMarkSVG)).Replace(indexHTML)
-	html, err := ui.BuildIndex(pageTemplate, styleCSS, updateUIJS+"\n"+pinyinProJS+"\n"+appSearchJS+"\n"+appIconCacheJS+"\n"+appWinTextJS+"\n"+appWinBarJS+"\n"+sessionMapJS+"\n"+paramStateJS+"\n"+appsettingStateJS+"\n"+dragOrderJS+"\n"+pairUIJS+"\n"+appJS)
+	html, err := ui.BuildIndex(pageTemplate, styleCSS, updateUIJS+"\n"+pinyinProJS+"\n"+appSearchJS+"\n"+appIconCacheJS+"\n"+appWinTextJS+"\n"+appWinBarJS+"\n"+sessionMapJS+"\n"+paramStateJS+"\n"+appsettingStateJS+"\n"+dragOrderJS+"\n"+pairUIJS+"\n"+notificationIconsJS+"\n"+appJS)
 	if err != nil {
 		log.Fatalf("界面资源组装失败: %v", err)
 	}

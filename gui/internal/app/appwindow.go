@@ -264,6 +264,9 @@ func (a *App) runAppListEnumMode(identity, serial string, silentDiff bool) {
 	a.appListCache[identity] = appListEntry{items: items, at: time.Now()}
 	a.mu.Unlock()
 	a.markAppListCheckChanged(identity, !same)
+	if !same {
+		a.reconcileNotifications()
+	}
 	needed, removed := planAppIcons(a.iconsDirFor(identity), items)
 	bridge.DebugLog("[appwin] catalog identity=%q apps=%d iconDelta=%d removed=%d", identity, len(items), len(needed), len(removed))
 	if len(needed) == 0 && len(removed) == 0 {

@@ -44,6 +44,7 @@ type ReleaseInfo struct {
 }
 
 var stableVersion = regexp.MustCompile(`^v?(\d+)\.(\d+)\.(\d+)$`)
+var installedCandidateVersion = regexp.MustCompile(`^v?(\d+\.\d+\.\d+)-rc\.\d+$`)
 var sha256Digest = regexp.MustCompile(`(?i)^sha256:[0-9a-f]{64}$`)
 
 func ParseVersion(s string) []int {
@@ -63,6 +64,15 @@ func ParseVersion(s string) []int {
 }
 func VersionLess(a, b string) bool {
 	x, y := ParseVersion(a), ParseVersion(b)
+	// Installed candidates can graduate to stable, while remote feeds and URL
+	// allowlists still accept only stable tags through ParseVersion.
+	candidate := false
+	if x == nil {
+		if m := installedCandidateVersion.FindStringSubmatch(strings.TrimSpace(a)); m != nil {
+			x = ParseVersion(m[1])
+			candidate = true
+		}
+	}
 	if x == nil || y == nil {
 		return false
 	}
@@ -71,7 +81,7 @@ func VersionLess(a, b string) bool {
 			return x[i] < y[i]
 		}
 	}
-	return false
+	return candidate
 }
 
 func AllowedURL(raw string) bool {
