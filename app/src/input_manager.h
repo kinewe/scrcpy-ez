@@ -29,6 +29,8 @@ struct sc_input_manager {
     // True when the device screen has been turned off by a client shortcut.
     // Tracked so that every exit path can request to turn it back on.
     bool screen_off;
+    // Consume the full Ctrl+P sequence even if Ctrl is released before P.
+    bool ctrl_power_pressed;
 
     struct sc_mouse_bindings mouse_bindings;
     bool legacy_paste;

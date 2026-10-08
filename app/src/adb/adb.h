@@ -66,6 +66,11 @@ bool
 sc_adb_push(struct sc_intr *intr, const char *serial, const char *local,
             const char *remote, unsigned flags);
 
+// Same single upload; preserves output and reports only a confirmed remote denial.
+bool
+sc_adb_push_server(struct sc_intr *intr, const char *serial, const char *local,
+                   const char *remote, bool *permission_denied);
+
 bool
 sc_adb_install(struct sc_intr *intr, const char *serial, const char *local,
                unsigned flags);

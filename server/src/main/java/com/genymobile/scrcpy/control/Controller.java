@@ -826,7 +826,8 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     }
 
     private boolean injectKeyEvent(int action, int keyCode, int repeat, int metaState, int injectMode) {
-        int actionDisplayId = getActionDisplayId();
+        // POWER is a physical phone button, also from an app/virtual display.
+        int actionDisplayId = keyCode == KeyEvent.KEYCODE_POWER ? 0 : getActionDisplayId();
         if (actionDisplayId == Device.DISPLAY_ID_NONE) {
             return false;
         }

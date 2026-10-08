@@ -148,6 +148,7 @@ sc_input_manager_init(struct sc_input_manager *im,
     im->gp = params->gp;
     im->camera = params->camera;
     im->screen_off = false;
+    im->ctrl_power_pressed = false;
 
     im->mouse_bindings = params->mouse_bindings;
     im->legacy_paste = params->legacy_paste;
@@ -1290,6 +1291,23 @@ sc_input_manager_process_key(struct sc_input_manager *im,
             && sdl_keycode == SDLK_H) {
         if (control && !im->camera && !disconnected && !paused) {
             set_display_power(im, im->screen_off);
+        }
+        return;
+    }
+
+    // Ctrl+P: one short physical POWER press. Consume repeats and key-up so
+    // holding the shortcut cannot open the power menu or leak P to the app.
+    if (sdl_keycode == SDLK_P && (im->ctrl_power_pressed
+            || (ctrl && !shift && !(mod & SDL_KMOD_ALT)
+                                 && !(mod & SDL_KMOD_GUI)))) {
+        if (down && !repeat && !im->ctrl_power_pressed) {
+            im->ctrl_power_pressed = true;
+            if (control && im->kp && !im->camera && !disconnected && !paused) {
+                action_power(im, SC_ACTION_DOWN);
+                action_power(im, SC_ACTION_UP);
+            }
+        } else if (!down) {
+            im->ctrl_power_pressed = false;
         }
         return;
     }

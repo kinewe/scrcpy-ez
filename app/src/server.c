@@ -71,7 +71,14 @@ push_server(struct sc_intr *intr, const char *serial) {
         free(server_path);
         return false;
     }
-    bool ok = sc_adb_push(intr, serial, server_path, SC_DEVICE_SERVER_PATH, 0);
+    bool permission_denied;
+    bool ok = sc_adb_push_server(intr, serial, server_path, SC_DEVICE_SERVER_PATH,
+                                 &permission_denied);
+    if (permission_denied) {
+        // A machine event from this specific upload, never a generic log match.
+        fprintf(stderr, "SCRCPY_EZ_SERVER_UPLOAD_PERMISSION\n");
+        fflush(stderr);
+    }
     free(server_path);
     return ok;
 }

@@ -8,6 +8,7 @@
 
 #include "adb/adb_device.h"
 #include "adb/adb_parser.h"
+#include "adb/upload_error.h"
 #include "util/env.h"
 #include "util/file.h"
 #include "util/log.h"
@@ -350,6 +351,52 @@ sc_adb_install(struct sc_intr *intr, const char *serial, const char *local,
     sc_pid pid = sc_adb_execute(argv, flags);
 
     return process_check_success_intr(intr, pid, "adb install", flags);
+}
+
+bool
+sc_adb_push_server(struct sc_intr *intr, const char *serial, const char *local,
+                   const char *remote, bool *permission_denied) {
+    *permission_denied = false;
+    const char *const argv[] = SC_ADB_COMMAND("-s", serial, "push", local, remote);
+    sc_pid pid;
+    sc_pipe errpipe;
+    enum sc_process_result r =
+        sc_process_execute_p(argv, &pid, 0, NULL, NULL, &errpipe);
+    if (r != SC_PROCESS_SUCCESS) {
+        show_adb_err_msg(r, argv);
+        return false;
+    }
+    if (intr && !sc_intr_set_process(intr, pid)) {
+        sc_process_terminate(pid);
+        sc_pipe_close(errpipe);
+        sc_process_wait(pid, true);
+        return false;
+    }
+    char captured[8192];
+    size_t used = 0;
+    char chunk[512];
+    ssize_t n;
+    while ((n = sc_pipe_read(errpipe, chunk, sizeof(chunk))) > 0) {
+        fwrite(chunk, 1, (size_t) n, stderr);
+        size_t copy = (size_t) n;
+        if (copy > sizeof(captured) - 1 - used) {
+            copy = sizeof(captured) - 1 - used;
+        }
+        memcpy(captured + used, chunk, copy);
+        used += copy;
+    }
+    captured[used] = '\0';
+    sc_pipe_close(errpipe);
+    bool ok = process_check_success_internal(pid, "adb push", false, 0);
+    bool canceled = intr && atomic_load_explicit(&intr->interrupted,
+                                                memory_order_relaxed);
+    if (intr) {
+        sc_intr_set_process(intr, SC_PROCESS_NONE);
+    }
+    sc_process_close(pid);
+    *permission_denied = !ok && !canceled
+        && sc_server_upload_permission_denied(captured, remote);
+    return ok;
 }
 
 bool

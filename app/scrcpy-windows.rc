@@ -2,7 +2,9 @@
 
 0 ICON "data/icon.ico"
 1 RT_MANIFEST "scrcpy-windows.manifest"
-2 VERSIONINFO
+1 VERSIONINFO
+FILEVERSION 2,3,0,0
+PRODUCTVERSION 2,3,0,0
 BEGIN
   BLOCK "StringFileInfo"
   BEGIN
@@ -13,7 +15,8 @@ BEGIN
       VALUE "LegalCopyright", "Romain Vimont, Genymobile"
       VALUE "OriginalFilename", "scrcpy.exe"
       VALUE "ProductName", "scrcpy"
-      VALUE "ProductVersion", "4.1"
+      VALUE "ProductVersion", "2.3.0"
+      VALUE "FileVersion", "2.3.0"
     END
   END
   BLOCK "VarFileInfo"
