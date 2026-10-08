@@ -83,6 +83,13 @@ func newFixture(t *testing.T, hub *deviceevents.Hub, extra ...string) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, value := range extra {
+		if value == "SCEZ_TEST_ROOT_ENABLE=1" {
+			if e := os.WriteFile(filepath.Join(dir, "root-repair.json"), []byte(`{"PHONE_A":true}`), 0600); e != nil {
+				t.Fatal(e)
+			}
+		}
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +100,7 @@ func newFixture(t *testing.T, hub *deviceevents.Hub, extra ...string) *fixture {
 	c := exec.Command("cmd.exe", "/d", "/c", bat)
 	hide(c)
 	c.SysProcAttr.CmdLine = `cmd.exe /d /s /c ""` + bat + `""`
-	c.Env = append(os.Environ(), "SCEZ_EVENT_CHILD=", "SCEZ_EVENT_ROUTE=", "SCEZ_EVENT_HELPER="+exe, "SCEZ_WATCH_TAG="+f.tag, "SCEZ_EXPECT_SERIAL=PHONE_A", "SCEZ_SERIAL=", "SCEZ_ADDR=192.0.2.1:5555", "SCEZ_EVENT_ENDPOINT="+endpoint, "SCEZ_EVENT_TOKEN="+token, fmt.Sprintf("SCEZ_EVENT_PARENT_PID=%d", os.Getpid()), "SCEZ_TEST_ADB_LOG="+filepath.Join(dir, "adb.log"), "SCEZ_TEST_CAST_LOG="+filepath.Join(dir, "cast.log"))
+	c.Env = append(os.Environ(), "SCEZ_ROOT_ENDPOINT=", "SCEZ_ROOT_TOKEN=", "SCEZ_EVENT_CHILD=", "SCEZ_EVENT_ROUTE=", "SCEZ_EVENT_HELPER="+exe, "SCEZ_WATCH_TAG="+f.tag, "SCEZ_EXPECT_SERIAL=PHONE_A", "SCEZ_SERIAL=", "SCEZ_ADDR=192.0.2.1:5555", "SCEZ_EVENT_ENDPOINT="+endpoint, "SCEZ_EVENT_TOKEN="+token, fmt.Sprintf("SCEZ_EVENT_PARENT_PID=%d", os.Getpid()), "SCEZ_TEST_ADB_LOG="+filepath.Join(dir, "adb.log"), "SCEZ_TEST_CAST_LOG="+filepath.Join(dir, "cast.log"))
 	c.Env = append(c.Env, extra...)
 	c.Stdout = &f.output
 	c.Stderr = &f.output

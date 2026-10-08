@@ -38,7 +38,9 @@ const (
 	KindPrompt
 	KindTexture    // scrcpy-server INFO: Texture: WxH（真实纹理尺寸，徽标优先数据源）
 	KindVDCreating // [窗口] 虚拟屏 ...（应用窗口虚拟屏启动步骤；主投屏不产生此事件）
-	KindRetryWait  // 连续失败预算耗尽，等待本设备事件或手动重投
+	KindRootRequired
+	KindRootPrepare
+	KindRetryWait // 连续失败预算耗尽，等待本设备事件或手动重投
 )
 
 // PromptKind 表示 bat 正在等待的 stdin 输入类型（choice/pause）。
@@ -103,6 +105,10 @@ func (k Kind) String() string {
 		return "texture"
 	case KindVDCreating:
 		return "vd-creating"
+	case KindRootRequired:
+		return "root-required"
+	case KindRootPrepare:
+		return "root-prepare"
 	case KindRetryWait:
 		return "retry-wait"
 	default:
@@ -229,6 +235,10 @@ func ClassifyLine(line string) Event {
 	ev := Event{Kind: KindNone, Text: t}
 
 	switch {
+	case strings.HasPrefix(t, "[root 修复待处理] "):
+		ev.Kind = KindRootRequired
+	case strings.HasPrefix(t, "[root 修复] "):
+		ev.Kind = KindRootPrepare
 	case reTexture.MatchString(t):
 		// scrcpy-server 真实纹理尺寸（INFO: Texture: WxH，可能带 [server] 前缀）：
 		// 徽标优先数据源——自定义长边档的短边按此真实值显示。
@@ -340,4 +350,16 @@ func ClassifyLine(line string) Event {
 	}
 
 	return ev
+}
+
+// RootPhaseText preserves the failure reason and repair countdown in both
+// casting surfaces. Only worker-owned prefixes qualify as repair events.
+func RootPhaseText(ev Event, fallback string) string {
+	if ev.Kind == KindRootRequired {
+		return strings.TrimPrefix(ev.Text, "[root 修复待处理] ")
+	}
+	if ev.Kind == KindRootPrepare {
+		return strings.TrimPrefix(ev.Text, "[root 修复] ")
+	}
+	return fallback
 }

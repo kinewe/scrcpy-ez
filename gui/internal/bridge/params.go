@@ -54,6 +54,9 @@ type CastParams struct {
 	// OverlayVisibleSet=true 时注入（true→"1" 显示 / false→"0" 隐藏）。
 	OverlayVisible    bool
 	OverlayVisibleSet bool
+	// Explicitly supply the global idle-sleep choice to every cast/reconnect.
+	KeepDeviceAwake    bool
+	KeepDeviceAwakeSet bool
 
 	// --- 虚拟屏（应用窗口会话；SCEZ_VD_* 整组"未设置=不注入"，零回归）---
 	// bat 侧据此组装 VD_ARGS（投屏支持.bat「gui56 虚拟屏参数」段）。
@@ -178,6 +181,13 @@ func castEnv(params CastParams, watchTag string) []string {
 			v = "1"
 		}
 		env = append(env, "SCEZ_PARAM_OVERLAY="+v)
+	}
+	if params.KeepDeviceAwakeSet {
+		v := "0"
+		if params.KeepDeviceAwake {
+			v = "1"
+		}
+		env = append(env, "SCEZ_KEEP_ACTIVE="+v)
 	}
 	// 虚拟屏参数（SCEZ_VD_*）：未设置不注入——bat 未定义任何 VD 变量时
 	// 行为与现状完全一致（零回归）。DPI/FLEX 等按 bat 侧 if defined 判定注入。

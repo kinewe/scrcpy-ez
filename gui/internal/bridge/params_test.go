@@ -25,6 +25,22 @@ func TestCastEnvFullSerialPinIndependentOfUSB(t *testing.T) {
 	}
 }
 
+func TestCastEnvKeepDeviceAwake(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		values := envMap(castEnv(CastParams{KeepDeviceAwake: enabled, KeepDeviceAwakeSet: true}, "awake-test"))
+		want := "0"
+		if enabled {
+			want = "1"
+		}
+		if values["SCEZ_KEEP_ACTIVE"] != want {
+			t.Fatal("missing explicit global policy", values)
+		}
+	}
+	if _, ok := envMap(castEnv(CastParams{}, "legacy-test"))["SCEZ_KEEP_ACTIVE"]; ok {
+		t.Fatal("legacy callers must not acquire a sleep policy")
+	}
+}
+
 // 设置面板开关 A：参数控件启动可见性注入（SCEZ_PARAM_OVERLAY）。
 // GUI→bat→scrcpy.exe 的注入链在 GUI 侧的最后一环就是这里——客户端侧读取逻辑
 // 由 02_client/tests/overlay_env_test.c 覆盖。

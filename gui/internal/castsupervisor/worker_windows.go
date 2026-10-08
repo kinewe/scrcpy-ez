@@ -21,13 +21,19 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"scrcpy-ez/gui/internal/deviceevents"
+	"scrcpy-ez/gui/internal/rootrepair"
 	"scrcpy-ez/gui/internal/sessioncontrol"
 )
 
 type identityResult struct{ key, id string }
 type learningResult struct{ serial, addr string }
+type repairResult struct {
+	key     string
+	outcome rootrepair.Outcome
+}
 type childMessage struct {
 	line string
+	key  string
 	done bool
 	code int
 }
@@ -37,6 +43,8 @@ type child struct {
 	key              string
 	switchEvent      *sessioncontrol.Event
 	ready, switching bool
+	uploadDenied     bool
+	frameSeen        bool
 	readyAt          time.Time
 }
 
@@ -172,7 +180,7 @@ func startChild(bat string, args []string, route deviceevents.Transport, key, id
 		for {
 			line, e := br.ReadString('\n')
 			if line != "" {
-				messages <- childMessage{line: line}
+				messages <- childMessage{line: line, key: key}
 			}
 			if e != nil {
 				return
@@ -192,7 +200,7 @@ func startChild(bat string, args []string, route deviceevents.Transport, key, id
 				code = ee.ExitCode()
 			}
 		}
-		messages <- childMessage{done: true, code: code}
+		messages <- childMessage{done: true, code: code, key: key}
 	}()
 	return p, nil
 }
@@ -339,6 +347,23 @@ func run(bat string, args []string) int {
 		}
 	}()
 	generation := 0
+	repairAttempted, preparing := false, false
+	repairPaused := false
+	pausedKey := ""
+	preparingKey := ""
+	var repairTicker *time.Ticker
+	var repairProgress <-chan time.Time
+	var repairDeadline time.Time
+	var cancelRepair context.CancelFunc
+	defer func() {
+		if repairTicker != nil {
+			repairTicker.Stop()
+		}
+		if cancelRepair != nil {
+			cancelRepair()
+		}
+	}()
+	repairs := make(chan repairResult, 1)
 	var deadline, transition, retry <-chan time.Time
 	var deadlineTimer, transitionTimer, retryTimer *time.Timer
 	var absentAt time.Time
@@ -389,6 +414,12 @@ func run(bat string, args []string) int {
 	recover()
 	for {
 		snapshot = hub.Current() // queued notifications never authorize an older snapshot
+		if repairPaused && !current(snapshot, pausedKey) {
+			repairPaused = false
+		}
+		if preparing && !current(snapshot, preparingKey) && cancelRepair != nil {
+			cancelRepair()
+		}
 		if snapshot.Available && snapshot.Epoch != observedEpoch {
 			observedEpoch = snapshot.Epoch
 			if p == nil {
@@ -450,7 +481,7 @@ func run(bat string, args []string) int {
 			if p == nil && generation == 0 && want.Kind == "wifi" && (learningSerial != "" || startupWaitsForUSB(snapshot, target, lockedUSB, identities, blocked, identityFailures)) {
 				want = deviceevents.Transport{}
 			}
-			if p == nil && want.Serial != "" && retry == nil {
+			if p == nil && want.Serial != "" && retry == nil && !preparing && !repairPaused {
 				if target == "" {
 					target = identities[transportKey(snapshot, want)]
 				}
@@ -508,7 +539,7 @@ func run(bat string, args []string) int {
 			if !stopping {
 				stopping = true
 				stop.Signal()
-				if p == nil {
+				if p == nil && !preparing {
 					return 0
 				}
 				if deadlineTimer != nil {
@@ -517,6 +548,30 @@ func run(bat string, args []string) int {
 				deadlineTimer = time.NewTimer(5 * time.Second)
 				deadline = deadlineTimer.C
 			}
+		case repaired := <-repairs:
+			preparing = false
+			if repairTicker != nil {
+				repairTicker.Stop()
+			}
+			repairProgress = nil
+			if stopping || ctx.Err() != nil {
+				return 0
+			}
+			if !current(hub.Current(), repaired.key) {
+				continue
+			}
+			if repaired.outcome.Accepted() {
+				delete(blocked, repaired.key)
+				say("[root 修复] 上传复检通过，重新启动投屏；等待真实画面就绪")
+			} else {
+				blocked[repaired.key] = true
+				repairPaused, pausedKey = true, repaired.key
+				say("SCRCPY_EZ_RETRY_WAIT")
+				say("[root 修复待处理] %s；仅在此手机已有 root 时启用或再次尝试修复", repaired.outcome.String())
+			}
+		case <-repairProgress:
+			remaining := max(0, int(time.Until(repairDeadline).Seconds()))
+			say("[root 修复] 等待诊断或修复：本轮最多还剩 %d 秒；请留意手机授权（授权最多 3 分钟，可停止）", remaining)
 		case _, ok := <-events:
 			if !ok {
 				events = nil
@@ -595,7 +650,16 @@ func run(bat string, args []string) int {
 				return 0
 			}
 		case m := <-messages:
+			if p == nil || m.key != p.key {
+				continue
+			}
 			if m.line != "" {
+				if strings.HasPrefix(strings.TrimSpace(m.line), "INFO: Texture: ") {
+					p.frameSeen = true
+				}
+				if strings.TrimSpace(m.line) == "SCRCPY_EZ_SERVER_UPLOAD_PERMISSION" && !p.ready {
+					p.uploadDenied = true
+				}
 				fmt.Fprint(os.Stdout, m.line)
 				if strings.Contains(m.line, "SCRCPY_EZ_USER_CLOSE") {
 					userClosed = true
@@ -617,10 +681,14 @@ func run(bat string, args []string) int {
 				continue
 			}
 			key := p.key
+			denied, wasReady, route := p.uploadDenied, p.ready, p.route
 			switched := p.switching
 			say("[会话] 子进程退出：tag=%s route=%s key=%s bat_pid=%d code=%d (0x%08X) ready=%t switching=%t", tag, p.route.Serial, p.key, p.cmd.Process.Pid, m.code, uint32(m.code), p.ready, switched)
 			if p.ready && time.Since(p.readyAt) >= 5*time.Second {
 				failures[key] = 0
+				if p.frameSeen {
+					repairAttempted = false
+				}
 			}
 			p.switchEvent.Close()
 			p = nil
@@ -630,6 +698,38 @@ func run(bat string, args []string) int {
 			deadline = nil
 			if stopping || userClosed || m.code == 0 {
 				return 0
+			}
+			if denied && !wasReady && !switched && current(hub.Current(), key) {
+				blocked[key] = true
+				if repairAttempted {
+					repairPaused, pausedKey = true, key
+					say("SCRCPY_EZ_RETRY_WAIT")
+					say("[root 修复待处理] 本次已尝试修复，真实 server 上传仍失败；请查看错误并手动处理")
+					continue
+				}
+				repairAttempted = true
+				preparing, preparingKey = true, key
+				repairCtx, repairCancel := context.WithTimeout(ctx, rootrepair.Budget)
+				repairDeadline, _ = repairCtx.Deadline()
+				repairTicker = time.NewTicker(time.Second)
+				repairProgress = repairTicker.C
+				cancelRepair = repairCancel
+				req := rootrepair.Request{Serial: route.Serial, Identity: target, Key: key}
+				say("[root 修复] server 上传权限拒绝，检查此设备是否已启用修复（可停止）")
+				go func() {
+					defer repairCancel()
+					var outcome rootrepair.Outcome
+					if endpoint := os.Getenv("SCEZ_ROOT_ENDPOINT"); endpoint != "" {
+						outcome = rootrepair.Call(repairCtx, endpoint, os.Getenv("SCEZ_ROOT_TOKEN"), req)
+					} else {
+						c := rootrepair.NewCoordinator(filepath.Join(dir, "root-repair.json"), func(cctx context.Context, r rootrepair.Request) (rootrepair.Report, error) {
+							return rootrepair.PrepareLocked(cctx, rootrepair.Options{ADB: adb, Serial: r.Serial, Identity: r.Identity, LogDir: filepath.Join(dir, "root-repair-logs"), Execute: rootrepair.CommandExecutor(adb), Say: func(text string) { say("[root 修复] %s", text) }})
+						})
+						outcome = c.Repair(repairCtx, req)
+					}
+					repairs <- repairResult{key: key, outcome: outcome}
+				}()
+				continue
 			}
 			if m.code != 3 || !switched {
 				failures[key]++
