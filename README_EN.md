@@ -2,7 +2,7 @@
 
 > **English | [中文](README.md)**
 
-> An enhanced build based on [scrcpy 4.1](https://github.com/Genymobile/scrcpy) for PC ↔ Android mirroring. **Plug and play, zero hassle.**
+> An enhanced build based on [scrcpy 5.0.1](https://github.com/Genymobile/scrcpy) for PC ↔ Android mirroring. **Plug and play, zero hassle.**
 
 > ✨ **Entirely developed by AI** (code and docs written by AI)
 > ⚠️ **Tested on**: Windows 11 only (other versions unverified)
@@ -91,6 +91,8 @@ Adaptive **frame rate / bitrate** keeps the image responsive (not game-grade, no
 
 Open the **Specs panel** to adjust the mirroring parameters for the current device and connection mode. Wired and wireless modes are independent, and each device keeps its own settings.
 
+**2.4.0 now uses scrcpy 5.0.1.** After upgrading, open the **Specs panel** and select higher resolution, frame-rate and bitrate settings as your hardware allows. Existing settings are preserved; configure USB and wireless independently.
+
 <p align="center"><img src="images/gui-spec.png" alt="Specs panel" width="480"></p>
 
 ### 🔔 Phone Notifications and Verification Codes
@@ -136,6 +138,7 @@ While mirroring, a persistent "scrcpy-ez is mirroring" notification appears on t
 
 | Version | Features |
 |---|---|
+| **[v2.4.0](https://github.com/kinewe/scrcpy-ez/releases/tag/v2.4.0)** | Upgrade to **scrcpy 5.0.1**, default hardware decoding and the new video buffer, with updated FFmpeg / SDL. Choose higher resolution, frame-rate and bitrate settings in the Specs panel. Add per-device notification-to-mirroring actions (OTP clicks still copy only), improve notification artwork, orientation and consecutive WeChat banners, and reuse compatible background application pages with confirmation for active or incompatible apps. Remove runtime PowerShell calls in favor of native Windows COM/WMI and event supervision; retain image clipboard, ABR, multiple devices, notifications and main-mirroring keep-awake. See the [release notes](docs/release-2.4.0.md) |
 | **[v2.3.0](https://github.com/kinewe/scrcpy-ez/releases/tag/v2.3.0)** | Phone notification sync with per-device/app rules, code-only mode, previews and copy retention; Xiaomi SMS code metadata on locked phones where available, with no companion app; default global keep-awake for main mirroring only and Ctrl+P power-button shortcut; optional authorized root repair after upload permission failures; background reconnect for paired devices, notification recovery and battery refresh. See [release notes](docs/release-2.3.0.md) and the [Gitee download](https://gitee.com/kinewe/scrcpy-ez/releases/tag/v2.3.0) |
 | **v2.2.2** | Event-driven USB switching without 2-second polling; fixes missed batch starts and delayed device cards; improves profile identity/address isolation and application icon caching; protects Xiaomi/REDMI/POCO physical-screen gestures and widget sizes during application mirroring, with a compatibility setting for other brands; coordinates multi-window image/text clipboard and keeps Windows images pasteable after all sessions close; consistent UHID/SDK labels and clearer settings; fixes repeated update-success notices and bundled protocol mismatches in application list/icon queries; keeps device renaming focused and uninterrupted during mirroring |
 | **v2.2.1** | In-app updates with automatic GitHub / Gitee source selection, resumable downloads, restart installation and rollback; improved USB learning, wireless address synchronization, app-list refresh and UI layout |

@@ -6,14 +6,17 @@
 
 Download the [latest release]:
 
- - [`scrcpy-win64-v4.1.zip`][direct-win64] (64-bit)  
-   <sub>SHA-256: `5b12172b3264b2889f4583ee64752ce832e29bc8b1089dca81093459697165db`</sub>
- - [`scrcpy-win32-v4.1.zip`][direct-win32] (32-bit)  
-   <sub>SHA-256: `fa57b36622a53b6aec74c5e5b5c08236165efa445c4f186d48f176ebf9c24eec`</sub>
+ - [`scrcpy-win64-v5.0.1.zip`][direct-win64] (64-bit)  
+   <sub>SHA-256: `b12a2c4ee8be317422451fc7dcf8ee20a71b5ea7ef9ad73ddd825a25316227a5`</sub>
+ - [`scrcpy-win32-v5.0.1.zip`][direct-win32] (32-bit)  
+   <sub>SHA-256: `0cb65ebf1bce892fa4d1502d699af0c7a1a7f24d7febcb9ef72894e3f23fc2ad`</sub>
+ - [`scrcpy-winarm64-v5.0.1.zip`][direct-win32] (ARM 64-bit)  
+   <sub>SHA-256: `16c3fc2068df64946f670e3504b4752073ebae47a416a45b46e79a5ab19c689b`</sub>
 
 [latest release]: https://github.com/Genymobile/scrcpy/releases/latest
-[direct-win64]: https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-win64-v4.1.zip
-[direct-win32]: https://github.com/Genymobile/scrcpy/releases/download/v4.1/scrcpy-win32-v4.1.zip
+[direct-win64]: https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/scrcpy-win64-v5.0.1.zip
+[direct-win32]: https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/scrcpy-win32-v5.0.1.zip
+[direct-winarm64]: https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/scrcpy-winarm64-v5.0.1.zip
 
 and extract it.
 
