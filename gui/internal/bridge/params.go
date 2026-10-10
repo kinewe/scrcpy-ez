@@ -63,11 +63,15 @@ type CastParams struct {
 	VdSize        string // SCEZ_VD_SIZE：虚拟屏尺寸 "WxH"（如 1280x720）
 	VdDpi         int    // SCEZ_VD_DPI：虚拟屏 dpi（GUI 按等比公式显式算；0=不注入）
 	VdFlex        bool   // SCEZ_VD_FLEX=1 → --flex-display（窗口拖动=虚拟屏跟随）
+	VdAutoDpi     bool   // SCEZ_VD_AUTO_DPI=1：自动密度随 flex 尺寸等比更新
+	VdMatchPhone  bool   // 保留手机原生虚拟屏规格，兼容缓存资源密度的应用
+	VdMaxSize     int    // 独立限制视频输出长边，不缩小虚拟屏布局
 	VdIme         string // SCEZ_VD_IME → --display-ime-policy=<v>（虚拟屏推荐 local）
 	VdNoDecor     bool   // SCEZ_VD_NO_DECOR=1 → --no-vd-system-decorations
 	VdKeepContent bool   // SCEZ_VD_KEEP_CONTENT=1 → --no-vd-destroy-content
 	VdAudio       string // SCEZ_VD_AUDIO：声音档位单套回退（v2.1.78；phone/pc/both，空=不注入）
 	StartApp      string // SCEZ_START_APP：启动应用包名（调用方带 "+" 前缀=先强停再启动）
+	ReuseAppTask  bool   // Prefer a verified existing task; never silently force-stop.
 	WinTitle      string // SCEZ_WIN_TITLE：窗口标题（应用名；已安全化）
 
 	// --- 虚拟屏两套参数（v2.1.47 应用窗口参数面板；有线/无线分别记忆）---
@@ -82,12 +86,15 @@ type CastParams struct {
 // 注入为 SCEZ_VD_<KEY>_USB / SCEZ_VD_<KEY>_WIFI 两套环境变量，bat 按当前连接
 // 形态（PICK 含":"=无线）选一套组装 CAST_ARGS/VD_ARGS；各字段零值=不注入。
 type VdModeParams struct {
-	Size    string // SCEZ_VD_SIZE_*：虚拟屏初始尺寸 "WxH"（空=该套不注入）
-	Dpi     int    // SCEZ_VD_DPI_*：>0 注入（GUI 按该套尺寸等比算；0=scrcpy 默认）
-	FPS     int    // SCEZ_VD_FPS_*：>0 注入（bat 无值默认 60）
-	Bitrate int    // SCEZ_VD_BIT_*：>0 注入（bat 无值默认 8）
-	Flex    bool   // SCEZ_VD_FLEX_*=1（窗口跟随；未注入=不跟随）
-	Audio   string // SCEZ_VD_AUDIO_*=值（v2.1.78 三档滑条：phone→--no-audio / both→--audio-dup；空=不加参数）
+	Size       string // SCEZ_VD_SIZE_*：虚拟屏初始尺寸 "WxH"（空=该套不注入）
+	Dpi        int    // SCEZ_VD_DPI_*：>0 注入（GUI 按该套尺寸等比算；0=scrcpy 默认）
+	FPS        int    // SCEZ_VD_FPS_*：>0 注入（bat 无值默认 60）
+	Bitrate    int    // SCEZ_VD_BIT_*：>0 注入（bat 无值默认 8）
+	Flex       bool   // SCEZ_VD_FLEX_*=1（窗口跟随；未注入=不跟随）
+	AutoDpi    bool   // 自动密度；显式 DPI 保持固定
+	MatchPhone bool
+	MaxSize    int
+	Audio      string // SCEZ_VD_AUDIO_*=值（v2.1.78 三档滑条：phone→--no-audio / both→--audio-dup；空=不加参数）
 	// LockFps/LockBitrate ABR 锁定（v2.1.80 窗口设置「锁定」）：注入
 	// SCEZ_VD_LOCK_FPS_*/SCEZ_VD_LOCK_BITRATE_*=1 → bat 追加 --abr-lock-*。
 	LockFps     bool
@@ -200,6 +207,21 @@ func castEnv(params CastParams, watchTag string) []string {
 	if params.VdFlex {
 		env = append(env, "SCEZ_VD_FLEX=1")
 	}
+	if params.VdSize != "" {
+		value := "0"
+		if params.VdAutoDpi {
+			value = "1"
+		}
+		env = append(env, "SCEZ_VD_AUTO_DPI="+value)
+		match := "0"
+		if params.VdMatchPhone {
+			match = "1"
+		}
+		env = append(env, "SCEZ_VD_MATCH_PHONE="+match)
+		if params.VdMaxSize > 0 {
+			env = append(env, fmt.Sprintf("SCEZ_VD_MAX_SIZE=%d", params.VdMaxSize))
+		}
+	}
 	if params.VdIme != "" {
 		env = append(env, "SCEZ_VD_IME="+params.VdIme)
 	}
@@ -214,6 +236,13 @@ func castEnv(params CastParams, watchTag string) []string {
 	}
 	if params.StartApp != "" {
 		env = append(env, "SCEZ_START_APP="+params.StartApp)
+	}
+	if params.VdSize != "" {
+		value := "0"
+		if params.ReuseAppTask {
+			value = "1"
+		}
+		env = append(env, "SCEZ_REUSE_APP_TASK="+value)
 	}
 	if params.WinTitle != "" {
 		env = append(env, "SCEZ_WIN_TITLE="+params.WinTitle)
@@ -244,6 +273,17 @@ func vdModeEnv(env []string, suffix string, p VdModeParams) []string {
 	if p.Flex {
 		env = append(env, "SCEZ_VD_FLEX"+suffix+"=1")
 	}
+	value := "0"
+	if p.AutoDpi {
+		value = "1"
+	}
+	env = append(env, "SCEZ_VD_AUTO_DPI"+suffix+"="+value)
+	match := "0"
+	if p.MatchPhone {
+		match = "1"
+	}
+	env = append(env, "SCEZ_VD_MATCH_PHONE"+suffix+"="+match)
+	env = append(env, fmt.Sprintf("SCEZ_VD_MAX_SIZE%s=%d", suffix, max(0, p.MaxSize)))
 	if p.Audio != "" {
 		env = append(env, "SCEZ_VD_AUDIO"+suffix+"="+p.Audio)
 	}

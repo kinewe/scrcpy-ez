@@ -39,8 +39,10 @@ type Source interface {
 }
 
 type ADBSource struct {
-	ADB    string
-	Server string
+	openMu      sync.Mutex
+	connections map[string]*openConnection
+	ADB         string
+	Server      string
 	// Tests must use their own shell tag, never read private notifications.
 	TestTag   string
 	cleanupMu sync.Mutex
@@ -126,6 +128,8 @@ func (s *ADBSource) command(ctx context.Context, args ...string) *exec.Cmd {
 }
 
 func (s *ADBSource) Run(ctx context.Context, target Target, emit func(Frame) error) error {
+	TraceOpen("listener-start", "", target.Identity, "", 0, 0, 0, false)
+	defer TraceOpen("listener-stop", "", target.Identity, "", 0, 0, 0, false)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -185,6 +189,14 @@ func (s *ADBSource) Run(ctx context.Context, target Target, emit func(Frame) err
 	if err = process.Start(); err != nil {
 		return ErrTransport
 	}
+	s.openMu.Lock()
+	if s.connections == nil {
+		s.connections = make(map[string]*openConnection)
+	}
+	connection := &openConnection{ctx: ctx, identity: target.Identity, stdin: stdin, tokens: make(map[string]string), replies: make(map[string]chan string)}
+	s.connections[session] = connection
+	s.openMu.Unlock()
+	defer func() { s.openMu.Lock(); delete(s.connections, session); s.openMu.Unlock() }()
 	finished := make(chan struct{})
 	var stopOnce sync.Once
 	stop := func() {
@@ -269,8 +281,27 @@ func (s *ADBSource) Run(ctx context.Context, target Target, emit func(Frame) err
 				return ErrProtocol
 			}
 			hasReady = true
+			TraceOpen("listener-ready", "", target.Identity, "", 0, pid, 0, false)
 			close(ready)
 		}
+		s.openMu.Lock()
+		switch frame.Type {
+		case "snapshot", "post":
+			if len(connection.tokens) >= 512 {
+				connection.tokens = make(map[string]string)
+			}
+			connection.tokens[frame.Record.Key] = frame.Record.OpenToken
+		case "remove":
+			delete(connection.tokens, frame.Record.Key)
+		case "open-result":
+			if reply := connection.replies[frame.Request]; reply != nil {
+				select {
+				case reply <- frame.Code:
+				default:
+				}
+			}
+		}
+		s.openMu.Unlock()
 		if emitErr := emit(frame); emitErr != nil {
 			return emitErr
 		}

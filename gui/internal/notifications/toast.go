@@ -73,6 +73,9 @@ func ToastXML(card Card) string {
 			actions = `<actions><action content="复制验证码" arguments="copy:` + card.Token + `" activationType="foreground"/></actions>`
 		}
 	}
+	if card.CopyCode == "" && card.Open != nil && validActionToken(card.OpenToken) {
+		activation = ` launch="open:` + card.OpenToken + `"`
+	}
 	title, body := ordinarySnippet(card.Title, 48), ordinarySnippet(card.Body, 48)
 	if card.CopyCode != "" {
 		info := describeOTP(card)

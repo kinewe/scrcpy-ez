@@ -1105,11 +1105,12 @@
           if (list[i].pkg === w.pkg) { a = list[i]; break; }
         }
         if (!a) {
-          list.push({ pkg: w.pkg, name: w.name || w.pkg, closing: !!w.closing, phase: w.phase || '', phaseText: w.phaseText || '', mode: w.mode || '', bornAt: Date.now() });
+          list.push({ pkg: w.pkg, name: w.name || w.pkg, closing: !!w.closing, notificationWindow: !!w.notificationWindow, phase: w.phase || '', phaseText: w.phaseText || '', mode: w.mode || '', bornAt: Date.now() });
           dirty[serial] = true;
           return;
         }
         if (a.leaving) { a.leaving = false; dirty[serial] = true; } // 防御：条目复活
+        if (!!a.notificationWindow !== !!w.notificationWindow) { a.notificationWindow = !!w.notificationWindow; dirty[serial] = true; }
         // closing：服务端受理=true 立即同步；服务端 false（停止失败复位）等
         // 乐观窗口（4s）过后才清除——避免点击瞬间的旧快照把遮罩冲掉。
         if (w.closing) {
@@ -1384,6 +1385,51 @@
       });
     });
   }
+
+  var appLaunchFocus = null;
+  var appLaunchDialog = SCEZAppLaunchUI.create({
+    present: function (app, busy, error) {
+      var mask = el('app-launch-modal');
+      var opening = mask.style.display === 'none';
+      if (opening) appLaunchFocus = document.activeElement;
+      var name = '「' + (app.name || '应用') + '」';
+      el('app-launch-title').textContent = name + '暂时无法直接投屏';
+      el('app-launch-message').textContent = app.phase === 'app-in-use'
+        ? '手机上正在使用' + name + '，暂时无法同时投屏。可先取消，回到手机桌面后再试'
+        : app.phase === 'app-layout-incompatible'
+        ? '手机上的' + name + '已有打开的页面，暂时无法直接保留这个页面进行投屏'
+        : '暂时无法打开投屏窗口。可以取消，或关闭' + name + '后重新投屏';
+      el('app-launch-warning').textContent = '继续会先关闭' + name + '，再打开投屏。当前操作会被打断，未发送或未保存的内容可能丢失';
+      el('app-launch-error').textContent = error;
+      el('app-launch-error').style.display = error ? '' : 'none';
+      ['app-launch-cancel', 'app-launch-restart', 'app-launch-close'].forEach(function (id) { el(id).disabled = busy; });
+      el('app-launch-restart').textContent = busy ? '正在处理…' : '确认关闭并投屏';
+      mask.style.display = '';
+      if (opening) el('app-launch-cancel').focus();
+    },
+    hide: function () {
+      el('app-launch-modal').style.display = 'none';
+      if (appLaunchFocus && appLaunchFocus.isConnected && typeof appLaunchFocus.focus === 'function') appLaunchFocus.focus();
+      appLaunchFocus = null;
+    },
+    reveal: function () { if (typeof window.ShowMainWindow === 'function') window.ShowMainWindow().catch(function () {}); },
+    resolve: function (serial, pkg, id, restart) { return window.ResolveAppLaunchFailure(serial, pkg, id, restart); }
+  });
+  ['app-launch-cancel', 'app-launch-close'].forEach(function (id) {
+    el(id).addEventListener('click', function () { appLaunchDialog.choose(false); });
+  });
+  el('app-launch-restart').addEventListener('click', function () { appLaunchDialog.choose(true); });
+  el('app-launch-modal').addEventListener('click', function (event) {
+    if (event.target === el('app-launch-modal')) appLaunchDialog.choose(false);
+  });
+  el('app-launch-modal').addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') { event.preventDefault(); appLaunchDialog.choose(false); }
+    if (event.key !== 'Tab') return;
+    var buttons = Array.prototype.filter.call(el('app-launch-modal').querySelectorAll('button'), function (button) { return !button.disabled; });
+    if (!buttons.length) { event.preventDefault(); return; }
+    var index = buttons.indexOf(document.activeElement), next = event.shiftKey ? index - 1 : index + 1;
+    if (index < 0 || next < 0 || next >= buttons.length) { event.preventDefault(); buttons[event.shiftKey ? buttons.length - 1 : 0].focus(); }
+  });
 
   // ensureAppWinPane：确保该设备的「应用窗口」蓝灯中间态页存在（幂等：已有=no-op）。
   // 蓝灯页=无投屏时应用卡片之家；投屏会话出现时被收编移除、会话退出时按需重建。
@@ -2970,7 +3016,6 @@
     if (spec && spec.mbps) out.push('<div class="spec">' + spec.mbps + ' Mbps</div>');
     if (spec && spec.legacy) out.push('<div class="spec">老设备兼容档</div>');
     if (spec && spec.vcodec) out.push('<div class="spec">' + esc(fmtVCodec(spec.vcodec)) + '</div>');
-    if (spec && spec.acodec) out.push('<div class="spec">' + esc(fmtACodec(spec.acodec)) + '</div>');
     if (kbd) out.push('<div class="spec">键盘 ' + esc(fmtKeyboardMode(kbd)) + '</div>');
     return out.join('');
   }
@@ -3837,6 +3882,7 @@
     el('update-state').className = 'update-state' + (s.error ? ' warn' : info.hasNew ? ' new' : '');
     el('update-error').textContent = updateLocalError || m.error; updateVisible('update-error', !!(updateLocalError || m.error));
     updateVisible('update-progress', m.progress);
+    el('update-progress-bar').classList.toggle('is-downloading', !!m.animateProgress);
     if (m.percent === null) el('update-progress-bar').removeAttribute('value');
     else el('update-progress-bar').value = m.percent;
     el('update-progress-text').textContent = m.detail;
@@ -4364,6 +4410,10 @@
     var preview = policy.preview === undefined ? settingsState.notificationPreview : policy.preview;
     Array.prototype.forEach.call(el('notification-preview').querySelectorAll('input'), function (input) { input.checked = input.value === (preview ? 'full' : 'hidden'); });
     el('notification-preview').disabled = notificationSaving || !identity;
+    var openEnabled = policy.openEnabled !== false;
+    setSwitch(el('notification-open'), openEnabled);
+    el('notification-open').disabled = notificationSaving || !identity;
+    el('notification-open-note').textContent = openEnabled ? '普通通知打开投屏 · 验证码仍只复制' : '普通通知点击仅收起 · 验证码仍只复制';
     var copyMinutes = notificationDraft ? notificationDraft.copyMinutes : settingsState.notificationCopyMinutes;
     Array.prototype.forEach.call(el('notification-copy-minutes').querySelectorAll('input'), function (input) { input.checked = input.value === String(copyMinutes); });
     el('notification-copy-minutes').disabled = notificationSaving;
@@ -4420,6 +4470,7 @@
     var identity = w.identity || deviceIdentityOf(appWinModalSerial);
     var policy = JSON.parse(JSON.stringify(notificationPolicyFor(identity)));
     policy.preview = policy.preview === undefined ? settingsState.notificationPreview : policy.preview;
+    policy.openEnabled = policy.openEnabled !== false;
     notificationDraft = {identity: identity, policy: policy, copyMinutes: settingsState.notificationCopyMinutes, edit: {}};
   }
 
@@ -4466,7 +4517,8 @@
       var policy = settingsState.notificationPolicies[draft.identity] || {mode: draft.policy.mode};
       if (draft.edit.selection) { policy.mode = draft.policy.mode; policy.packages = draft.policy.packages.slice(); policy.other = draft.policy.other; }
       if (Object.prototype.hasOwnProperty.call(draft.edit, 'preview')) policy.preview = draft.edit.preview;
-      if (draft.edit.selection || Object.prototype.hasOwnProperty.call(draft.edit, 'preview')) settingsState.notificationPolicies[draft.identity] = policy;
+      if (Object.prototype.hasOwnProperty.call(draft.edit, 'openEnabled')) policy.openEnabled = draft.edit.openEnabled;
+      if (draft.edit.selection || Object.prototype.hasOwnProperty.call(draft.edit, 'preview') || Object.prototype.hasOwnProperty.call(draft.edit, 'openEnabled')) settingsState.notificationPolicies[draft.identity] = policy;
       if (Object.prototype.hasOwnProperty.call(draft.edit, 'copyMinutes')) settingsState.notificationCopyMinutes = draft.edit.copyMinutes;
       notificationSaving = false;
       notificationDraft = null;
@@ -4564,6 +4616,13 @@
     var preview = ev.target.value === 'full';
     notificationDraft.policy.preview = preview;
     notificationDraft.edit.preview = preview;
+    renderNotificationDraft();
+  });
+  el('notification-open').addEventListener('click', function () {
+    if (!notificationDraft || notificationSaving) return;
+    var enabled = !notificationDraft.policy.openEnabled;
+    notificationDraft.policy.openEnabled = enabled;
+    notificationDraft.edit.openEnabled = enabled;
     renderNotificationDraft();
   });
   el('notification-copy-minutes').addEventListener('change', function (ev) {
@@ -4678,6 +4737,7 @@
       lastProfileSaveError = st.profileSaveError || '';
       syncSettings(st);
       syncAppWins(st.appWins || []);
+      appLaunchDialog.sync(st.appWins || []);
       var j = JSON.stringify(st);
       if (j !== lastJson) {
         lastJson = j;

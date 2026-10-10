@@ -16,6 +16,8 @@ type Policy struct {
 	Packages []string `json:"packages,omitempty"`
 	Preview  *bool    `json:"preview,omitempty"`
 	Other    bool     `json:"other,omitempty"`
+	// Missing values enable ordinary notification detail actions by default.
+	OpenEnabled *bool `json:"openEnabled,omitempty"`
 	// Catalog is supplied from the current device app list, never persisted in settings.
 	Catalog []string `json:"-"`
 }
@@ -27,11 +29,26 @@ func (p Policy) Clone() Policy {
 		value := *p.Preview
 		p.Preview = &value
 	}
+	if p.OpenEnabled != nil {
+		value := *p.OpenEnabled
+		p.OpenEnabled = &value
+	}
 	return p
+}
+
+func (p Policy) DetailEnabled() bool {
+	return p.OpenEnabled == nil || *p.OpenEnabled
 }
 
 func (p Policy) Enabled() bool {
 	return p.Mode == ModeAll || p.Mode == ModeOTP || p.Mode == ModeWhitelist && (len(p.Packages) > 0 || p.Other)
+}
+
+func (p Policy) AllowsOpen(owner, display string) bool {
+	if !p.DetailEnabled() || p.Mode == ModeOTP || p.Mode == ModeOff {
+		return false
+	}
+	return p.allows(Record{Package: owner, DisplayPackage: display})
 }
 
 func (p Policy) allows(r Record) bool {

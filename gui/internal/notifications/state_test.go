@@ -157,8 +157,8 @@ func TestOnlyAlertOnceAndPreviewChange(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !sink.shown[1].Silent {
-		t.Fatal("ignored phone only-alert-once flag")
+	if sink.shown[1].Silent {
+		t.Fatal("distinct message on reused phone slot suppressed desktop banner")
 	}
 	if err := s.SetPreview(false, sink); err != nil {
 		t.Fatal(err)
@@ -171,6 +171,36 @@ func TestOnlyAlertOnceAndPreviewChange(t *testing.T) {
 	}
 	if s.records["a"].value.Body != "" {
 		t.Fatal("message body retained after delivery")
+	}
+}
+
+func TestReusedChatSlotAlertsNewMessagesAndKeepsRefreshesQuiet(t *testing.T) {
+	s := NewState("phone", "K80", true)
+	sink := &testSink{}
+	frames := []Frame{
+		{Sequence: 1, Type: "hello", Cutoff: 1},
+		{Sequence: 2, Type: "ready"},
+		{Sequence: 3, Type: "post", Record: Record{Key: "chat", PostTime: 2, MessageTime: 20, Body: "hello", OnlyAlertOnce: true}},
+		// A second identical message still alerts when its structured timestamp advances.
+		{Sequence: 4, Type: "post", Record: Record{Key: "chat", PostTime: 3, MessageTime: 21, Body: "hello", OnlyAlertOnce: true}},
+		// Title/count and icon changes refresh the existing card quietly.
+		{Sequence: 5, Type: "post", Record: Record{Key: "chat", PostTime: 4, MessageTime: 21, Body: "hello", Title: "2 messages", OnlyAlertOnce: true}},
+		{Sequence: 6, Type: "post", Record: Record{Key: "chat", PostTime: 5, MessageTime: 21, Body: "hello", Title: "2 messages", IconID: "changed", OnlyAlertOnce: true}},
+		// A stale notification cannot replace the newest message or create a banner.
+		{Sequence: 7, Type: "post", Record: Record{Key: "chat", PostTime: 4, MessageTime: 22, Body: "stale"}},
+	}
+	for _, frame := range frames {
+		if err := s.Apply(frame, sink); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(sink.shown) != 4 || sink.shown[0].Silent || sink.shown[1].Silent || !sink.shown[2].Silent || !sink.shown[3].Silent {
+		t.Fatalf("new-message/metadata banner policy wrong: %+v", sink.shown)
+	}
+	for _, c := range sink.shown {
+		if c.Tag != sink.shown[0].Tag {
+			t.Fatal("reused key created extra notification center cards")
+		}
 	}
 }
 

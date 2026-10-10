@@ -20,6 +20,7 @@ import (
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/text/encoding/simplifiedchinese"
+	"scrcpy-ez/gui/internal/clientlog"
 	"scrcpy-ez/gui/internal/deviceevents"
 	"scrcpy-ez/gui/internal/rootrepair"
 	"scrcpy-ez/gui/internal/sessioncontrol"
@@ -150,6 +151,7 @@ func startChild(bat string, args []string, route deviceevents.Transport, key, id
 	cmd.SysProcAttr.CmdLine = `cmd.exe /d /s /c ""` + bat + `"` + tail.String() + `"`
 	cmd.Dir = filepath.Dir(bat)
 	cmd.Env = append(os.Environ(), "SCEZ_EVENT_CHILD=1", "SCEZ_EVENT_ROUTE="+route.Serial,
+		"SCEZ_EVENT_KIND="+route.Kind,
 		"SCEZ_EXPECT_SERIAL="+identity,
 		"SCEZ_NO_ADB_RESET=1", "SCEZ_NO_WATCH=1", "SCEZ_WATCH_TAG="+tag,
 		"SCEZ_EVENT_STOP_NAME="+stopName, "SCEZ_EVENT_SWITCH_NAME="+event.Name,
@@ -654,7 +656,7 @@ func run(bat string, args []string) int {
 				continue
 			}
 			if m.line != "" {
-				if strings.HasPrefix(strings.TrimSpace(m.line), "INFO: Texture: ") {
+				if clientlog.TextureSize(m.line) != "" {
 					p.frameSeen = true
 				}
 				if strings.TrimSpace(m.line) == "SCRCPY_EZ_SERVER_UPLOAD_PERMISSION" && !p.ready {

@@ -2,6 +2,7 @@
 package notifications
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -31,6 +32,8 @@ type Record struct {
 	Body             string `json:"body"`
 	VerificationCode string `json:"verificationCode,omitempty"` // Optional Xiaomi SMS metadata; never written to logs.
 	IconID           string `json:"iconId,omitempty"`
+	OpenToken        string `json:"openToken,omitempty"`
+	OpenPackage      string `json:"openPackage,omitempty"`
 }
 
 type AppIcon struct {
@@ -48,6 +51,7 @@ type Frame struct {
 	Record   Record  `json:"record,omitempty"`
 	Icon     AppIcon `json:"icon,omitempty"`
 	Code     string  `json:"code,omitempty"`
+	Request  string  `json:"request,omitempty"`
 }
 
 func ParseFrame(data []byte, session string) (Frame, error) {
@@ -61,8 +65,12 @@ func ParseFrame(data []byte, session string) (Frame, error) {
 			return Frame{}, ErrProtocol
 		}
 	case "snapshot", "post":
-		if frame.Record.Key == "" || len(frame.Record.Key) > 4096 || len(frame.Record.Package) > 512 || len(frame.Record.DisplayPackage) > 512 || len(frame.Record.App) > 1024 || len(frame.Record.Title) > 4096 || len(frame.Record.Body) > 32*1024 || len(frame.Record.IconID) > 64 || frame.Record.User != 0 || frame.Record.PostTime <= 0 {
+		if frame.Record.Key == "" || len(frame.Record.Key) > 4096 || len(frame.Record.Package) > 512 || len(frame.Record.DisplayPackage) > 512 || len(frame.Record.App) > 1024 || len(frame.Record.Title) > 4096 || len(frame.Record.Body) > 32*1024 || len(frame.Record.IconID) > 64 || len(frame.Record.OpenPackage) > 512 || len(frame.Record.OpenToken) > 32 || frame.Record.User != 0 || frame.Record.PostTime <= 0 {
 			return Frame{}, ErrProtocol
+		}
+		if !validActionToken(frame.Record.OpenToken) {
+			frame.Record.OpenToken = ""
+			frame.Record.OpenPackage = ""
 		}
 		// Invalid optional OEM metadata does not interrupt ordinary notifications.
 		if !validVerificationCode(frame.Record) {
@@ -73,6 +81,15 @@ func ParseFrame(data []byte, session string) (Frame, error) {
 			return Frame{}, ErrProtocol
 		}
 	case "ready":
+	case "open-result":
+		if !validActionToken(frame.Request) {
+			return Frame{}, ErrProtocol
+		}
+		switch frame.Code {
+		case "opened", "stale", "canceled", "unsupported", "launch":
+		default:
+			return Frame{}, ErrProtocol
+		}
 	case "error":
 		switch frame.Code {
 		case "identity", "busy", "user", "permission", "unsupported", "startup":
@@ -111,6 +128,18 @@ type Card struct {
 	CopyCode     string
 	CopyFallback time.Duration
 	CopyIssuedAt time.Time
+	Open         func(context.Context) error
+	OpenToken    string // PC-only random activation capability; never the phone token.
+}
+
+type OpenRequest struct{ Identity, Session, Key, Token, Package, OwnerPackage, DisplayPackage, App string }
+
+func validActionToken(token string) bool {
+	if len(token) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(token)
+	return err == nil
 }
 
 // Sink calls happen on the manager's serialized worker, never the casting/UI thread.

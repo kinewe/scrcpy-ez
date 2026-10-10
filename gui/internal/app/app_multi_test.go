@@ -345,6 +345,14 @@ func TestTexturePatchesSpecRes(t *testing.T) {
 	if s.Spec == nil || s.Spec.Res != "2560x1708" || !s.Spec.Wired {
 		t.Fatalf("Texture 未补丁有线档 Res: %+v", s.Spec)
 	}
+	// Hardware decoding and later session size changes update the same badge.
+	for _, size := range []string{"1024x768", "640x480"} {
+		a.NotifyLine("X", "INFO: Texture (D3D11VA): "+size)
+		s = a.Snapshot().Cast
+		if s.Spec == nil || s.Spec.Res != size {
+			t.Fatalf("hardware session size not reflected: %+v", s.Spec)
+		}
+	}
 
 	// 规格未到达时 Texture 行忽略（不 panic、不产生规格）
 	a2, _ := newTestApp()

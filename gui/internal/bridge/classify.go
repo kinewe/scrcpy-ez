@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"scrcpy-ez/gui/internal/clientlog"
 )
 
 // Kind 是 bat 输出行映射出的界面事件类型。
@@ -155,8 +157,6 @@ var (
 	reSpecWiFi = regexp.MustCompile(`^\[流畅\] 无线模式：.*（(\w{2,4})/(\d{1,3})M/(\d{2,4})/(\d{1,3})fps`)
 	// scrcpy-server 日志行：只进原始日志，绝不参与分类（ABR 行含 bitrate 数字，防误匹配规格）。
 	reServerLog = regexp.MustCompile(`^\[server\] |^(FRAME|ABR|PULSE):`)
-	// 真实纹理行：INFO: Texture: WxH（徽标优先数据源——自定义长边档的短边按此真实值显示）
-	reTexture = regexp.MustCompile(`(?i)Texture:\s*(\d{2,5})x(\d{2,5})`)
 )
 
 // ParseSpec 从规格说明文本中解析分辨率/码率。失败返回 nil。
@@ -233,19 +233,18 @@ func ParseKeyboard(text string) (sdk, mode, legacy string) {
 func ClassifyLine(line string) Event {
 	t := strings.TrimRight(line, "\r\n")
 	ev := Event{Kind: KindNone, Text: t}
+	texture := clientlog.TextureSize(t)
 
 	switch {
 	case strings.HasPrefix(t, "[root 修复待处理] "):
 		ev.Kind = KindRootRequired
 	case strings.HasPrefix(t, "[root 修复] "):
 		ev.Kind = KindRootPrepare
-	case reTexture.MatchString(t):
+	case texture != "":
 		// scrcpy-server 真实纹理尺寸（INFO: Texture: WxH，可能带 [server] 前缀）：
 		// 徽标优先数据源——自定义长边档的短边按此真实值显示。
 		// 这是 server 日志行唯一允许参与分类的例外（只更新展示，不写 baseline）。
-		if m := reTexture.FindStringSubmatch(t); m != nil {
-			ev.Kind, ev.Texture = KindTexture, m[1]+"x"+m[2]
-		}
+		ev.Kind, ev.Texture = KindTexture, texture
 	case reServerLog.MatchString(t):
 		// [server] INFO / FRAME / ABR / PULSE 日志行：只进原始日志，不参与任何分类
 	case strings.Contains(t, "[1] 重置 adb"):

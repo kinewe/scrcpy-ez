@@ -15,6 +15,19 @@ func envMap(env []string) map[string]string {
 	return m
 }
 
+func TestCastEnvExplicitReusePolicy(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		values := envMap(castEnv(CastParams{VdSize: "1280x720", ReuseAppTask: enabled}, "reuse-test"))
+		want := "0"
+		if enabled {
+			want = "1"
+		}
+		if values["SCEZ_REUSE_APP_TASK"] != want {
+			t.Fatal(values)
+		}
+	}
+}
+
 func TestCastEnvFullSerialPinIndependentOfUSB(t *testing.T) {
 	values := envMap(castEnv(CastParams{ExpectedSerial: "PHONE_A", Addr: "192.0.2.10:5555"}, "identity-test"))
 	if values["SCEZ_EXPECT_SERIAL"] != "PHONE_A" || values["SCEZ_ADDR"] != "192.0.2.10:5555" {
@@ -141,7 +154,7 @@ func TestCastEnvParamOverlayCoexists(t *testing.T) {
 // 虚拟屏参数注入（应用窗口走 bat，v2.1.27）：SCEZ_VD_* 整组"未设置=不注入"
 // （零回归）；设置后逐项注入；开关类仅 true 才注入 "1"；dpi=0 不注入（交给 scrcpy）。
 func TestCastEnvVirtualDisplay(t *testing.T) {
-	vdKeys := []string{"SCEZ_VD_SIZE", "SCEZ_VD_DPI", "SCEZ_VD_FLEX", "SCEZ_VD_IME",
+	vdKeys := []string{"SCEZ_VD_SIZE", "SCEZ_VD_DPI", "SCEZ_VD_FLEX", "SCEZ_VD_AUTO_DPI", "SCEZ_VD_IME",
 		"SCEZ_VD_NO_DECOR", "SCEZ_VD_KEEP_CONTENT", "SCEZ_VD_AUDIO",
 		"SCEZ_START_APP", "SCEZ_WIN_TITLE"}
 
@@ -194,6 +207,40 @@ func TestCastEnvVirtualDisplay(t *testing.T) {
 	env = envMap(castEnv(CastParams{VdSize: "1280x720"}, "tag-vd"))
 	if _, ok := env["SCEZ_VD_DPI"]; ok {
 		t.Fatalf("VdDpi=0 时不应注入 SCEZ_VD_DPI（env=%v）", env)
+	}
+}
+
+func TestPhoneLayoutAndVideoResolutionAreIndependentForEachTransport(t *testing.T) {
+	env := envMap(castEnv(CastParams{VdSize: "864x1920", VdMatchPhone: true, VdMaxSize: 1920,
+		VdUsb:  VdModeParams{Size: "1152x2560", MatchPhone: true, MaxSize: 2560},
+		VdWifi: VdModeParams{Size: "864x1920", MatchPhone: true, MaxSize: 1920}}, "tag-native"))
+	for k, value := range map[string]string{"SCEZ_VD_MATCH_PHONE": "1", "SCEZ_VD_MATCH_PHONE_USB": "1", "SCEZ_VD_MATCH_PHONE_WIFI": "1", "SCEZ_VD_MAX_SIZE": "1920", "SCEZ_VD_MAX_SIZE_USB": "2560", "SCEZ_VD_MAX_SIZE_WIFI": "1920"} {
+		if env[k] != value {
+			t.Fatalf("%s = %q want %q", k, env[k], value)
+		}
+	}
+	env = envMap(castEnv(CastParams{VdSize: "864x1920", VdUsb: VdModeParams{Size: "1152x2560", MatchPhone: true}, VdWifi: VdModeParams{Size: "864x1920"}}, "tag-mixed"))
+	if env["SCEZ_VD_MATCH_PHONE_WIFI"] != "0" || env["SCEZ_VD_MATCH_PHONE"] != "0" {
+		t.Fatal("explicit other-transport configuration inherited phone layout")
+	}
+}
+
+func TestAutomaticDensityIsIndependentForEachTransport(t *testing.T) {
+	params := CastParams{
+		VdSize: "864x1920", VdDpi: 360, VdFlex: true, VdAutoDpi: true,
+		VdUsb:  VdModeParams{Size: "1152x2560", Dpi: 480, Flex: true, AutoDpi: true},
+		VdWifi: VdModeParams{Size: "864x1920", Dpi: 320, Flex: true},
+	}
+	env := envMap(castEnv(params, "tag-density"))
+	if env["SCEZ_VD_AUTO_DPI"] != "1" || env["SCEZ_VD_AUTO_DPI_USB"] != "1" || env["SCEZ_VD_AUTO_DPI_WIFI"] != "0" {
+		t.Fatalf("manual Wi-Fi density inherited automatic USB density: %v", env)
+	}
+	params.VdAutoDpi = false
+	params.VdUsb.AutoDpi = false
+	params.VdWifi.AutoDpi = true
+	env = envMap(castEnv(params, "tag-density-reverse"))
+	if env["SCEZ_VD_AUTO_DPI"] != "0" || env["SCEZ_VD_AUTO_DPI_USB"] != "0" || env["SCEZ_VD_AUTO_DPI_WIFI"] != "1" {
+		t.Fatalf("density modes not independently encoded: %v", env)
 	}
 }
 

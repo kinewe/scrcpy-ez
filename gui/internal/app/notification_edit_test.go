@@ -14,7 +14,7 @@ func TestNotificationEditCommitsTogetherAndPreservesOtherDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	preview, minutes := false, 60
-	edit := NotificationEdit{Selection: &NotificationSelection{Packages: []string{"com.example.mail", "com.example.mail"}, Other: true}, Preview: &preview, CopyMinutes: &minutes}
+	edit := NotificationEdit{Selection: &NotificationSelection{Packages: []string{"com.example.mail", "com.example.mail"}, Other: true}, Preview: &preview, OpenEnabled: &preview, CopyMinutes: &minutes}
 	if err := s.ApplyNotificationEdit("tablet", edit, false); err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestNotificationEditCommitsTogetherAndPreservesOtherDevice(t *testing.T) {
 	}
 	got := loaded.Get()
 	p := got.NotificationPolicy("tablet")
-	if p.Mode != "whitelist" || !p.Other || p.Preview == nil || *p.Preview || len(p.Packages) != 1 || got.NotificationCopyMinutes != 60 || got.NotificationPolicy("phone").Mode != "otp" {
+	if p.Mode != "whitelist" || !p.Other || p.Preview == nil || *p.Preview || len(p.Packages) != 1 || p.DetailEnabled() || got.NotificationCopyMinutes != 60 || got.NotificationPolicy("phone").Mode != "otp" || !got.NotificationPolicy("phone").DetailEnabled() {
 		t.Fatal("transaction lost fields or changed another device")
 	}
 	if err := loaded.SetNotificationModes([]string{"tablet"}, "otp"); err != nil {
@@ -34,7 +34,7 @@ func TestNotificationEditCommitsTogetherAndPreservesOtherDevice(t *testing.T) {
 	if err := loaded.ApplyNotificationEdit("tablet", NotificationEdit{Preview: &preview}, false); err != nil {
 		t.Fatal(err)
 	}
-	if p = loaded.Get().NotificationPolicy("tablet"); p.Mode != "otp" || len(p.Packages) != 1 {
+	if p = loaded.Get().NotificationPolicy("tablet"); p.Mode != "otp" || len(p.Packages) != 1 || p.DetailEnabled() {
 		t.Fatal("preview-only edit overwrote current selection")
 	}
 }
@@ -47,7 +47,7 @@ func TestNotificationEditFailureRollsBackEveryField(t *testing.T) {
 	s := NewSettingsStore(path)
 	before := s.Get()
 	preview, minutes := false, 15
-	edit := NotificationEdit{Selection: &NotificationSelection{Packages: []string{"com.example.mail"}}, Preview: &preview, CopyMinutes: &minutes}
+	edit := NotificationEdit{Selection: &NotificationSelection{Packages: []string{"com.example.mail"}}, Preview: &preview, OpenEnabled: &preview, CopyMinutes: &minutes}
 	if err := s.ApplyNotificationEdit("tablet", edit, false); err == nil {
 		t.Fatal("unwritable target accepted")
 	}

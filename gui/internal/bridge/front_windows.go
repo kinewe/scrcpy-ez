@@ -3,12 +3,15 @@
 package bridge
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 // --- 标签点击 → 投屏窗口浮前（问题 3，浏览器范式） ---
@@ -28,15 +31,13 @@ import (
 //      （日志"scrcpy线程=36080"实为 scrcpy pid）；
 //   ② 有界重试（点击触发，600ms×3 轮）：进程未出现→重新枚举进程（后轮强制
 //      新鲜，缓存可能停留在"进程未启动"快照）；进程在但窗口不可见（SDL 启动
-//      期先隐藏后显示）→只重枚举窗口（便宜，不重复 powershell）；找到可见主窗
+//      期先隐藏后显示）→只重枚举窗口；找到可见主窗
 //      才执行浮前，且每次点击只浮前一次（重试只补侦测，不重复刷 z-order）；
 //   ③ 全部窗口不可见时不再回退置顶隐藏窗（v4 兜底会置顶隐藏窗制造 z-order
 //      乱序），改为等待下一轮重试；
-//   ④ 进程枚举缓存 TTL 3s（快速连点标签共享一次 Get-CimInstance，实测每次
-//      0.7-0.9s，三连点=三个并行 powershell 的轰炸被合并）+ 命令 6s 超时
-//      （powershell 偶发卡死不再让本次点击无限挂起）；
-//   ⑤ 同会话连点幂等：新一轮点击取消上一轮未完成的重试循环（cancelled 标记），
-//      绝不叠加浮前 goroutine。
+//   ④ 进程枚举缓存 TTL 3s，共享原生 WMI 查询，6s 超时；失败不缓存。
+//      窗口匹配及浮前前均校验进程创建时间，防退出后 PID 被复用；
+//   ⑤ 同会话连点幂等：新一轮点击立即取消上一轮查询等待和重试。
 // 主窗选择沿用 v4（可见性过滤/无属主优先/面积最大——selectFrontMainWin 纯函数，
 // 只置顶主窗一个，7 窗口乱序根因）。全程独立 goroutine：50ms 延时不得阻塞
 // webview UI 线程（前端已 fire-and-forget，标签切换不被拖住）。
@@ -64,30 +65,35 @@ const frontDelay = 25 * time.Millisecond
 // frontRetryInterval——覆盖"进程启动到窗口可见"的 1-3s 时序（实证：
 // 0825 日志 00:38:17 进程在而窗口 0 命中、00:15:11 进程在而窗口已销毁）。
 const (
-	frontMaxAttempts   = 3
-	frontRetryInterval = 600 * time.Millisecond
+	frontMaxAttempts    = 3
+	frontRetryInterval  = 600 * time.Millisecond
+	frontRequestTimeout = 8 * time.Second
 )
 
 // scrcpyProcsCache 缓存最近一次 scrcpy 进程枚举（浮前点击按需刷新，无后台轮询）：
-// 快速连点多个标签共享一次 Get-CimInstance（实测每次 0.7-0.9s，三连点会
-// 叠加三个并行 powershell）；TTL 短（3s），重试循环后续轮强制新鲜。
+// 快速连点多个标签共享一次原生 WMI 查询；TTL 短（3s），
+// 重试循环后续轮强制新鲜。失败不缓存，进程身份另作实时校验。
 var scrcpyProcsCache struct {
 	mu    sync.Mutex
 	at    time.Time
 	procs []scrcpyProc
-	err   error
 }
 
 const scrcpyProcsCacheTTL = 3 * time.Second
 
 // frontRequests 合并同一会话的重复浮前请求（幂等）：新一轮点击取消上一轮
-// 未完成的重试循环，绝不叠加浮前 goroutine（防 z-order 轰炸）。
+// 未完成的查询等待和重试循环（防 z-order 轰炸）。
 var frontRequests struct {
 	mu sync.Mutex
-	m  map[string]*atomic.Bool // key → 当前请求的取消标记
+	m  map[string]*frontRequest
 }
 
-func init() { frontRequests.m = map[string]*atomic.Bool{} }
+type frontRequest struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func init() { frontRequests.m = map[string]*frontRequest{} }
 
 // frontRequestKey 浮前请求的幂等键：serials + 应用包名（v2.1.46——
 // 同设备不同应用窗口的请求互不取消；appPkg 空=主投屏标签请求）。
@@ -96,20 +102,29 @@ func frontRequestKey(serials []string, appPkg string) string {
 }
 
 // listScrcpyProcsCached 返回缓存/新鲜的 scrcpy 进程枚举（浮前点击按需，无后台轮询）。
-// fresh=false 且缓存未过期（TTL 内）→ 直接复用（快速连点共享一次 Get-CimInstance）；
-// fresh=true 或缓存过期 → 重新枚举并写缓存。枚举与命中判断持同一把锁：并发点击
-// 串行化复用同一次结果，不叠加并行 powershell（实测每次枚举 0.7-0.9s）。
-func listScrcpyProcsCached(fresh bool) ([]scrcpyProc, error) {
-	scrcpyProcsCache.mu.Lock()
-	defer scrcpyProcsCache.mu.Unlock()
-	if !fresh && time.Since(scrcpyProcsCache.at) < scrcpyProcsCacheTTL {
-		return append([]scrcpyProc{}, scrcpyProcsCache.procs...), scrcpyProcsCache.err
+// fresh=false 且缓存未过期（TTL 内）→ 直接复用；
+// fresh=true 或缓存过期 → 重新枚举并写缓存。只在读写缓存时持锁；
+// 等待由查询层合并，可取消，避免超时查询把后续点击排成长队。
+func listScrcpyProcsCached(ctx context.Context, fresh bool) ([]scrcpyProc, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	procs, err := listScrcpyProcs()
+	scrcpyProcsCache.mu.Lock()
+	if !fresh && time.Since(scrcpyProcsCache.at) < scrcpyProcsCacheTTL {
+		procs := append([]scrcpyProc{}, scrcpyProcsCache.procs...)
+		scrcpyProcsCache.mu.Unlock()
+		return procs, nil
+	}
+	scrcpyProcsCache.mu.Unlock()
+	procs, err := nativeScrcpyInventory.load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scrcpyProcsCache.mu.Lock()
 	scrcpyProcsCache.at = time.Now()
-	scrcpyProcsCache.procs = procs
-	scrcpyProcsCache.err = err
-	return procs, err
+	scrcpyProcsCache.procs = append([]scrcpyProc(nil), procs...)
+	scrcpyProcsCache.mu.Unlock()
+	return procs, nil
 }
 
 var (
@@ -246,40 +261,42 @@ func BringAppWinToFront(serials []string, pkg string) error {
 // 幂等合并（同 key 连点取消上一轮）+ 独立 goroutine（不阻塞 UI 线程）。
 func bringFrontRequest(serials []string, appPkg string) error {
 	key := frontRequestKey(serials, appPkg)
-	req := &atomic.Bool{}
+	ctx, cancel := context.WithTimeout(context.Background(), frontRequestTimeout)
+	req := &frontRequest{ctx: ctx, cancel: cancel}
 	frontRequests.mu.Lock()
 	if old, ok := frontRequests.m[key]; ok {
-		old.Store(true) // 连点：取消上一轮未完成的重试循环，绝不叠加浮前 goroutine
+		old.cancel() // 连点：立即取消上一轮查询等待及重试。
 	}
 	frontRequests.m[key] = req
 	frontRequests.mu.Unlock()
 
 	go func() {
+		defer req.cancel()
 		err := bringToFrontSync(serials, appPkg, req)
 		frontRequests.mu.Lock()
 		if frontRequests.m[key] == req {
 			delete(frontRequests.m, key)
 		}
 		frontRequests.mu.Unlock()
-		if err != nil && !req.Load() {
+		if err != nil && req.ctx.Err() == nil {
 			DebugLog("[front] bring-to-front serials=%v pkg=%q 最终失败: %v", serials, appPkg, err)
 		}
 	}()
 	return nil
 }
 
-// bringToFrontSync v6 有界重试主循环（独立 goroutine；cancelled=本请求取消标记）：
+// bringToFrontSync 有界重试主循环（独立 goroutine，可取消，整体 8s 时限）：
 // 进程未出现→重枚举进程（后续轮强制新鲜）；进程在但窗口不可见→只重枚举窗口；
 // 找到可见主窗才执行一次浮前（raiseFrontWindow），随后立即返回——重试只补侦测，
 // 不重复刷 z-order。前端 fire-and-forget：窗口未就绪时的点击不丢请求（自动重试），
 // 重试有上限（frontMaxAttempts×frontRetryInterval）。
 // v2.1.46：appPkg 空=主投屏标签（候选=会话 scrcpy，排除虚拟屏）；非空=应用卡片
 // （候选=指定包名的虚拟屏 scrcpy，主投屏与其他应用窗口不吃）。
-func bringToFrontSync(serials []string, appPkg string, cancelled *atomic.Bool) error {
+func bringToFrontSync(serials []string, appPkg string, req *frontRequest) error {
 	var procs []scrcpyProc
 	haveProcs := false
 	for attempt := 0; attempt < frontMaxAttempts; attempt++ {
-		if cancelled.Load() {
+		if req.ctx.Err() != nil {
 			DebugLog("[front] bring-to-front serials=%v pkg=%q 被新一轮点击取消", serials, appPkg)
 			return nil
 		}
@@ -287,8 +304,11 @@ func bringToFrontSync(serials []string, appPkg string, cancelled *atomic.Bool) e
 		// "进程未启动"的旧快照，沿用会掩盖刚启动的进程
 		if !haveProcs {
 			var err error
-			procs, err = listScrcpyProcsCached(attempt > 0)
+			procs, err = listScrcpyProcsCached(req.ctx, attempt > 0)
 			if err != nil {
+				if req.ctx.Err() != nil {
+					return req.ctx.Err()
+				}
 				DebugLog("[front] scrcpy 进程枚举失败（第 %d/%d 轮）: %v", attempt+1, frontMaxAttempts, err)
 			} else {
 				haveProcs = true
@@ -308,7 +328,10 @@ func bringToFrontSync(serials []string, appPkg string, cancelled *atomic.Bool) e
 			} else {
 				pids := make(map[int]bool, len(cands))
 				for _, p := range cands {
-					pids[p.pid] = true
+					if h, err := openInventoryProcess(p); err == nil {
+						pids[p.pid] = true
+						windows.CloseHandle(h)
+					}
 				}
 				DebugLog("[front] bring-to-front 候选 scrcpy pid=%d 个 %v（第 %d/%d 轮）",
 					len(cands), cands, attempt+1, frontMaxAttempts)
@@ -336,8 +359,10 @@ func bringToFrontSync(serials []string, appPkg string, cancelled *atomic.Bool) e
 						len(wins)-sel.skippedHidden, sel.skippedHidden,
 						sel.main.hwnd, sel.main.pid, sel.main.w, sel.main.h, sel.main.owned,
 						sel.skippedVisible)
-					raiseFrontWindow(sel.main) // 浮前只执行这一次
-					return nil
+					if raiseInventoryWindow(sel.main, cands, req.ctx) {
+						return nil
+					}
+					haveProcs = false // Exited/replaced while windows were enumerated.
 				}
 				if len(wins) == 0 {
 					// pid 已失效（进程刚退出/重启）：下轮重新枚举进程
@@ -354,16 +379,74 @@ func bringToFrontSync(serials []string, appPkg string, cancelled *atomic.Bool) e
 			}
 		}
 		if attempt < frontMaxAttempts-1 {
-			time.Sleep(frontRetryInterval)
+			timer := time.NewTimer(frontRetryInterval)
+			select {
+			case <-req.ctx.Done():
+				timer.Stop()
+				return req.ctx.Err()
+			case <-timer.C:
+			}
 		}
 	}
 	DebugLog("[front] bring-to-front 重试 %d 轮仍未就绪（candidates=%v），本击放弃", frontMaxAttempts, serials)
 	return nil
 }
 
+func raiseInventoryWindow(sel frontWinInfo, candidates []scrcpyProc, ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	for _, p := range candidates {
+		if p.pid != sel.pid {
+			continue
+		}
+		h, err := openInventoryProcess(p)
+		if err != nil {
+			return false
+		}
+		defer windows.CloseHandle(h)
+		var actual uint32
+		procGetWindowThreadPID.Call(sel.hwnd, uintptr(unsafe.Pointer(&actual)))
+		visible, _, _ := procIsWindowVisibleFront.Call(sel.hwnd)
+		if int(actual) != p.pid || visible == 0 {
+			return false
+		}
+		if ctx.Err() == nil {
+			raiseFrontWindow(sel)
+		}
+		return true
+	}
+	return false
+}
+
 // raiseFrontWindow 对已选中的可见主窗执行一次二段式浮前（v5 序列 + ⑤修复）：
 // ①置顶 ②激活拉前（失败 AttachThreadInput 兜底重试）③延时 ④ez 顶回。
 func raiseFrontWindow(sel frontWinInfo) {
+	raiseFrontWindowWithFocus(sel, true)
+}
+
+// The PID comes from this owned client's ready signal, without shell inventory.
+func BringClientToFront(pid int) error {
+	if pid <= 0 {
+		return nil
+	}
+	var infos []frontWinInfo
+	procEnumWindowsFront.Call(syscall.NewCallback(func(hwnd syscall.Handle, _ uintptr) uintptr {
+		var actual uint32
+		procGetWindowThreadPID.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&actual)))
+		if int(actual) == pid {
+			infos = append(infos, winInfo(frontWin{hwnd: hwnd, pid: pid}))
+		}
+		return 1
+	}), 0)
+	selected := selectFrontMainWin(infos)
+	if selected.ok && !selected.fallback {
+		raiseFrontWindowWithFocus(selected.main, false)
+	}
+	return nil
+}
+
+func raiseFrontWindowWithFocus(sel frontWinInfo, restoreEZ bool) {
 	scrcpyWin, scrcpyPid := sel.hwnd, sel.pid
 
 	// 最小化主窗先恢复显示（SW_RESTORE）
@@ -411,6 +494,9 @@ func raiseFrontWindow(sel frontWinInfo) {
 	DebugLog("[front] ② SetForegroundWindow(scrcpy)：hwnd=%d OK=%v", scrcpyWin, fgOK)
 
 	// ③ 延时（置顶动画完成/确保前置）
+	if !restoreEZ {
+		return
+	}
 	time.Sleep(frontDelay)
 	DebugLog("[front] ③ 延时 %dms 完成", frontDelay.Milliseconds())
 

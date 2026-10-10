@@ -145,6 +145,12 @@ func TestClassifySpecStrict(t *testing.T) {
 // 真实纹理行（徽标统一 WxH 的数据源）：INFO: Texture: WxH → KindTexture；
 // 带 [server] 前缀变体同样识别；不含 Texture 的行不误判。
 func TestClassifyTextureLine(t *testing.T) {
+	for _, backend := range []string{"D3D11VA", "VA-API", "VideoToolbox"} {
+		ev := ClassifyLine("INFO: Texture (" + backend + "): 1024x768")
+		if ev.Kind != KindTexture || ev.Texture != "1024x768" {
+			t.Fatalf("hardware Texture line (%s): %+v", backend, ev)
+		}
+	}
 	ev := ClassifyLine("INFO: Texture: 1920x1280")
 	if ev.Kind != KindTexture || ev.Texture != "1920x1280" {
 		t.Fatalf("Texture 行解析错误: %+v", ev)

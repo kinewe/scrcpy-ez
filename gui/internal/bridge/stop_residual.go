@@ -2,42 +2,15 @@ package bridge
 
 import (
 	"sort"
-	"strconv"
 	"strings"
 )
 
-// scrcpyProc 是残余 scrcpy 进程枚举结果（powershell 输出解析）。
+// scrcpyProc is a typed process inventory row. Creation time guards PID reuse.
 type scrcpyProc struct {
-	pid     int
-	ppid    int
-	cmdline string
-}
-
-// parseScrcpyProcs 解析 scrcpy 进程枚举输出（每行 "pid|ppid|cmdline"，由
-// bat_windows.go 的 listScrcpyProcs 生成；纯函数便于跨平台单测）。
-func parseScrcpyProcs(output string) []scrcpyProc {
-	var out []scrcpyProc
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if line == "" {
-			continue
-		}
-		pidS, rest, ok := strings.Cut(line, "|")
-		if !ok {
-			continue
-		}
-		ppidS, cmdline, ok := strings.Cut(rest, "|")
-		if !ok {
-			continue
-		}
-		pid, err1 := strconv.Atoi(strings.TrimSpace(pidS))
-		ppid, err2 := strconv.Atoi(strings.TrimSpace(ppidS))
-		if err1 != nil || err2 != nil {
-			continue
-		}
-		out = append(out, scrcpyProc{pid: pid, ppid: ppid, cmdline: cmdline})
-	}
-	return out
+	pid           int
+	ppid          int
+	cmdline       string
+	createdMicros int64
 }
 
 // scrcpyCmdlineMatches 判定 scrcpy 命令行是否属于本会话：命令行含
@@ -86,10 +59,31 @@ func scrcpySessionMatch(cmdline string, serials []string, vdSize, startApp strin
 	if !hasVD {
 		return false // 本会话=虚拟屏：主投屏 scrcpy 不算本会话
 	}
-	if startApp != "" && !strings.Contains(cmdline, "--start-app="+startApp) {
+	if startApp != "" && !scrcpyAppMatches(cmdline, startApp) {
 		return false // 同设备其他应用窗口（不同 --start-app）不算本会话
 	}
 	return true
+}
+
+// The explicit restart prefix is consumed after the first attempt. Both forms
+// identify the same session, while package-name prefixes must never match.
+func scrcpyAppMatches(cmdline, pkg string) bool {
+	pkg = strings.TrimPrefix(pkg, "+")
+	if pkg == "" {
+		return false
+	}
+	args := strings.Fields(cmdline)
+	for i, arg := range args {
+		arg = strings.Trim(arg, `"`)
+		value, ok := strings.CutPrefix(arg, "--start-app=")
+		if !ok && arg == "--start-app" && i+1 < len(args) {
+			value, ok = strings.Trim(args[i+1], `"`), true
+		}
+		if ok && strings.TrimPrefix(value, "+") == pkg {
+			return true
+		}
+	}
+	return false
 }
 
 // residualScrcpyCandidates 从枚举结果中挑出本会话的残余 scrcpy：
@@ -159,7 +153,7 @@ func bringToFrontCandidates(procs []scrcpyProc, serials []string) []scrcpyProc {
 
 // bringAppWinCandidates 从 scrcpy 进程枚举中挑出"指定应用窗口"的进程
 // （点击应用卡片浮前用，v2.1.46）：serial 命中 + 含 --new-display（虚拟屏）+
-// --start-app=+<pkg> 精确命中（同设备多个应用窗口互不误伤；不吃主投屏——它无
+// --start-app=<pkg> 或 +<pkg> 精确命中（同设备多个应用窗口互不误伤；不吃主投屏——它无
 // --new-display）。结果按 pid 升序（确定性）。
 func bringAppWinCandidates(procs []scrcpyProc, serials []string, pkg string) []scrcpyProc {
 	seen := map[int]bool{}
@@ -174,7 +168,7 @@ func bringAppWinCandidates(procs []scrcpyProc, serials []string, pkg string) []s
 		if !strings.Contains(p.cmdline, "--new-display") {
 			continue // 主投屏：不是应用卡片的目标
 		}
-		if pkg != "" && !strings.Contains(p.cmdline, "--start-app=+"+pkg) {
+		if pkg != "" && !scrcpyAppMatches(p.cmdline, pkg) {
 			continue // 同设备其他应用窗口
 		}
 		seen[p.pid] = true

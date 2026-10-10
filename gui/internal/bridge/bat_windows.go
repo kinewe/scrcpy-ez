@@ -208,20 +208,6 @@ func (r *BatRunner) Stop() error {
 }
 
 // ExitCode 返回 bat 最终退出码；运行中返回 -1。
-// Explicit window-focus actions still need a one-shot process inventory.
-func listScrcpyProcs() ([]scrcpyProc, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-	defer cancel()
-	ps := "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'scrcpy.exe' } | ForEach-Object { [string]$_.ProcessId + '|' + [string]$_.ParentProcessId + '|' + [string]$_.CommandLine }"
-	c := exec.CommandContext(ctx, "powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps)
-	c.SysProcAttr = &syscallProcAttr{CreationFlags: windows.CREATE_NO_WINDOW, HideWindow: true}
-	b, err := c.Output()
-	if err != nil {
-		return nil, err
-	}
-	return parseScrcpyProcs(string(b)), nil
-}
-
 func (r *BatRunner) ExitCode() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()

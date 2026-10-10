@@ -44,6 +44,8 @@ type worker struct {
 }
 
 type Manager struct {
+	opener        func(context.Context, OpenRequest) error
+	openPolicies  map[string]Policy
 	source        Source
 	artwork       func(string, string) Artwork
 	factory       func() (Sink, error)
@@ -76,6 +78,17 @@ func (m *Manager) Reconcile(targets []Target, options Options) {
 		policies[id] = policy.Clone()
 	}
 	options.Policies = policies
+	// Publish permissions before asynchronous reconciliation so old cards stop
+	// opening immediately. Serializing requests preserves the latest device rule.
+	m.mu.Lock()
+	m.openPolicies = make(map[string]Policy, len(targets))
+	for _, target := range targets {
+		if target.Identity != "" && target.Serial != "" {
+			policy, _ := options.policy(target.Identity)
+			m.openPolicies[target.Identity] = policy.Clone()
+		}
+	}
+	m.mu.Unlock()
 	r := reconcile{targets: append([]Target(nil), targets...), options: options}
 	select {
 	case <-m.done:
@@ -96,6 +109,35 @@ func (m *Manager) Reconcile(targets []Target, options Options) {
 	case <-m.done:
 	default:
 	}
+}
+
+func (m *Manager) SetOpener(open func(context.Context, OpenRequest) error) {
+	m.mu.Lock()
+	m.opener = open
+	m.mu.Unlock()
+}
+
+func (m *Manager) open(ctx context.Context, req OpenRequest) error {
+	select {
+	case <-m.done:
+		return ErrUnavailable
+	default:
+	}
+	m.mu.Lock()
+	open := m.opener
+	policy, active := m.openPolicies[req.Identity]
+	m.mu.Unlock()
+	if !active {
+		return ErrUnavailable
+	}
+	if !policy.AllowsOpen(req.OwnerPackage, req.DisplayPackage) {
+		// Clicking an ordinary card after disabling details just dismisses it.
+		return nil
+	}
+	if open == nil {
+		return ErrUnavailable
+	}
+	return open(ctx, req)
 }
 
 func (m *Manager) Status() []Status {
@@ -170,6 +212,20 @@ func (m *Manager) run(ctx context.Context) {
 			for id, w := range workers {
 				target, exists := wanted[id]
 				if !exists || target.Serial != w.target.Serial || target.DeviceSerial != w.target.DeviceSerial || target.Epoch != w.target.Epoch || target.ServerEpoch != w.target.ServerEpoch {
+					reason := "target-offline"
+					if exists {
+						switch {
+						case target.DeviceSerial != w.target.DeviceSerial:
+							reason = "physical-changed"
+						case target.ServerEpoch != w.target.ServerEpoch:
+							reason = "server-epoch"
+						case target.Serial != w.target.Serial:
+							reason = "transport-changed"
+						default:
+							reason = "transport-generation"
+						}
+					}
+					TraceOpen("listener-retire", reason, id, "", 0, 0, 0, false)
 					stopWorker(w)
 					delete(workers, id)
 					m.mu.Lock()
@@ -181,6 +237,7 @@ func (m *Manager) run(ctx context.Context) {
 				w.state.device = target.Name
 				w.state.connection = target.Connection
 				w.state.copyFallback = desired.options.CopyFallback
+				w.state.opener = m.open
 				w.connection = target.Connection
 				if m.artwork != nil {
 					w.state.artwork = func(pkg string) Artwork { return m.artwork(id, pkg) }
@@ -235,6 +292,7 @@ func (m *Manager) run(ctx context.Context) {
 				w.state.policy = policy.Clone()
 				w.state.connection = target.Connection
 				w.state.copyFallback = options.CopyFallback
+				w.state.opener = m.open
 				w.connection = target.Connection
 				workers[id] = w
 				if m.artwork != nil {
@@ -310,6 +368,7 @@ func (m *Manager) run(ctx context.Context) {
 				w.state.policy = policy.Clone()
 				w.state.connection = w.connection
 				w.state.copyFallback = options.CopyFallback
+				w.state.opener = m.open
 				if m.artwork != nil {
 					w.state.artwork = func(pkg string) Artwork { return m.artwork(w.target.Identity, pkg) }
 				}

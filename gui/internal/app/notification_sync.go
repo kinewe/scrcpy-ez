@@ -166,9 +166,15 @@ func (a *App) reconcileNotifications() {
 	}
 	settings := a.settings.Get()
 	var targets []notifications.Target
+	raw := a.adb.EventHub().Current()
 	if settings.NotificationDefault || len(settings.NotificationDevices) > 0 || len(settings.NotificationPolicies) > 0 {
-		targets = notificationTargets(devices, a.profiles.Entries(), a.adb.EventHub().Current(), settings)
+		targets = notificationTargets(devices, a.profiles.Entries(), raw, settings)
 	}
+	// Casting can change its preferred route independently. Do not revoke a
+	// notification session just because the display address changed while its
+	// exact verified transport is still online in the same ADB generation.
+	targets = keepNotificationTransports(targets, a.notificationRoutes, raw)
+	a.notificationRoutes = append([]notifications.Target(nil), targets...)
 	entries := a.profiles.Entries()
 	policies := make(map[string]notifications.Policy, len(targets))
 	for _, target := range targets {
@@ -180,6 +186,36 @@ func (a *App) reconcileNotifications() {
 		policies[target.Identity] = policy
 	}
 	service.Reconcile(targets, notifications.Options{Preview: settings.NotificationPreview, CopyFallback: time.Duration(settings.NotificationCopyMinutes) * time.Minute, Policies: policies})
+}
+
+func keepNotificationTransports(targets, previous []notifications.Target, raw deviceevents.Snapshot) []notifications.Target {
+	prior := make(map[string]notifications.Target, len(previous))
+	for _, target := range previous {
+		prior[target.Identity] = target
+	}
+	online := make(map[string]deviceevents.Transport, len(raw.Transports))
+	if raw.Available {
+		for _, transport := range raw.Transports {
+			if transport.State == "device" {
+				online[transport.Serial] = transport
+			}
+		}
+	}
+	for i, target := range targets {
+		old, exists := prior[target.Identity]
+		transport, live := online[old.Serial]
+		if !exists || !live || target.DeviceSerial == "" || old.DeviceSerial != target.DeviceSerial || old.ServerEpoch != raw.Epoch || old.Epoch != transport.Generation {
+			continue
+		}
+		if target.Serial != old.Serial {
+			notifications.TraceOpen("listener-retained", "transport-healthy", target.Identity, "", 0, 0, 0, false)
+		}
+		targets[i].Serial = old.Serial
+		targets[i].Epoch = old.Epoch
+		targets[i].ServerEpoch = old.ServerEpoch
+		targets[i].Connection = old.Connection
+	}
+	return targets
 }
 
 func (a *App) notificationIdentity(identity string) (string, error) {

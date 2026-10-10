@@ -149,6 +149,9 @@ var appWinBarJS string
 //go:embed web/update_ui.js
 var updateUIJS string
 
+//go:embed web/app_launch_ui.js
+var appLaunchUIJS string
+
 //go:embed assets/icon.ico
 var iconICO []byte
 
@@ -159,7 +162,7 @@ var githubMarkPNG []byte
 var giteeMarkSVG []byte
 
 const (
-	version = "v2.3.0"
+	version = "v2.4.0"
 )
 
 // appDir gui53 产品级修复：返回 exe 所在目录（发行包内 bat 与 GUI 同级解压）。
@@ -236,6 +239,7 @@ func main() {
 		return
 	}
 	log.SetFlags(log.Ltime)
+	notifications.ConfigureOpenTrace(appDir())
 
 	// gui53：bat/adb/config 默认取 exe 同目录（发行包结构）；环境变量可显式覆盖。
 	batPath := envOr("SCEZ_BAT_PATH", filepath.Join(appDir(), "投屏支持.bat"))
@@ -286,7 +290,12 @@ func main() {
 		CrashDir: crashDir, ProfilesPath: profilesPath, SettingsPath: settingsPath,
 		Version: version}
 	a := app.New(cfg)
-	a.SetNotificationService(notifications.NewManager(context.Background(), &notifications.ADBSource{ADB: adbPath, Server: filepath.Join(filepath.Dir(batPath), "scrcpy-server")}, notifications.NewWindowsSink, a.NotificationArtwork))
+	notificationSource := &notifications.ADBSource{ADB: adbPath, Server: filepath.Join(filepath.Dir(batPath), "scrcpy-server")}
+	notificationManager := notifications.NewManager(context.Background(), notificationSource, notifications.NewWindowsSink, a.NotificationArtwork)
+	notificationManager.SetOpener(func(ctx context.Context, request notifications.OpenRequest) error {
+		return a.OpenNotification(ctx, request, notificationSource)
+	})
+	a.SetNotificationService(notificationManager)
 	// 轮 B 多会话：工厂按 serial 创建独立 bat 实例；onLine/onExit 由 App 侧
 	// 绑定到对应会话（每个会话一个 bridge 读 goroutine 对，N≤5 无压力）。
 	a.SetRunnerFactory(func(serial string, onLine func(string), onExit func(int)) (app.Runner, error) {
@@ -299,7 +308,7 @@ func main() {
 	// v2.1.18：pinyin_pro（拼音库，全局 pinyinPro）+ app_search（搜索过滤模块）
 	// 在业务脚本前内联（app.js 依赖 SCEZAppSearch）。
 	pageTemplate := strings.NewReplacer("/*__GITHUB_ICON__*/", base64.StdEncoding.EncodeToString(githubMarkPNG), "/*__GITEE_ICON__*/", base64.StdEncoding.EncodeToString(giteeMarkSVG)).Replace(indexHTML)
-	html, err := ui.BuildIndex(pageTemplate, styleCSS, updateUIJS+"\n"+pinyinProJS+"\n"+appSearchJS+"\n"+appIconCacheJS+"\n"+appWinTextJS+"\n"+appWinBarJS+"\n"+sessionMapJS+"\n"+paramStateJS+"\n"+appsettingStateJS+"\n"+dragOrderJS+"\n"+pairUIJS+"\n"+notificationIconsJS+"\n"+appJS)
+	html, err := ui.BuildIndex(pageTemplate, styleCSS, updateUIJS+"\n"+appLaunchUIJS+"\n"+pinyinProJS+"\n"+appSearchJS+"\n"+appIconCacheJS+"\n"+appWinTextJS+"\n"+appWinBarJS+"\n"+sessionMapJS+"\n"+paramStateJS+"\n"+appsettingStateJS+"\n"+dragOrderJS+"\n"+pairUIJS+"\n"+notificationIconsJS+"\n"+appJS)
 	if err != nil {
 		log.Fatalf("界面资源组装失败: %v", err)
 	}

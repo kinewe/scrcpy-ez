@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.scrcpyez.notificationlab">
+  <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <application android:label="ez 通知测试" android:debuggable="true" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+    <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|uiMode" />
+    <activity android:name=".DetailActivity" android:exported="false" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|uiMode" />
+    <receiver android:name=".PostReceiver" android:exported="true" android:permission="android.permission.DUMP" />
+  </application>
+</manifest>

@@ -13,6 +13,7 @@
       cancel: p === 'selecting' || p === 'downloading' || p === 'validating',
       progress: p === 'selecting' || p === 'downloading' || p === 'validating',
       percent: p !== 'selecting' && s.total > 0 ? Math.min(100, Math.max(0, s.downloaded / s.total * 100)) : null,
+	  animateProgress: p === 'downloading' && s.total > 0 && s.downloaded > 0 && s.downloaded < s.total,
       detail: bytes(s.downloaded) + (s.total > 0 ? ' / ' + bytes(s.total) : '') + (s.speed > 0 && p === 'downloading' ? ' · ' + bytes(s.speed) + '/s' : ''),
       message: s.message || '点击检查更新', error: s.error || '',
       source: s.source || '自动选择（GitHub / Gitee）', notice: i.notice || '',

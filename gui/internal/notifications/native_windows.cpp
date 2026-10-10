@@ -19,6 +19,21 @@
 #include <atomic>
 #include <vector>
 
+extern "C" int scez_toast_icon_size(void) {
+    HMODULE user = GetModuleHandleW(L"user32.dll");
+    using SetContext = HANDLE(WINAPI *)(HANDLE);
+    using GetDpi = UINT(WINAPI *)();
+    auto setContext = reinterpret_cast<SetContext>(GetProcAddress(user, "SetThreadDpiAwarenessContext"));
+    auto getDpi = reinterpret_cast<GetDpi>(GetProcAddress(user, "GetDpiForSystem"));
+    // Query physical scale even if the caller's thread is DPI-unaware, then
+    // restore its previous context without changing any application windows.
+    HANDLE previous = setContext ? setContext(reinterpret_cast<HANDLE>(-4)) : nullptr;
+    UINT dpi = getDpi ? getDpi() : 96;
+    if (previous) setContext(previous);
+    if (dpi < 96 || dpi > 768) dpi = 96;
+    return MulDiv(48, dpi, 96);
+}
+
 // SDK ABI, declared locally because this MinGW distribution omits the SDK header.
 struct ScrcpyEZUserInput { LPCWSTR Key; LPCWSTR Value; };
 struct ScrcpyEZActivation : IUnknown {
@@ -26,6 +41,7 @@ struct ScrcpyEZActivation : IUnknown {
 };
 static const IID activationIID = {0x53e31837,0x6600,0x4a81,{0x93,0x95,0x75,0xcf,0xfe,0x74,0x6f,0x94}};
 struct ActivationState { std::atomic<bool> alive{true}; std::wstring app; uint64_t handle; };
+static void dispatch_toast_activation(const std::shared_ptr<ActivationState> &state, LPCWSTR args, int source);
 
 class ActivationCallback : public ScrcpyEZActivation {
     std::atomic<ULONG> refs{1};
@@ -41,10 +57,8 @@ public:
     ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
     ULONG STDMETHODCALLTYPE Release() override { auto count = --refs; if (!count) delete this; return count; }
     HRESULT STDMETHODCALLTYPE Activate(LPCWSTR app, LPCWSTR args, const ScrcpyEZUserInput *, ULONG) override {
-        if (!state->alive || !app || !args || state->app != app || wcsnlen(args,38) != 37 || wcsncmp(args,L"copy:",5)) return S_OK;
-        std::string token;
-        for (size_t i=5; i<37; ++i) { if (!((args[i]>=L'0'&&args[i]<=L'9')||(args[i]>=L'a'&&args[i]<=L'f'))) return S_OK; token.push_back(static_cast<char>(args[i])); }
-        scez_notification_clicked(state->handle, &token[0], GetClipboardSequenceNumber());
+        if (!state->alive || !app || state->app != app) return S_OK;
+        dispatch_toast_activation(state, args, 1);
         return S_OK;
     }
 };
@@ -71,6 +85,75 @@ public:
 using Microsoft::WRL::ComPtr;
 namespace N = ABI::Windows::UI::Notifications;
 namespace X = ABI::Windows::Data::Xml::Dom;
+
+// Both Shell's COM activation and the live toast event reach the same Go sink.
+// Shared lifetime contains no context pointer, message text or phone capability.
+static void dispatch_toast_activation(const std::shared_ptr<ActivationState> &state, LPCWSTR args, int source) {
+    if (!state || !state->alive) return;
+    scez_notification_activation_event(state->handle, source);
+    if (!args || wcsnlen(args, 38) != 37 || (wcsncmp(args, L"copy:", 5) && wcsncmp(args, L"open:", 5))) return;
+    std::string token;
+    for (size_t i = 5; i < 37; ++i) {
+        if (!((args[i] >= L'0' && args[i] <= L'9') || (args[i] >= L'a' && args[i] <= L'f'))) return;
+        token.push_back(static_cast<char>(args[i]));
+    }
+    if (!wcsncmp(args, L"open:", 5)) scez_notification_opened(state->handle, &token[0]);
+    else scez_notification_clicked(state->handle, &token[0], GetClipboardSequenceNumber());
+}
+
+using ToastActivatedHandler = ABI::Windows::Foundation::ITypedEventHandler<N::ToastNotification*, IInspectable*>;
+class ToastActivatedCallback : public ToastActivatedHandler, public IAgileObject {
+    std::atomic<ULONG> refs{1};
+    std::shared_ptr<ActivationState> state;
+public:
+    explicit ToastActivatedCallback(std::shared_ptr<ActivationState> value) : state(std::move(value)) {}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void **out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        if (id == IID_IUnknown || id == __uuidof(ToastActivatedHandler)) *out = static_cast<ToastActivatedHandler*>(this);
+        else if (id == IID_IAgileObject) *out = static_cast<IAgileObject*>(this);
+        else return E_NOINTERFACE;
+        AddRef(); return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+    ULONG STDMETHODCALLTYPE Release() override { auto count = --refs; if (!count) delete this; return count; }
+    HRESULT STDMETHODCALLTYPE Invoke(N::IToastNotification*, IInspectable *args) override {
+        ComPtr<N::IToastActivatedEventArgs> activated;
+        HSTRING value = nullptr;
+        if (args && SUCCEEDED(args->QueryInterface(IID_PPV_ARGS(&activated))) && SUCCEEDED(activated->get_Arguments(&value))) {
+            dispatch_toast_activation(state, WindowsGetStringRawBuffer(value, nullptr), 2);
+            WindowsDeleteString(value);
+        } else if (state && state->alive) {
+            scez_notification_activation_event(state->handle, 3);
+        }
+        return S_OK;
+    }
+};
+
+using ToastDismissedHandler = ABI::Windows::Foundation::ITypedEventHandler<N::ToastNotification*, N::ToastDismissedEventArgs*>;
+class ToastDismissedCallback : public ToastDismissedHandler, public IAgileObject {
+    std::atomic<ULONG> refs{1};
+    std::shared_ptr<ActivationState> state;
+public:
+    explicit ToastDismissedCallback(std::shared_ptr<ActivationState> value) : state(std::move(value)) {}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void **out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        if (id == IID_IUnknown || id == __uuidof(ToastDismissedHandler)) *out = static_cast<ToastDismissedHandler*>(this);
+        else if (id == IID_IAgileObject) *out = static_cast<IAgileObject*>(this);
+        else return E_NOINTERFACE;
+        AddRef(); return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+    ULONG STDMETHODCALLTYPE Release() override { auto count = --refs; if (!count) delete this; return count; }
+    HRESULT STDMETHODCALLTYPE Invoke(N::IToastNotification*, N::IToastDismissedEventArgs *args) override {
+        N::ToastDismissalReason reason;
+        if (state && state->alive && args && SUCCEEDED(args->get_Reason(&reason))) {
+            scez_notification_dismissed(state->handle, static_cast<int>(reason));
+        }
+        return S_OK;
+    }
+};
 
 struct ToastFailures { std::atomic<int> count{0}; std::atomic<int32_t> code{0}; };
 using ToastFailedHandler = ABI::Windows::Foundation::ITypedEventHandler<N::ToastNotification*,N::ToastFailedEventArgs*>;
@@ -121,7 +204,7 @@ struct ToastContext {
     ComPtr<N::IToastNotifier> notifier;
     ComPtr<N::IToastNotificationHistory> history;
     ComPtr<N::IToastNotificationFactory> factory;
-    struct Card { ComPtr<N::IToastNotification> toast; uint64_t order; };
+    struct Card { ComPtr<N::IToastNotification> toast; ComPtr<ToastActivatedHandler> activated; uint64_t order; };
     std::map<std::pair<std::wstring, std::wstring>, Card> cards;
     uint64_t order = 0;
     std::shared_ptr<ActivationState> activation;
@@ -430,6 +513,20 @@ extern "C" int32_t scez_toast_show(void *context, const char *xml, const char *g
     EventRegistrationToken failed_token;
     hr=toast->add_Failed(failed.Get(),&failed_token);
     if(FAILED(hr)) return hr;
+    ComPtr<ToastActivatedHandler> activated;
+    if (ctx->activation && ctx->cookie) {
+        activated.Attach(new(std::nothrow) ToastActivatedCallback(ctx->activation));
+        if (!activated) return E_OUTOFMEMORY;
+        EventRegistrationToken activated_token;
+        hr = toast->add_Activated(activated.Get(), &activated_token);
+        if (FAILED(hr)) return hr;
+        ComPtr<ToastDismissedCallback> dismissed;
+        dismissed.Attach(new(std::nothrow) ToastDismissedCallback(ctx->activation));
+        if (!dismissed) return E_OUTOFMEMORY;
+        EventRegistrationToken dismissed_token;
+        hr = toast->add_Dismissed(dismissed.Get(), &dismissed_token);
+        if (FAILED(hr)) return hr;
+    }
     ComPtr<N::IToastNotification2> toast2;
     hr = toast.As(&toast2);
     if (FAILED(hr)) return hr;
@@ -457,7 +554,7 @@ extern "C" int32_t scez_toast_show(void *context, const char *xml, const char *g
     }
     *phase = 4;
     hr = ctx->notifier->Show(toast.Get());
-    if (SUCCEEDED(hr)) ctx->cards[key] = ToastContext::Card{toast, ++ctx->order};
+    if (SUCCEEDED(hr)) ctx->cards[key] = ToastContext::Card{toast, activated, ++ctx->order};
     return hr;
 }
 
@@ -566,6 +663,53 @@ extern "C" int32_t scez_toast_test_activate(void *context, const char *token) {
     HRESULT hr=CoCreateInstance(ctx->clsid,nullptr,CLSCTX_LOCAL_SERVER,activationIID,reinterpret_cast<void **>(callback.GetAddressOf()));
     if (FAILED(hr)) return hr;
     return callback->Activate(ctx->id.c_str(),(L"copy:"+wide(token)).c_str(),nullptr,0);
+}
+
+extern "C" int32_t scez_toast_test_open(void *context, const char *token) {
+    auto ctx=static_cast<ToastContext *>(context);
+    ComPtr<ScrcpyEZActivation> callback;
+    HRESULT hr=CoCreateInstance(ctx->clsid,nullptr,CLSCTX_LOCAL_SERVER,activationIID,reinterpret_cast<void **>(callback.GetAddressOf()));
+    if (FAILED(hr)) return hr;
+    return callback->Activate(ctx->id.c_str(),(L"open:"+wide(token)).c_str(),nullptr,0);
+}
+
+// Integration seam invokes the exact event handler subscribed on a synthetic
+// card. It does not simulate Shell UI or inspect any real notification.
+class ToastTestArguments : public N::IToastActivatedEventArgs {
+    std::atomic<ULONG> refs{1};
+    std::wstring value;
+public:
+    explicit ToastTestArguments(std::wstring args) : value(std::move(args)) {}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void **out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        if (id != IID_IUnknown && id != __uuidof(IInspectable) && id != __uuidof(N::IToastActivatedEventArgs)) return E_NOINTERFACE;
+        *out = static_cast<N::IToastActivatedEventArgs*>(this); AddRef(); return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+    ULONG STDMETHODCALLTYPE Release() override { auto count = --refs; if (!count) delete this; return count; }
+    HRESULT STDMETHODCALLTYPE GetIids(ULONG *count, IID **ids) override {
+        if (!count || !ids) return E_POINTER;
+        *count = 0; *ids = nullptr; return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetRuntimeClassName(HSTRING *name) override {
+        if (!name) return E_POINTER; *name = nullptr; return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetTrustLevel(TrustLevel *trust) override {
+        if (!trust) return E_POINTER; *trust = BaseTrust; return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE get_Arguments(HSTRING *args) override {
+        return WindowsCreateString(value.c_str(), static_cast<UINT32>(value.size()), args);
+    }
+};
+extern "C" int32_t scez_toast_test_event(void *context, const char *group, const char *tag, const char *args) {
+    auto ctx = static_cast<ToastContext*>(context);
+    auto card = ctx->cards.find(std::make_pair(wide(group), wide(tag)));
+    if (card == ctx->cards.end() || !card->second.activated) return E_INVALIDARG;
+    ComPtr<N::IToastActivatedEventArgs> activated;
+    activated.Attach(new(std::nothrow) ToastTestArguments(wide(args)));
+    if (!activated) return E_OUTOFMEMORY;
+    return card->second.activated->Invoke(card->second.toast.Get(), activated.Get());
 }
 
 extern "C" int32_t scez_toast_test_external_activate(const char *app, const char *clsid, const char *token) {

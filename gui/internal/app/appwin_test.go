@@ -79,8 +79,8 @@ func TestAppWinStartInjectsVdParams(t *testing.T) {
 	if p.VdSize != "2560x1152" || p.VdDpi != 480 || !p.VdFlex || p.VdIme != "local" {
 		t.Fatalf("虚拟屏默认档参数缺失: %+v", p)
 	}
-	if p.StartApp != "+com.android.browser" {
-		t.Fatalf("StartApp=%q，期望 +com.android.browser", p.StartApp)
+	if p.StartApp != "com.android.browser" || !p.ReuseAppTask || !p.VdKeepContent {
+		t.Fatalf("任务复用参数丢失: %+v", p)
 	}
 	if p.WinTitle != "浏览器" {
 		t.Fatalf("WinTitle=%q，期望 浏览器", p.WinTitle)
@@ -234,7 +234,7 @@ func TestAppWinStartFastOnPhysCacheMiss(t *testing.T) {
 	if p.VdDpi != 0 {
 		t.Fatalf("缓存 miss 时不应注入 dpi（got %d）", p.VdDpi)
 	}
-	if p.VdSize == "" || p.StartApp != "+com.android.browser" {
+	if p.VdSize == "" || p.StartApp != "com.android.browser" || !p.ReuseAppTask {
 		t.Fatalf("其余参数应正常注入: %+v", p)
 	}
 }

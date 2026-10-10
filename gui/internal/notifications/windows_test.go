@@ -62,6 +62,100 @@ func TestWindowsSenderIconUsesEmbeddedProductArtwork(t *testing.T) {
 	}
 }
 
+func TestNativeOpenQueuesSecondApplicationClick(t *testing.T) {
+	if os.Getenv("SCEZ_NOTIFICATION_NATIVE_TEST") != "1" {
+		t.Skip("opt-in native COM activation")
+	}
+	sink := testNativeSink(t)
+	started := make(chan int, 2)
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	for n := 1; n <= 2; n++ {
+		id := n
+		card := Card{Group: "queued-detail", Tag: strconv.Itoa(n), Title: "合成通知连续点击测试", Open: func(ctx context.Context) error {
+			started <- id
+			if id == 1 {
+				select {
+				case <-release:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			return nil
+		}}
+		if err := sink.Show(card); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for n := 1; n <= 2; n++ {
+		action := sink.call(nativeRequest{op: "openToken", group: "queued-detail", tag: strconv.Itoa(n)}).token
+		if err := sink.call(nativeRequest{op: "openActivate", value: action}).err; err != nil {
+			t.Fatal(err)
+		}
+		if n == 1 {
+			select {
+			case <-started:
+			case <-time.After(2 * time.Second):
+				t.Fatal("first click missing")
+			}
+		}
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(sink.activations) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(sink.activations) != 0 {
+		t.Fatal("second native click not consumed")
+	}
+	// After consumption a native request barrier also finishes that handler.
+	_ = sink.call(nativeRequest{op: "count"})
+	close(release)
+	select {
+	case id := <-started:
+		if id != 2 {
+			t.Fatal("wrong queued action")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("second application click swallowed")
+	}
+	_ = sink.Clear("queued-detail")
+}
+
+func TestNativeExpiredOpenReportsFailureWithoutLaunching(t *testing.T) {
+	if os.Getenv("SCEZ_NOTIFICATION_NATIVE_TEST") != "1" {
+		t.Skip("opt-in native COM activation")
+	}
+	sink := testNativeSink(t)
+	called := make(chan struct{}, 2)
+	card := Card{Group: "expired-detail", Tag: "detail", Title: "合成失效通知测试", Silent: true, Open: func(context.Context) error { called <- struct{}{}; return nil }}
+	if err := sink.Show(card); err != nil {
+		t.Fatal(err)
+	}
+	token := sink.call(nativeRequest{op: "openToken", group: card.Group, tag: card.Tag}).token
+	if err := sink.Remove(card.Group, card.Tag); err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.call(nativeRequest{op: "openActivate", value: token}).err; err != nil {
+		t.Fatal(err)
+	}
+	await(t, func() bool {
+		result := sink.call(nativeRequest{op: "contains", value: "通知已失效"})
+		return result.err == nil && result.count == 1
+	})
+	select {
+	case <-called:
+		t.Fatal("expired native action launched application")
+	default:
+	}
+	_ = sink.Clear(ShortID("notification-open-expired"))
+}
+
 func testNativeIdentity(t *testing.T) (*WindowsSink, string) {
 	t.Helper()
 	id := fmt.Sprintf("ScrcpyEZ.NotificationTest.%d.%d", os.Getpid(), time.Now().UnixNano())
@@ -521,7 +615,7 @@ func (o *textureOutput) Write(data []byte) (int, error) {
 	if o.buffer.Len()+len(data) <= 65536 {
 		_, _ = o.buffer.Write(data)
 	}
-	if bytes.Contains(o.buffer.Bytes(), []byte("INFO: Texture:")) {
+	if bytes.Contains(o.buffer.Bytes(), []byte("INFO: Texture:")) || bytes.Contains(o.buffer.Bytes(), []byte("INFO: Texture (")) {
 		o.once.Do(func() { close(o.ready) })
 	}
 	return len(data), nil

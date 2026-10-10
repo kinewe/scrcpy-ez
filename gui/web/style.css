@@ -669,8 +669,44 @@ body {
 .repo-mark { display:block; width:28px; height:28px; flex:none; object-fit:contain; pointer-events:none; }
 .repo-mark-github { filter:invert(1); }
 .update-result-dismiss { display:block; margin:8px auto 0; padding:0; border:0; background:none; color:var(--green-dark); font-size:12px; cursor:pointer; }
-#update-progress-bar { width:100%; height:8px; accent-color:var(--green); }
+#update-progress { margin-top: 14px; }
+#update-progress-bar {
+  display: block; width: 100%; height: 12px; border: 0; border-radius: 999px;
+  appearance: none; -webkit-appearance: none; overflow: hidden;
+  background: #e9f1ed; accent-color: var(--green);
+}
+#update-progress-bar::-webkit-progress-bar { background: #e9f1ed; border-radius: 999px; }
+#update-progress-bar::-webkit-progress-value {
+  background: linear-gradient(90deg, #319b7b, #53ba94); border-radius: 999px;
+  transition: width .25s ease;
+}
+#update-progress-bar::-moz-progress-bar {
+  background: linear-gradient(90deg, #319b7b, #53ba94); border-radius: 999px;
+}
+#update-progress-bar:indeterminate {
+  background: #e9f1ed linear-gradient(90deg, #319b7b, #53ba94) no-repeat;
+  background-size: 32% 100%; animation: update-progress-scan 1.4s ease-in-out infinite;
+}
+#update-progress-bar:indeterminate::-webkit-progress-bar { background: transparent; }
+#update-progress-text { margin: 8px 0 0; font-variant-numeric: tabular-nums; }
+@keyframes update-progress-scan {
+  from { background-position: -48% 0; }
+  to { background-position: 148% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #update-progress-bar:indeterminate { animation: none; background-position: 50% 0; }
+  #update-progress-bar::-webkit-progress-value { transition: none; }
+}
 .modal-close { cursor: pointer; color: var(--muted); padding: 2px 6px; }
+#app-launch-modal { z-index: 90; }
+.app-launch-card { padding: 20px; max-width: 390px; }
+.app-launch-card .modal-head { gap: 12px; margin-bottom: 16px; }
+.app-launch-card .modal-close { border: 0; background: transparent; font: inherit; }
+.app-launch-card p { margin: 0 0 14px; font-size: 13px; line-height: 1.7; }
+.app-launch-card .app-launch-warning { color: #9a650f; background: #fff7e8; border-radius: 8px; padding: 10px 12px; font-size: 12px; }
+.app-launch-card .app-launch-error { color: #b42318; }
+.app-launch-card button:focus-visible { outline: 2px solid var(--green-dark); outline-offset: 3px; }
+.app-launch-card button:disabled { opacity: .55; cursor: wait; }
 
 /* ===== 设置面板（右上角齿轮）：一行一个开关（标题 + 说明 + 绿/灰滑块） ===== */
 .set-row {
@@ -709,14 +745,24 @@ body {
 .notification-options-trigger:hover, .notification-options-trigger[aria-expanded="true"] { background: #edf7f1; border-color: #d3e9de; }
 .notification-chevron { width: 13px; height: 13px; transition: transform .16s; }
 .notification-options-trigger[aria-expanded="true"] .notification-chevron { transform: rotate(180deg); }
-.notification-options-panel { flex: none; max-height: 48vh; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 12px; margin-top: 10px; }
-.notification-option-group { border: 0; min-width: 0; padding: 0; margin: 0 0 12px; }
-.notification-option-group legend { display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--text); }
-.notification-option-group legend > span { margin-left: auto; padding: 2px 6px; border-radius: 5px; background: #f2f4f3; font-size: 10px; font-weight: 400; color: var(--muted); }
+.notification-options-panel { flex: none; max-height: 48vh; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 9px; margin-top: 8px; }
+.notification-device-options { padding-bottom: 9px; margin-bottom: 9px; border-bottom: 1px solid var(--border); }
+.notification-device-options .notification-option-group { margin-bottom: 0; }
+.notification-open-row { display: grid; grid-template-columns: minmax(0, 1fr) 34px; align-items: center; column-gap: 16px; row-gap: 3px; margin-bottom: 7px; }
+.notification-open-title { grid-column: 1; grid-row: 1; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
+.notification-scope { flex: none; margin-left: 2px; padding: 2px 6px; border-radius: 5px; background: #f2f4f3; font-size: 10px; font-weight: 400; color: var(--muted); white-space: nowrap; }
+.notification-open-row .notification-option-note { grid-column: 1; grid-row: 2; margin: 0; padding-left: 23px; }
+.notification-open-row .switch { grid-column: 2; grid-row: 1 / 3; width: 34px; height: 20px; padding: 0; border: 0; }
+.notification-open-row .switch .knob { width: 14px; height: 14px; }
+.notification-open-row .switch.on .knob { left: 17px; }
+.notification-open-row .switch:focus-visible { outline: 2px solid var(--green-dark); outline-offset: 3px; }
+.notification-open-row .switch:disabled { opacity: .6; cursor: wait; }
+.notification-option-group { border: 0; min-width: 0; padding: 0; margin: 0 0 9px; }
+.notification-option-group legend { display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; margin-bottom: 6px; font-size: 12px; font-weight: 600; color: var(--text); }
 .notification-content-choices { display: grid; gap: 6px; }
 .notification-choice { position: relative; display: block; cursor: pointer; }
 .notification-choice input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-.notification-choice-body { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; color: var(--text); background: var(--card); transition: background .12s, border-color .12s; }
+.notification-choice-body { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 9px; color: var(--text); background: var(--card); transition: background .12s, border-color .12s; }
 .notification-choice-body > span { flex: 1; }
 .notification-choice-body b { display: block; font-size: 12px; font-weight: 500; }
 .notification-choice-body small { display: block; font-size: 10px; color: var(--muted); margin-top: 3px; }
@@ -810,6 +856,10 @@ body {
 
 /* ===== 参数浮窗（有线/无线两套独立；按当前模式自动定位） ===== */
 .param-card { max-width: 430px; }
+#param-modal .param-card { display: flex; flex-direction: column; max-height: calc(100vh - 32px); }
+#param-modal .modal-head, #param-modal .param-foot { flex: none; }
+#param-modal .param-foot { padding-top: 12px; }
+.param-body { min-height: 0; overflow-y: auto; padding-right: 4px; margin-right: -4px; }
 .param-sub { font-size: 12px; color: var(--muted); margin: 2px 0 10px; }
 .param-mode {
   display: inline-block; font-size: 12px; color: #16a34a;
@@ -853,6 +903,22 @@ body {
   background: #f5f5f5; border-radius: 10px; padding: 9px 12px;
   font-size: 12px; color: #777; line-height: 1.55; margin: 12px 0;
 }
+.param-assist {
+  display: flex; flex: none; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 4px; padding: 4px 0; cursor: pointer;
+}
+.param-assist-copy { min-width: 0; }
+.param-assist-title { font-size: 12px; color: var(--muted); }
+.param-assist-description { font-size: 11px; color: var(--muted); }
+.param-assist-toggle { position: relative; flex: none; width: 34px; height: 20px; }
+.param-assist-toggle .switch { display: block; width: 100%; height: 100%; border-radius: 10px; pointer-events: none; }
+.param-assist-toggle .knob { width: 14px; height: 14px; }
+.param-assist-input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; z-index: 1; }
+.param-assist-input:checked + .switch { background: var(--green); }
+.param-assist-input:checked + .switch .knob { left: 17px; }
+.param-assist-input:focus-visible + .switch { outline: 2px solid var(--green-dark); outline-offset: 3px; }
+.param-assist-input:disabled { cursor: wait; }
+.param-assist-input:disabled + .switch { opacity: .5; }
 .param-foot { display: flex; gap: 8px; }
 .param-foot .btn { flex: 1; }
 
@@ -1050,4 +1116,19 @@ body {
 }
 .view-enter {
   animation: viewFadeIn 160ms ease-out;
+}
+
+/* A soft glint stays inside the downloaded portion; no moving fake progress. */
+button.switch { border:0; padding:0; }
+button.switch:focus-visible { outline:2px solid var(--green); outline-offset:3px; }
+button.switch:disabled { opacity:.7; cursor:wait; }
+#update-progress-bar.is-downloading::-webkit-progress-value {
+  background-image: linear-gradient(105deg, transparent 34%, rgba(255,255,255,.38) 48%, transparent 62%), linear-gradient(90deg,#319b7b,#53ba94);
+  background-size: 220% 100%, 100% 100%;
+  animation: update-progress-glint 2.6s ease-in-out infinite;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.28);
+}
+@keyframes update-progress-glint { from {background-position:150% 0,0 0;} to {background-position:-150% 0,0 0;} }
+@media (prefers-reduced-motion: reduce) {
+  #update-progress-bar.is-downloading::-webkit-progress-value { animation:none; background-image:linear-gradient(90deg,#319b7b,#53ba94); }
 }

@@ -47,8 +47,8 @@ func TestFrameBoundaries(t *testing.T) {
 }
 
 func TestClassificationAndReadiness(t *testing.T) {
-	got := Parse("A unauthorized usb:1 transport_id:1\nA-IP:device device usb:2\n192.0.2.1:5555 offline\nadb-A._adb-tls-connect._tcp device\nadb-A._adb-tls-pairing._tcp device\nemulator-5554 device\n")
-	want := []string{"usb", "usb", "wifi", "wifi", "other", "other"}
+	got := Parse("A unauthorized usb:1 transport_id:1\nA-IP:device device usb:2\n192.0.2.1:5555 offline\nadb-A._adb-tls-connect._tcp device\nadb-A._adb-tls-pairing._tcp device\nemulator-5554 device\nadb-A._adb._tcp device\n")
+	want := []string{"usb", "usb", "wifi", "wifi", "other", "other", "wifi"}
 	for i, v := range got {
 		if v.Kind != want[i] {
 			t.Fatalf("%+v", v)

@@ -73,6 +73,7 @@
         <b id="param-title">自定义参数</b>
         <span class="modal-close" id="param-close">✕</span>
       </div>
+      <div class="param-body">
       <div class="param-sub">每设备两套分别记忆 · 保存后重新投屏</div>
       <div class="param-mode" id="param-mode">当前：有线模式</div>
       <div id="param-rows"></div>
@@ -113,7 +114,17 @@
       </div>
 
       <div class="param-note" id="param-note"></div>
- <label class="param-sub"><input id="param-root-repair" type="checkbox">上传权限失败时自动 root 修复（仅适用于已 root 手机）</label>
+      </div>
+      <label class="param-assist" for="param-root-repair" title="上传权限失败时自动尝试修复；仅适用于已 root 的设备，切换立即生效">
+        <span class="param-assist-copy">
+          <span class="param-assist-title" id="param-root-title">上传权限自动修复</span>
+          <span class="param-assist-description" id="param-root-description">（仅 root 设备）</span>
+        </span>
+        <span class="param-assist-toggle">
+          <input id="param-root-repair" class="param-assist-input" type="checkbox" role="switch" aria-labelledby="param-root-title" aria-describedby="param-root-description">
+          <span class="switch" aria-hidden="true"><span class="knob"></span></span>
+        </span>
+      </label>
       <div class="param-foot">
         <button class="btn ghost" id="param-cancel">取消</button>
         <button class="btn primary" id="param-save">保存并重新投屏</button>
@@ -154,15 +165,22 @@
       <button class="notification-options-trigger" id="notification-options" type="button" aria-expanded="false" aria-controls="notification-options-panel" style="display:none"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="sliders-horizontal"></svg>通知选项<svg class="notification-chevron" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="chevron-down"></svg></button>
     </div>
     <div id="notification-options-panel" class="notification-options-panel" style="display:none">
+      <div class="notification-device-options" role="group" aria-label="当前设备通知选项">
+        <div class="notification-open-row">
+          <div class="notification-open-title" id="notification-open-label"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="external-link"></svg>点击通知跳转到投屏<span class="notification-scope">当前设备</span></div>
+          <div class="notification-option-note" id="notification-open-note">普通通知打开投屏 · 验证码仍只复制</div>
+          <button class="switch" id="notification-open" type="button" role="switch" aria-checked="true" aria-labelledby="notification-open-label" aria-describedby="notification-open-note"><span class="knob"></span></button>
+        </div>
       <fieldset id="notification-preview" class="notification-option-group">
-        <legend><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="file-text"></svg>通知内容<span>当前设备</span></legend>
+        <legend><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="file-text"></svg>通知内容<span class="notification-scope">当前设备</span></legend>
         <div class="notification-content-choices">
           <label class="notification-choice"><input type="radio" name="notification-preview" value="full"><span class="notification-choice-body"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="message-square"></svg><span><b>显示消息正文</b><small>可直接查看消息与复制验证码</small></span><svg class="notification-choice-check" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="check"></svg></span></label>
           <label class="notification-choice"><input type="radio" name="notification-preview" value="hidden"><span class="notification-choice-body"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="lock-keyhole"></svg><span><b>仅提示应用与设备</b><small>隐藏正文，不提供验证码复制入口</small></span><svg class="notification-choice-check" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="check"></svg></span></label>
         </div>
       </fieldset>
+      </div>
       <fieldset id="notification-copy-minutes" class="notification-option-group">
-        <legend><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="clock-3"></svg>验证码复制期限<span>所有设备</span></legend>
+        <legend><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="clock-3"></svg>验证码复制期限<span class="notification-scope">所有设备</span></legend>
         <div class="notification-expiry-choices">
           <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="15"><span class="notification-choice-body">15 分钟</span></label>
           <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="60"><span class="notification-choice-body">1 小时</span></label>
@@ -170,9 +188,9 @@
           <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="1440"><span class="notification-choice-body">24 小时</span></label>
           <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="4320"><span class="notification-choice-body">3 天</span></label>
         </div>
-        <p class="notification-option-note">仅用于未注明有效期的新验证码，原文有效期优先；不延长验证码本身的有效期。</p>
+        <p class="notification-option-note">仅用于未注明有效期的新验证码，原文有效期优先；不延长验证码本身的有效期</p>
       </fieldset>
-      <div class="notification-privacy-note"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="info"></svg><span>消息正文也可能出现在 Windows 通知中心与锁屏。</span></div>
+      <div class="notification-privacy-note"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="info"></svg><span>消息正文也可能出现在 Windows 通知中心与锁屏</span></div>
     </div>
   </div>
 </div>
@@ -379,6 +397,16 @@
 </div>
 
 <!-- ================= 指引弹窗（原连接向导精简版） ================= -->
+<div class="modal-mask" id="app-launch-modal" style="display:none">
+  <div class="modal-card app-launch-card" role="dialog" aria-modal="true" aria-labelledby="app-launch-title" aria-describedby="app-launch-message app-launch-warning">
+    <div class="modal-head"><b id="app-launch-title">未能打开应用窗口</b><button type="button" class="modal-close" id="app-launch-close" aria-label="取消此次投屏">✕</button></div>
+    <p id="app-launch-message"></p>
+    <p class="app-launch-warning" id="app-launch-warning">继续会先关闭应用，再打开投屏。当前操作会被打断，未发送或未保存的内容可能丢失</p>
+    <p class="app-launch-error" id="app-launch-error" role="alert" style="display:none"></p>
+    <div class="param-foot"><button type="button" class="btn ghost" id="app-launch-cancel">取消</button><button type="button" class="btn primary" id="app-launch-restart">确认关闭并投屏</button></div>
+  </div>
+</div>
+
 <div class="modal-mask" id="guide-modal" style="display:none">
   <div class="modal-card">
     <div class="modal-head"><b>指引</b><span class="modal-close" id="guide-close">✕</span></div>

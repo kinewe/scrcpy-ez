@@ -1,6 +1,7 @@
 package notifications
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"sort"
@@ -10,6 +11,7 @@ import (
 const maxRecords = 512
 
 type cachedRecord struct {
+	openToken   string
 	value       Record
 	fingerprint string
 	bodyHash    string
@@ -18,6 +20,9 @@ type cachedRecord struct {
 }
 
 type State struct {
+	identity     string
+	session      string
+	opener       func(context.Context, OpenRequest) error
 	group        string
 	device       string
 	connection   string
@@ -48,7 +53,7 @@ type cachedArtwork struct {
 }
 
 func NewState(identity, device string, preview bool) *State {
-	return &State{group: ShortID(identity), device: device, preview: preview, records: make(map[string]cachedRecord), icons: make(map[string]AppIcon)}
+	return &State{identity: identity, group: ShortID(identity), device: device, preview: preview, records: make(map[string]cachedRecord), icons: make(map[string]AppIcon)}
 }
 
 func fingerprint(r Record) string {
@@ -106,7 +111,23 @@ func (s *State) show(r Record, silent bool, sink Sink) error {
 			delete(s.copyStarts, r.Key)
 		}
 	}
+	// OTP stays copy-only, including when its preview is hidden.
+	if s.policy.DetailEnabled() && s.opener != nil && SupportsDetailAction(r) {
+		pkg := r.OpenPackage
+		if pkg == "" {
+			pkg = r.Package
+		}
+		req := OpenRequest{Identity: s.identity, Session: s.session, Key: r.Key, Token: r.OpenToken, Package: pkg, OwnerPackage: r.Package, DisplayPackage: r.DisplayPackage, App: r.App}
+		open := s.opener // Capture the callback; manager reconciliation may update state.
+		card.Open = func(ctx context.Context) error { return open(ctx, req) }
+	}
 	return sink.Show(card)
+}
+
+// SupportsDetailAction applies the same OTP exclusion to normal cards and
+// explicitly authorized real-device diagnostics. No message content is logged.
+func SupportsDetailAction(r Record) bool {
+	return !otpCue.MatchString(normalizeOTP(r.Title+"\n"+r.Body)) && !validVerificationCode(r) && validActionToken(r.OpenToken)
 }
 
 func (s *State) Apply(frame Frame, sink Sink) error {
@@ -119,6 +140,7 @@ func (s *State) Apply(frame Frame, sink Sink) error {
 			return ErrProtocol
 		}
 		s.hello = true
+		s.session = frame.Session
 		s.cutoff = frame.Cutoff
 		s.started = time.Now()
 		return nil
@@ -127,6 +149,8 @@ func (s *State) Apply(frame Frame, sink Sink) error {
 		return ErrProtocol
 	}
 	switch frame.Type {
+	case "open-result":
+		return nil
 	case "icon":
 		if frame.Icon.ID == "" {
 			return nil
@@ -145,7 +169,7 @@ func (s *State) Apply(frame Frame, sink Sink) error {
 			return ErrProtocol
 		}
 		if len(s.records) < maxRecords {
-			s.records[frame.Record.Key] = cachedRecord{value: frame.Record, fingerprint: fingerprint(frame.Record)}
+			s.records[frame.Record.Key] = cachedRecord{value: frame.Record, fingerprint: fingerprint(frame.Record), openToken: frame.Record.OpenToken}
 		}
 	case "ready":
 		if s.ready {
@@ -167,7 +191,7 @@ func (s *State) Apply(frame Frame, sink Sink) error {
 			}
 			record.bodyHash = bodyFingerprint(record.value)
 			record.messageTime = record.value.MessageTime
-			record.value = Record{PostTime: record.value.PostTime}
+			record.value = Record{PostTime: record.value.PostTime, Package: record.value.Package}
 			s.records[key] = record
 		}
 	case "post":
@@ -175,12 +199,29 @@ func (s *State) Apply(frame Frame, sink Sink) error {
 			return ErrProtocol
 		}
 		r := frame.Record
+		flag := "normal"
+		if r.OnlyAlertOnce {
+			flag = "only-alert-once"
+		}
+		TraceOpen("notification-post", flag, s.identity, r.Package, 0, 0, 0, false)
 		old, exists := s.records[r.Key]
 		hash := fingerprint(r)
 		if exists && old.value.PostTime > r.PostTime {
+			TraceOpen("notification-drop", "stale-post", s.identity, r.Package, 0, 0, 0, false)
 			return nil
 		}
 		if exists && old.fingerprint == hash {
+			// Capabilities rotate independently of message content. Refresh only
+			// a card we already showed, quietly; never replay the quiet baseline.
+			if old.visible && old.openToken != r.OpenToken {
+				TraceOpen("notification-show", "silent-capability", s.identity, r.Package, 0, 0, 0, false)
+				if err := s.show(r, true, sink); err != nil {
+					return err
+				}
+			} else {
+				TraceOpen("notification-drop", "duplicate-content", s.identity, r.Package, 0, 0, 0, false)
+			}
+			old.openToken = r.OpenToken
 			old.value.PostTime = r.PostTime
 			s.records[r.Key] = old
 			return nil
@@ -202,9 +243,17 @@ func (s *State) Apply(frame Frame, sink Sink) error {
 		}
 		// Chat apps often reuse a key: a new message may alert, metadata updates stay quiet.
 		newMessage := r.MessageTime > 0 && r.MessageTime > old.messageTime
-		silent := exists && old.visible && (r.OnlyAlertOnce || old.bodyHash == bodyFingerprint(r) && !newMessage)
+		// The phone's alert-once bit applies to its persistent notification slot.
+		// It must not hide distinct messages from the desktop banner. Continue to
+		// refresh metadata/actions quietly, with no message cooldown timer.
+		silent := exists && old.visible && old.bodyHash == bodyFingerprint(r) && !newMessage
 		allowed := s.policy.allows(r)
 		if allowed {
+			code := "banner"
+			if silent {
+				code = "silent-same-body"
+			}
+			TraceOpen("notification-show", code, s.identity, r.Package, 0, 0, 0, false)
 			if err := s.show(r, silent, sink); err != nil {
 				return err
 			}
@@ -213,12 +262,16 @@ func (s *State) Apply(frame Frame, sink Sink) error {
 				return err
 			}
 		}
-		s.records[r.Key] = cachedRecord{value: Record{PostTime: r.PostTime}, fingerprint: hash, bodyHash: bodyFingerprint(r), messageTime: r.MessageTime, visible: allowed}
+		if !allowed {
+			TraceOpen("notification-drop", "policy-blocked", s.identity, r.Package, 0, 0, 0, false)
+		}
+		s.records[r.Key] = cachedRecord{value: Record{PostTime: r.PostTime, Package: r.Package}, fingerprint: hash, bodyHash: bodyFingerprint(r), messageTime: r.MessageTime, visible: allowed, openToken: r.OpenToken}
 	case "remove":
 		if !s.ready {
 			return ErrProtocol
 		}
 		if old, exists := s.records[frame.Record.Key]; exists {
+			TraceOpen("notification-remove", "source-remove", s.identity, old.value.Package, 0, 0, 0, false)
 			if old.visible {
 				if err := sink.Remove(s.group, ShortID(frame.Record.Key)); err != nil {
 					return err
@@ -241,6 +294,9 @@ func (s *State) SetPreview(preview bool, sink Sink) error {
 // Policy changes clear visible cards and copy actions, without replaying cached history.
 func (s *State) SetPolicy(policy Policy, preview bool, sink Sink) error {
 	if s.preview == preview && s.policy.Mode == policy.Mode && s.policy.Other == policy.Other && (policy.Mode != ModeWhitelist || slices.Equal(s.policy.Catalog, policy.Catalog)) && slices.Equal(s.policy.Packages, policy.Packages) {
+		// A detail-action toggle must not remove cards or invalidate OTP copies.
+		// Previously issued open callbacks are gated by the manager at click time.
+		s.policy = policy.Clone()
 		return nil
 	}
 	s.policy = policy.Clone()

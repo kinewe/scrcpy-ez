@@ -60,16 +60,16 @@ func TestAppWinDefaultInjectionTwoSets(t *testing.T) {
 	// 两套默认档（v2.1.48 共享主投屏 baseline；v2.1.51 长边 snap 档位表）：
 	// 有线=设备长边 3200 → snap 2560（尺寸 2560x1152，dpi=600×2560÷3200=480）/120/60；
 	// 无线=1920/60/15（尺寸 1920x864，dpi=360)。
-	wantUsb := bridge.VdModeParams{Size: "2560x1152", Dpi: 480, FPS: 120, Bitrate: 60, Flex: true, Audio: "phone"}
+	wantUsb := bridge.VdModeParams{Size: "2560x1152", Dpi: 480, FPS: 120, Bitrate: 60, Flex: true, AutoDpi: true, Audio: "phone"}
 	if p.VdUsb != wantUsb {
 		t.Fatalf("有线套默认档注入异常: %+v", p.VdUsb)
 	}
-	wantWifi := bridge.VdModeParams{Size: "1920x864", Dpi: 360, FPS: 60, Bitrate: 15, Flex: true, Audio: "phone"}
+	wantWifi := bridge.VdModeParams{Size: "1920x864", Dpi: 360, FPS: 60, Bitrate: 15, Flex: true, AutoDpi: true, Audio: "phone"}
 	if p.VdWifi != wantWifi {
 		t.Fatalf("无线套默认档注入异常: %+v", p.VdWifi)
 	}
 	// 旧单套字段=启动形态（USB）那套（新旧 bat 组合兼容）。
-	if p.VdSize != "2560x1152" || p.VdDpi != 480 || !p.VdFlex || p.VdAudio != "phone" {
+	if p.VdSize != "2560x1152" || p.VdDpi != 480 || !p.VdFlex || !p.VdAutoDpi || p.VdAudio != "phone" {
 		t.Fatalf("旧单套字段同步异常: size=%s dpi=%d flex=%v audio=%s", p.VdSize, p.VdDpi, p.VdFlex, p.VdAudio)
 	}
 	list := waitAppWins(t, e.a, 1)
@@ -168,6 +168,70 @@ func TestAppWinInitialRatioOrientation(t *testing.T) {
 	}
 	if got := appWinInitialSize("3200x1440", 1600, 0, 0); got != "1600x720" {
 		t.Fatalf("空比例应保持设备比例: got %s want 1600x720", got)
+	}
+}
+
+func TestNotificationWindowInitialDirectionPreservesProfiles(t *testing.T) {
+	phys := devPhys{width: 1440, height: 3200, longSide: 3200, dpi: 600}
+	p := AppWinModeParams{Size: "1920", FPS: 120, Bitrate: 80, Flex: true, Audio: "phone", LockFps: true}
+	got := notificationVdParamsToBridge(p, phys, "3200x1440")
+	if got.Size != "864x1920" || got.Dpi != 360 || got.FPS != 120 || got.Bitrate != 80 || !got.Flex || !got.AutoDpi || !got.LockFps {
+		t.Fatalf("notification should use phone direction and retain encoding/density: %+v", got)
+	}
+	if ordinary := vdParamsToBridge(p, phys, "3200x1440"); ordinary.Size != "1920x864" {
+		t.Fatalf("ordinary launch changed: %+v", ordinary)
+	}
+	if p.RatioW != 0 || p.RatioH != 0 {
+		t.Fatal("launch must not rewrite saved profile")
+	}
+	landscape := devPhys{width: 3200, height: 2136, longSide: 3200, dpi: 440}
+	if got := notificationVdParamsToBridge(p, landscape, "3200x2136"); got.Size != "1920x1280" {
+		t.Fatalf("natural landscape device direction lost: %+v", got)
+	}
+	p.RatioW, p.RatioH = 16, 9
+	if got := notificationVdParamsToBridge(p, phys, "3200x1440"); got.Size != "1920x1080" {
+		t.Fatalf("explicit landscape ratio lost: %+v", got)
+	}
+	p.RatioW, p.RatioH = 0, 0
+	if got := notificationVdParamsToBridge(p, devPhys{}, "3200x1440"); got.Size != "864x1920" {
+		t.Fatalf("cold cache should keep phone ratio in portrait: %+v", got)
+	}
+}
+
+func TestWeChatNotificationPreservesPhoneResourcesAndVideoProfile(t *testing.T) {
+	phys := devPhys{width: 1440, height: 3200, longSide: 3200, dpi: 600}
+	p := AppWinModeParams{Size: "1920", FPS: 60, Bitrate: 15, Flex: true, Audio: "phone"}
+	got := notificationVdParamsForPackage("com.tencent.mm", p, phys, "3200x1440")
+	if !got.MatchPhone || got.MaxSize != 1920 || got.Dpi != 0 || got.Flex || got.AutoDpi || got.FPS != 60 || got.Bitrate != 15 {
+		t.Fatalf("WeChat compatibility lost video profile or changed resource density: %+v", got)
+	}
+	if cold := notificationVdParamsForPackage("com.tencent.mm", p, devPhys{}, ""); !cold.MatchPhone || cold.MaxSize != 1920 {
+		t.Fatalf("cold cache reverted to a different display density: %+v", cold)
+	}
+	if other := notificationVdParamsForPackage("com.android.settings", p, phys, "3200x1440"); other.MatchPhone || other.MaxSize != 0 || !other.Flex {
+		t.Fatalf("another app inherited WeChat compatibility: %+v", other)
+	}
+	p.Dpi = 320
+	if manual := notificationVdParamsForPackage("com.tencent.mm", p, phys, "3200x1440"); manual.MatchPhone || manual.Dpi != 320 || !manual.Flex {
+		t.Fatalf("explicit DPI ignored: %+v", manual)
+	}
+	p.Dpi, p.RatioW, p.RatioH = 0, 16, 9
+	if manual := notificationVdParamsForPackage("com.tencent.mm", p, phys, "3200x1440"); manual.MatchPhone || manual.Size != "1920x1080" {
+		t.Fatalf("explicit aspect ratio ignored: %+v", manual)
+	}
+}
+
+func TestAppWindowManualDensityDoesNotFollowFlexResize(t *testing.T) {
+	phys := devPhys{width: 1440, height: 3200, longSide: 3200, dpi: 600}
+	p := AppWinModeParams{Size: "1920", Flex: true, Dpi: 320}
+	ordinary := vdParamsToBridge(p, phys, "3200x1440")
+	notification := notificationVdParamsToBridge(p, phys, "3200x1440")
+	if ordinary.Dpi != 320 || ordinary.AutoDpi || notification.Dpi != 320 || notification.AutoDpi {
+		t.Fatalf("manual density must remain fixed for either entry: ordinary=%+v notification=%+v", ordinary, notification)
+	}
+	p.Dpi, p.Flex = 0, false
+	if fixed := notificationVdParamsToBridge(p, phys, "3200x1440"); fixed.Dpi != 360 || fixed.AutoDpi {
+		t.Fatalf("non-flex display enabled resize scaling: %+v", fixed)
 	}
 }
 

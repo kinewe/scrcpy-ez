@@ -8,3 +8,5 @@ func BringCastToFront(serials []string) error { return nil }
 
 // BringAppWinToFront 非 Windows 空实现（v2.1.46：点击应用卡片浮前应用窗口）。
 func BringAppWinToFront(serials []string, pkg string) error { return nil }
+
+func BringClientToFront(pid int) error { return nil }

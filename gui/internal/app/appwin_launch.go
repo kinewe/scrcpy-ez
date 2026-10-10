@@ -47,7 +47,9 @@ type AppWinItem struct {
 	Mode string `json:"mode"`
 	// Closing 停止已受理、进程清理中（前端在停止按钮位置显示"正在关闭…"遮罩；
 	// 真关完（会话摘除）后条目消失 → 卡片淡出）。
-	Closing bool `json:"closing"`
+	Closing            bool   `json:"closing"`
+	NotificationWindow bool   `json:"notificationWindow,omitempty"`
+	LaunchFailureID    uint64 `json:"launchFailureID,omitempty"`
 	// Phase/PhaseText 转换/重连中的动态状态（v2.1.54）：插拔切换、断线重连等
 	// 阶段显示与主投屏同款的阶段文字（如"检测到 USB 插线，切换有线投屏…"）；
 	// 投屏继续类事件清空 → 前端回默认"正在窗口"。
@@ -60,18 +62,25 @@ type AppWinItem struct {
 // appWinState 是一路应用窗口会话的运行时状态。
 // closing 由 a.mu 保护（快照读出给前端）。
 type appWinState struct {
-	serial        string
-	identity      string
-	identityCheck *wirelessIdentityCheck
-	pkg           string
-	name          string
-	mode          string // 启动时连接形态（usb/wifi）
-	phase         string // 转换/重连中的动态状态（bridge.Kind 字符串；v2.1.54）
-	phaseText     string // 卡片状态文字（""=默认"正在窗口"）
-	runner        Runner
-	startedAt     time.Time
-	closing       bool
-	restarting    bool // 参数重启间隙（v2.1.70）：条目原地保留（卡片不消失），runner 释放后原地替换
+	serial             string
+	identity           string
+	identityCheck      *wirelessIdentityCheck
+	pkg                string
+	name               string
+	mode               string // 启动时连接形态（usb/wifi）
+	phase              string // 转换/重连中的动态状态（bridge.Kind 字符串；v2.1.54）
+	phaseText          string // 卡片状态文字（""=默认"正在窗口"）
+	runner             Runner
+	startedAt          time.Time
+	closing            bool
+	clientPID          int
+	displayID          int
+	displayReady       bool
+	displayHasVideo    bool
+	notificationWindow bool
+	launchFailure      string
+	launchFailureID    uint64
+	restarting         bool // 参数重启间隙（v2.1.70）：条目原地保留（卡片不消失），runner 释放后原地替换
 	// log 是最近 60 行原始输出（v2.1.81：排查用日志区——与主投屏 CastState.Log 同模式，
 	// 快照随 AppWinItem.Log 带出；前端渲染「应用名」输出（虚拟屏）模块）。
 	log []string
@@ -79,6 +88,8 @@ type appWinState struct {
 
 // devPhys 是设备物理参数（虚拟屏 dpi 等比公式的输入）。
 type devPhys struct {
+	width    int       // 主屏自然方向宽度（wm size；设备卡片的 Res 已丢失方向）
+	height   int       // 主屏自然方向高度
 	longSide int       // 主屏长边（px，wm size）
 	dpi      int       // 主屏物理密度（wm density）
 	at       time.Time // 查询时间（长 TTL：机型参数运行期不变）
@@ -100,8 +111,16 @@ func appWinKey(serial, pkg string) string { return serial + "#" + pkg }
 
 // StartAppWin 启动应用窗口（幂等：同 serial#pkg 已在运行 → nil）。
 // 走 bat（Runner）：参数=虚拟屏默认档（1280x720 + 等比 dpi + flex + IME=local
-// + --start-app=+pkg）+ 设备锁定注入；bat 侧组装完整投屏参数（uhid/渲染/自愈）。
+// + 任务复用）+ 设备锁定注入；bat 侧组装完整投屏参数（uhid/渲染/自愈）。
 func (a *App) StartAppWin(serial, pkg, name string) error {
+	return a.startAppWin(serial, pkg, name, false)
+}
+
+func (a *App) startAppWin(serial, pkg, name string, notification bool) error {
+	return a.startAppWinWithRestart(serial, pkg, name, notification, false)
+}
+
+func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, restartProcess bool) error {
 	unlockUpdate, updateErr := a.guardUpdateStart()
 	if updateErr != nil {
 		return updateErr
@@ -179,6 +198,10 @@ func (a *App) StartAppWin(serial, pkg, name string) error {
 	native := a.nativeRes(identity)
 	params.VdUsb = vdParamsToBridge(ap.Usb, phys, native)
 	params.VdWifi = vdParamsToBridge(ap.Wifi, phys, native)
+	if notification {
+		params.VdUsb = notificationVdParamsForPackage(pkg, ap.Usb, phys, native)
+		params.VdWifi = notificationVdParamsForPackage(pkg, ap.Wifi, phys, native)
+	}
 	// 旧单套字段同步注入（启动形态那套）：新旧 bat 组合兼容（旧 bat 读 SCEZ_VD_SIZE 等）。
 	cur := params.VdUsb
 	if mode == "wifi" {
@@ -187,10 +210,22 @@ func (a *App) StartAppWin(serial, pkg, name string) error {
 	params.VdSize = cur.Size
 	params.VdDpi = cur.Dpi
 	params.VdFlex = cur.Flex
+	params.VdAutoDpi = cur.AutoDpi
+	params.VdMatchPhone = cur.MatchPhone
+	params.VdMaxSize = cur.MaxSize
 	params.VdAudio = cur.Audio
 	params.VdIme = "local"
 	params.VdNoDecor = a.appWinNoSystemDecorations(identity)
-	params.StartApp = "+" + pkg // "+"=先强停再启动（保完整形态 + 干净，总纲 §1.4）
+	params.StartApp = pkg
+	params.ReuseAppTask = true
+	params.VdKeepContent = true
+	if restartProcess {
+		params.StartApp = "+" + pkg
+	}
+	if notification {
+		params.StartApp = ""
+		params.ReuseAppTask = false
+	} // Original PendingIntent supplies the destination; never force-stop.
 	params.WinTitle = sanitizeWinTitle(name)
 
 	// 参数控件启动可见性（v2.1.56）：跟随全局设置（与主投屏 StartCast 同链）。
@@ -229,7 +264,7 @@ func (a *App) StartAppWin(serial, pkg, name string) error {
 		return fmt.Errorf("启动 bat 失败：%w", err)
 	}
 
-	st := &appWinState{serial: serial, identity: identity, pkg: pkg, name: name, mode: mode, runner: r, startedAt: time.Now()}
+	st := &appWinState{serial: serial, identity: identity, pkg: pkg, name: name, mode: mode, runner: r, startedAt: time.Now(), notificationWindow: notification}
 	a.mu.Lock()
 	st.identityCheck = a.wirelessIdentityChecks[params.Addr]
 	// v2.1.70：重启间隙原地替换——沿用 startedAt 保持卡片位置/顺序（照主投屏 restarting 模式）。
@@ -269,6 +304,12 @@ func (a *App) StartAppWin(serial, pkg, name string) error {
 //     （同一会话进入新阶段）。
 //
 // 真正摘除只由 onAppWinExit（bat 退出）执行。
+var notificationClientReady = regexp.MustCompile(`SCRCPY_EZ_READY pid=([0-9]+)`)
+
+var notificationDisplay = regexp.MustCompile(`New display: .*\(id=([0-9]+)\)`)
+
+var appLaunchResult = regexp.MustCompile(`SCRCPY_EZ_APP_LAUNCH=(reused|started|reuse-failed|launch-failed|layout-incompatible|in-use)\b`)
+
 func (a *App) onAppWinLine(serial, pkg, line string) {
 	bridge.DebugLog("[appwin:%s] %s", pkg, line)
 	ev := bridge.ClassifyLine(line)
@@ -278,6 +319,17 @@ func (a *App) onAppWinLine(serial, pkg, line string) {
 	if st == nil {
 		a.mu.Unlock()
 		return
+	}
+	if match := notificationDisplay.FindStringSubmatch(line); len(match) == 2 {
+		st.displayID, _ = strconv.Atoi(match[1])
+		st.displayReady = st.clientPID > 0 && st.displayID > 0
+	}
+	if match := notificationClientReady.FindStringSubmatch(line); len(match) == 2 {
+		st.clientPID, _ = strconv.Atoi(match[1])
+		st.displayReady = st.clientPID > 0 && st.displayID > 0
+	}
+	if ev.Kind == bridge.KindTexture {
+		st.displayHasVideo = true
 	}
 	// v2.1.81：原始输出缓冲（任何行，含未分类行——与主投屏 applyEventLocked 同模式）
 	st.log = append(st.log, ev.Text)
@@ -313,6 +365,12 @@ func (a *App) onAppWinLine(serial, pkg, line string) {
 			}
 		}
 	case bridge.KindSwitchUSB, bridge.KindReconnect, bridge.KindADBReset, bridge.KindDetect:
+		st.launchFailure = ""
+		st.launchFailureID = 0
+		st.displayID = 0
+		st.clientPID = 0
+		st.displayReady = false
+		st.displayHasVideo = false
 		if st.closing {
 			st.closing = false
 			bridge.DebugLog("[appwin] 切换/重连 → 解除 closing serial=%s pkg=%s", serial, pkg)
@@ -329,6 +387,26 @@ func (a *App) onAppWinLine(serial, pkg, line string) {
 	} else if appWinPhaseClear(ev.Kind) {
 		if st.phaseText != "" {
 			st.phase, st.phaseText = "", ""
+		}
+	}
+	if !st.notificationWindow {
+		if match := appLaunchResult.FindStringSubmatch(line); len(match) == 2 {
+			if match[1] == "reuse-failed" || match[1] == "launch-failed" || match[1] == "layout-incompatible" || match[1] == "in-use" {
+				if st.launchFailure != match[1] || st.launchFailureID == 0 {
+					a.appLaunchNoticeSeq++
+					st.launchFailureID = a.appLaunchNoticeSeq
+				}
+				st.launchFailure = match[1]
+			} else {
+				st.launchFailure, st.launchFailureID = "", 0
+				if st.phase == "app-reuse-failed" || st.phase == "app-launch-failed" || st.phase == "app-layout-incompatible" || st.phase == "app-in-use" {
+					st.phase, st.phaseText = "", ""
+				}
+			}
+		}
+		if st.launchFailure != "" && !st.restarting && !st.closing {
+			st.phase = "app-" + st.launchFailure
+			st.phaseText = "等待选择启动方式"
 		}
 	}
 	if ev.Kind == bridge.KindWifiOK || ev.Kind == bridge.KindTexture {
@@ -442,9 +520,33 @@ func (a *App) onAppWinExit(serial, pkg string, r Runner, code int) {
 //   - bat 退出 → onAppWinExit 摘除（前端淡出）；Stop 失败复位 closing（可重试）；
 //   - 兜底：Stop 成功但 onExit 极端丢失 → 超时强摘（防卡片卡死）。
 func (a *App) StopAppWin(serial, pkg string) error {
+	return a.stopAppWinChecked(serial, pkg, 0)
+}
+
+func appLaunchNoticeMatches(st *appWinState, noticeID uint64) bool {
+	return st != nil && !st.notificationWindow && !st.closing && !st.restarting && st.launchFailure != "" && st.launchFailureID == noticeID
+}
+
+// ResolveAppLaunchFailure acts only on the launch attempt shown in the dialog.
+// Old dialogs must never close or restart a replacement window.
+func (a *App) ResolveAppLaunchFailure(serial, pkg string, noticeID uint64, restart bool) error {
+	if noticeID == 0 {
+		return errors.New("此启动提示已失效，请重新打开应用窗口")
+	}
+	if restart {
+		return a.restartAppWinChecked(serial, pkg, true, noticeID)
+	}
+	return a.stopAppWinChecked(serial, pkg, noticeID)
+}
+
+func (a *App) stopAppWinChecked(serial, pkg string, noticeID uint64) error {
 	key := appWinKey(serial, pkg)
 	a.mu.Lock()
 	st := a.appWins[key]
+	if noticeID != 0 && !appLaunchNoticeMatches(st, noticeID) {
+		a.mu.Unlock()
+		return errors.New("此启动提示已失效，窗口状态已更新")
+	}
 	if st == nil {
 		a.mu.Unlock()
 		bridge.DebugLog("[appwin] 停止：无此会话（幂等）serial=%s pkg=%s", serial, pkg)
@@ -524,8 +626,12 @@ func (a *App) appWinsListLocked() []AppWinItem {
 	sort.Slice(states, func(i, j int) bool { return states[i].startedAt.Before(states[j].startedAt) })
 	out := make([]AppWinItem, 0, len(states))
 	for _, st := range states {
-		out = append(out, AppWinItem{Serial: st.serial, Identity: st.identity, Pkg: st.pkg, Name: st.name, Mode: st.mode, Closing: st.closing, Phase: st.phase, PhaseText: st.phaseText,
-			Log: append([]string{}, st.log...)})
+		var noticeID uint64
+		if appLaunchNoticeMatches(st, st.launchFailureID) {
+			noticeID = st.launchFailureID
+		}
+		out = append(out, AppWinItem{Serial: st.serial, Identity: st.identity, Pkg: st.pkg, Name: st.name, Mode: st.mode, Closing: st.closing, NotificationWindow: st.notificationWindow, Phase: st.phase, PhaseText: st.phaseText,
+			LaunchFailureID: noticeID, Log: append([]string{}, st.log...)})
 	}
 	return out
 }
@@ -562,6 +668,7 @@ func (a *App) devicePhys(serial string) devPhys {
 			if m := rePhysSize.FindStringSubmatch(out); m != nil {
 				w, _ := strconv.Atoi(m[1])
 				h, _ := strconv.Atoi(m[2])
+				p.width, p.height = w, h
 				if w > h {
 					p.longSide = w
 				} else {
@@ -824,10 +931,49 @@ func vdParamsToBridge(p AppWinModeParams, phys devPhys, native string) bridge.Vd
 		FPS:         p.FPS,
 		Bitrate:     p.Bitrate,
 		Flex:        p.Flex,
+		AutoDpi:     p.Flex && p.Dpi <= 0,
 		Audio:       p.EffectiveAppWinAudio(),
 		LockFps:     p.LockFps,
 		LockBitrate: p.LockBitrate,
 	}
+}
+
+// 通知窗口在发送原始动作前是空屏，无法由应用提前选择方向。默认采用主屏自然
+// 方向，避免将手机的竖屏聊天放进横屏虚拟屏。明确设置的 W:H 仍完整保留；物理
+// 参数尚未预热时，沿用设备比例并先用竖屏（不在 GUI 线程增加 adb 查询）。
+func notificationVdParamsForPackage(pkg string, p AppWinModeParams, phys devPhys, native string) bridge.VdModeParams {
+	result := notificationVdParamsToBridge(p, phys, native)
+	// Observed task reuse can leave WeChat resource metrics from the old display. Matching
+	// the phone avoids changing those metrics while preserving the original chat.
+	// The video resolution still follows the selected transport's saved long edge.
+	if pkg == "com.tencent.mm" && p.Dpi <= 0 && p.RatioW == 0 && p.RatioH == 0 {
+		result.MatchPhone = true
+		result.MaxSize = ParseLongEdge(p.Size)
+		if result.MaxSize <= 0 {
+			result.MaxSize = appWinVdW
+		}
+		result.Dpi = 0
+		result.Flex = false
+		result.AutoDpi = false
+	}
+	return result
+}
+
+func notificationVdParamsToBridge(p AppWinModeParams, phys devPhys, native string) bridge.VdModeParams {
+	if p.RatioW == 0 && p.RatioH == 0 {
+		w, h := phys.width, phys.height
+		if w <= 0 || h <= 0 {
+			w, h = parseVdSize(native)
+			if w <= 0 || h <= 0 {
+				w, h = 9, 16
+			}
+			if w > h {
+				w, h = h, w
+			}
+		}
+		p.RatioW, p.RatioH = w, h
+	}
+	return vdParamsToBridge(p, phys, native)
 }
 
 // appWinInitialSize 以现有长边像素数为基准生成虚拟屏尺寸。比例未设置时走原有
@@ -1020,17 +1166,39 @@ func (a *App) SaveAppWinParams(serial, pkg, payload string) error {
 // 检查失败不再重开）；②Start 前在锁内确认条目仍是本 st 且仍处 restarting。
 // 异常兜底：15s 未退出 → 强摘（等同旧行为）；Start 失败 → 摘除。
 func (a *App) RestartAppWin(serial, pkg string) error {
+	return a.restartAppWin(serial, pkg, false)
+}
+
+// RestartAppProcess is an explicit user choice, never a fallback from failed reuse.
+func (a *App) RestartAppProcess(serial, pkg string) error {
+	return a.restartAppWin(serial, pkg, true)
+}
+
+func (a *App) restartAppWin(serial, pkg string, restartProcess bool) error {
+	return a.restartAppWinChecked(serial, pkg, restartProcess, 0)
+}
+
+func (a *App) restartAppWinChecked(serial, pkg string, restartProcess bool, noticeID uint64) error {
 	key := appWinKey(serial, pkg)
 	a.mu.Lock()
 	st := a.appWins[key]
+	if noticeID != 0 && !appLaunchNoticeMatches(st, noticeID) {
+		a.mu.Unlock()
+		return errors.New("此启动提示已失效，窗口状态已更新")
+	}
 	if st == nil || st.closing || st.restarting {
 		a.mu.Unlock()
 		return nil
+	}
+	if restartProcess && st.notificationWindow {
+		a.mu.Unlock()
+		return errors.New("通知窗口保留原应用会话，请从普通应用窗口启动")
 	}
 	st.restarting = true
 	st.phase = "restarting"
 	st.phaseText = "重新连接中…"
 	name := st.name
+	notification := st.notificationWindow
 	runner := st.runner
 	// v2.1.75：重启同样按"是否本设备最后一个会话"设置跳过等待。
 	others := a.otherSessionIDsLocked("", key)
@@ -1080,7 +1248,7 @@ func (a *App) RestartAppWin(serial, pkg string) error {
 			return
 		}
 		// 新参数重开（StartAppWin 内部读档案 → 两套注入；检测 restarting 条目 → 原地替换）。
-		if err := a.StartAppWin(serial, pkg, name); err != nil {
+		if err := a.startAppWinWithRestart(serial, pkg, name, notification, restartProcess); err != nil {
 			a.mu.Lock()
 			if cur := a.appWins[key]; cur == st {
 				delete(a.appWins, key)

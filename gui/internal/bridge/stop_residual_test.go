@@ -1,29 +1,21 @@
 package bridge
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
-// --- scrcpy 进程枚举解析 ---
-
-func TestParseScrcpyProcs(t *testing.T) {
-	out := "1234|5678|\"C:\\x\\scrcpy.exe\" --serial TEST0001 --keyboard=uhid\r\n" +
-		"garbage line\n" +
-		"notint|999|cmd\n" +
-		"2345|0|--serial 192.0.2.162:5555\n"
-	procs := parseScrcpyProcs(out)
-	if len(procs) != 2 {
-		t.Fatalf("应解析出 2 条有效记录: %+v", procs)
+func TestAppSessionMatchingAfterOneShotRestart(t *testing.T) {
+	for _, command := range []string{"--start-app=app.test", "--start-app=+app.test", "--start-app app.test", `"--start-app=app.test"`} {
+		line := "scrcpy.exe --serial TEST0001 --new-display=1280x720 " + command
+		if !scrcpySessionMatch(line, []string{"TEST0001"}, "1280x720", "+app.test") {
+			t.Fatal(line)
+		}
+		if len(bringAppWinCandidates([]scrcpyProc{{pid: 7, cmdline: line}}, []string{"TEST0001"}, "app.test")) != 1 {
+			t.Fatal(line)
+		}
 	}
-	if procs[0].pid != 1234 || procs[0].ppid != 5678 || !strings.Contains(procs[0].cmdline, "TEST0001") {
-		t.Fatalf("第一条解析错误: %+v", procs[0])
-	}
-	if procs[1].pid != 2345 || procs[1].ppid != 0 || !strings.Contains(procs[1].cmdline, "192.0.2.162") {
-		t.Fatalf("第二条解析错误: %+v", procs[1])
-	}
-	if got := parseScrcpyProcs(""); len(got) != 0 {
-		t.Fatalf("空输出应零记录: %+v", got)
+	for _, command := range []string{"--start-app=app.test.extra", "--start-app=+app.testing", "--window-title=--start-app=app.test"} {
+		if scrcpyAppMatches(command, "app.test") {
+			t.Fatal(command)
+		}
 	}
 }
 

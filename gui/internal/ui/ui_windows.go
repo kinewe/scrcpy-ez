@@ -266,6 +266,9 @@ func Run(a *app.App, html string) error {
 			bridge.DebugLog("[js] RestartAppWin serial=%q pkg=%q", serial, pkg)
 			return a.RestartAppWin(serial, pkg)
 		}},
+		{"RestartAppProcess", func(serial, pkg string) error {
+			return a.RestartAppProcess(serial, pkg)
+		}},
 		// ---------- 应用窗口（二期）· Step 4/5：窗口设置（虚拟屏参数面板） ----------
 		{"GetAppWinParams", func(serial, pkg string) (interface{}, error) {
 			bridge.DebugLog("[js] GetAppWinParams serial=%q pkg=%q", serial, pkg)
@@ -383,6 +386,19 @@ func Run(a *app.App, html string) error {
 				SetHWND(hwnd)
 				updater.NotifyHealthy(os.Args[1:], a.Version())
 			}
+		}},
+		{"ResolveAppLaunchFailure", a.ResolveAppLaunchFailure},
+		{"ShowMainWindow", func() {
+			w.Dispatch(func() {
+				if forceExit.Load() {
+					return
+				}
+				hwnd := uintptr(w.Window())
+				if hwnd != 0 {
+					procShowWindowW.Call(hwnd, 9 /* SW_RESTORE */)
+					closeHookUser32.NewProc("SetForegroundWindow").Call(hwnd)
+				}
+			})
 		}},
 	}
 	for _, b := range bindings {

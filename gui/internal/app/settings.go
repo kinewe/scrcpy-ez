@@ -276,6 +276,7 @@ type NotificationSelection struct {
 type NotificationEdit struct {
 	Selection   *NotificationSelection `json:"selection,omitempty"`
 	Preview     *bool                  `json:"preview,omitempty"`
+	OpenEnabled *bool                  `json:"openEnabled,omitempty"`
 	CopyMinutes *int                   `json:"copyMinutes,omitempty"`
 }
 
@@ -309,7 +310,11 @@ func (s *SettingsStore) ApplyNotificationEdit(identity string, edit Notification
 		preview := *edit.Preview
 		policy.Preview = &preview
 	}
-	if edit.Selection != nil || edit.Preview != nil {
+	if edit.OpenEnabled != nil {
+		enabled := *edit.OpenEnabled
+		policy.OpenEnabled = &enabled
+	}
+	if edit.Selection != nil || edit.Preview != nil || edit.OpenEnabled != nil {
 		s.data.NotificationPolicies[identity] = policy
 	}
 	if edit.CopyMinutes != nil {

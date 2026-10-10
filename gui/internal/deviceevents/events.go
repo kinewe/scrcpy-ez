@@ -232,7 +232,7 @@ func Parse(block string) []Transport {
 		if t.Kind != "usb" {
 			switch {
 			case strings.HasPrefix(t.Serial, "emulator-"):
-			case strings.Contains(t.Serial, "_adb-tls-connect"):
+			case strings.Contains(t.Serial, "_adb-tls-connect"), strings.Contains(t.Serial, "._adb._tcp"):
 				t.Kind = "wifi"
 			case strings.Contains(t.Serial, "_adb-tls"):
 			case strings.Contains(t.Serial, ":"):

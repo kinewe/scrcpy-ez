@@ -6,7 +6,7 @@ const elements = new Map();
 function el(id) {
   if (!elements.has(id)) {
     const classes = new Set();
-    elements.set(id,{style:{display:'none'},classList:{add(n){classes.add(n);},remove(n){classes.delete(n);},contains(n){return classes.has(n);}},listeners:{},addEventListener(n,f){this.listeners[n]=f;},removeAttribute(){},textContent:''});
+    elements.set(id,{style:{display:'none'},classList:{add(n){classes.add(n);},remove(n){classes.delete(n);},contains(n){return classes.has(n);},toggle(n,on){on=on===undefined?!classes.has(n):!!on;if(on)classes.add(n);else classes.delete(n);return on;}},listeners:{},addEventListener(n,f){this.listeners[n]=f;},removeAttribute(){},textContent:''});
   }
   return elements.get(id);
 }
@@ -23,6 +23,11 @@ const tick=()=>new Promise(r=>setImmediate(r));
   assert.equal(el('update-download').style.display,'');
   el('update-download').listeners.click();await tick();await tick();
   assert.equal(el('update-cancel').style.display,'');
+  context.renderUpdate({...current,downloaded:50,total:100});
+  assert.equal(el('update-progress-bar').classList.contains('is-downloading'),true);
+  context.renderUpdate({...current,phase:'validating',downloaded:100,total:100});
+  assert.equal(el('update-progress-bar').classList.contains('is-downloading'),false);
+  context.renderUpdate(current);
   el('update-close').listeners.click();assert.equal(el('update-modal').style.display,'none');assert.equal(calls.includes('cancel'),false);
   current={...current,phase:'ready',canInstall:true};el('app-ver').listeners.click();await tick();await tick();
   el('update-install').listeners.click();await tick();await tick();

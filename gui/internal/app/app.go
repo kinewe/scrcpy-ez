@@ -315,9 +315,10 @@ type App struct {
 	// 应用窗口（二期 Step 3）：key=serial#pkg 的虚拟屏会话（独立于主投屏）；
 	// physCache=设备物理参数（等比 dpi 输入，wm size/density 长 TTL）；
 	// physMu 独立小锁：查询 adb 时不占 a.mu。
-	appWins   map[string]*appWinState
-	physMu    sync.Mutex
-	physCache map[string]devPhys
+	appWins            map[string]*appWinState
+	appLaunchNoticeSeq uint64 // protected by mu; distinguishes failed launch attempts
+	physMu             sync.Mutex
+	physCache          map[string]devPhys
 
 	// 应用列表（二期 Step 1）：按设备 identity 缓存（USB/无线切换不重枚举）；
 	// busy=在跑防重；lastReady=就绪边沿检测（commitDisplay 末尾触发）。
@@ -342,7 +343,9 @@ type App struct {
 	settings            *SettingsStore
 	notificationService notificationService
 	notificationMu      sync.Mutex
+	notificationRoutes  []notifications.Target // protected by notificationMu; listeners keep a healthy verified transport
 	notificationClosing bool
+	notificationOpenMu  sync.Mutex
 	wirelessConnector   *wirelessconnect.Coordinator
 	wirelessConnectMu   sync.Mutex
 	wirelessStartupDone chan struct{}
@@ -7122,7 +7125,7 @@ func (a *App) resetStoppingTimeout(serial string, st *sessionState) {
 // 退出走 StopCast 不重启）。重复点击幂等（restarting 闩锁）。
 // 结束态（bat 已退出、runner 为空但保留 serial）同样可用：直接开新会话。
 // 无会话（串号从未投屏）→ 等价 StartCast 开新会话（前端防御路径）。
-// 性能（gui5）：杀树同样异步——Stop 内含 powershell 残余枚举（1-2s），
+// Stop 异步等待事件监督器完成会话清理，
 // 同步执行会冻结 GUI 消息循环（"保存并重新投屏"按钮卡顿）；restarting 闩锁
 // 在同步段已置位，前端"重启中"语义不变。
 func (a *App) RestartCast(serial string) error {
@@ -7451,6 +7454,11 @@ func (a *App) BringCastToFront(serial string) error {
 // 非 Windows 平台空实现；失败不阻断前端（fire-and-forget）。
 func (a *App) BringAppWinToFront(serial, pkg string) error {
 	a.mu.RLock()
+	if window := a.appWins[appWinKey(serial, pkg)]; window != nil && window.notificationWindow && !window.closing {
+		pid := window.clientPID
+		a.mu.RUnlock()
+		return bridge.BringClientToFront(pid)
+	}
 	devs := append([]adb.Device{}, a.devices...)
 	a.mu.RUnlock()
 	cands := frontCandidateSerials(serial, devs, a.identityOf, a.profiles.Entry)

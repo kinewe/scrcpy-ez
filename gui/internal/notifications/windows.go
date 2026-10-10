@@ -12,6 +12,7 @@ import "C"
 
 import (
 	"bytes"
+	ctxpkg "context"
 	"crypto/sha256"
 	_ "embed"
 	"errors"
@@ -53,6 +54,7 @@ type nativeResult struct {
 type copyActivation struct {
 	token    string
 	sequence uint32
+	open     bool
 }
 
 var nativeCallbacks = struct {
@@ -60,6 +62,33 @@ var nativeCallbacks = struct {
 	sinks map[uint64]*WindowsSink
 }{sinks: make(map[uint64]*WindowsSink)}
 var nativeCallbackID atomic.Uint64
+
+//export scez_notification_dismissed
+func scez_notification_dismissed(handle C.uint64_t, reason C.int) {
+	nativeCallbacks.Lock()
+	sink := nativeCallbacks.sinks[uint64(handle)]
+	nativeCallbacks.Unlock()
+	if sink == nil {
+		return
+	}
+	code := map[C.int]string{0: "user-canceled", 1: "application-hidden", 2: "timed-out"}[reason]
+	if code == "" {
+		code = "unknown"
+	}
+	TraceOpen("toast-dismissed", code, "", "", 0, 0, 0, false)
+}
+
+//export scez_notification_activation_event
+func scez_notification_activation_event(handle C.uint64_t, source C.int) {
+	nativeCallbacks.Lock()
+	sink := nativeCallbacks.sinks[uint64(handle)]
+	nativeCallbacks.Unlock()
+	if sink == nil {
+		return
+	}
+	code := map[C.int]string{1: "com", 2: "toast", 3: "arguments-unavailable"}[source]
+	TraceOpen("native-activation", code, "", "", 0, 0, 0, false)
+}
 
 //export scez_notification_clicked
 func scez_notification_clicked(handle C.uint64_t, token *C.char, sequence C.uint32_t) {
@@ -75,6 +104,24 @@ func scez_notification_clicked(handle C.uint64_t, token *C.char, sequence C.uint
 	}
 	select {
 	case sink.activations <- copyActivation{token: value, sequence: uint32(sequence)}:
+	default:
+	}
+}
+
+//export scez_notification_opened
+func scez_notification_opened(handle C.uint64_t, token *C.char) {
+	value := C.GoString(token)
+	if !validActionToken(value) {
+		return
+	}
+	nativeCallbacks.Lock()
+	sink := nativeCallbacks.sinks[uint64(handle)]
+	nativeCallbacks.Unlock()
+	if sink == nil {
+		return
+	}
+	select {
+	case sink.activations <- copyActivation{token: value, open: true}:
 	default:
 	}
 }
@@ -261,6 +308,8 @@ func nativeExternalActivation(appID, token string) error {
 	return nativeError(C.scez_toast_test_external_activate(app, clsid, value))
 }
 
+func nativeToastIconSize() int { return int(C.scez_toast_icon_size()) }
+
 func (s *WindowsSink) run(appID, exe, shortcut string, initialized chan<- error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -291,7 +340,32 @@ func (s *WindowsSink) run(appID, exe, shortcut string, initialized chan<- error)
 	defer C.scez_toast_close(context)
 	s.copyAvailable = copyReady != 0
 	initialized <- nil
+	var opens openStore
+	var consumed activationDeduplicator
+	openCtx, stopOpening := ctxpkg.WithCancel(ctxpkg.Background())
+	defer stopOpening()
+	opener := newOpenDispatcher(openCtx, func(entry openEntry, err error) {
+		_ = s.Show(Card{Group: entry.group, Tag: "open-status", Title: "未能在应用窗口打开详情", Body: openFailureBody(err)})
+	})
 	var copies copyStore
+	var removals removalCoalescer
+	removalTimer := time.NewTimer(time.Hour)
+	removalTimer.Stop()
+	defer removalTimer.Stop()
+	var removalTicks <-chan time.Time
+	scheduleRemovals := func() {
+		if !removalTimer.Stop() {
+			select {
+			case <-removalTimer.C:
+			default:
+			}
+		}
+		removalTicks = nil
+		if next, ok := removals.Next(); ok {
+			removalTimer.Reset(max(time.Until(next), 0))
+			removalTicks = removalTimer.C
+		}
+	}
 	var testCopy func(string, uint32) error
 	var feedbackGroup string
 	var feedbackTicks <-chan time.Time
@@ -309,12 +383,50 @@ func (s *WindowsSink) run(appID, exe, shortcut string, initialized chan<- error)
 	for {
 		var request nativeRequest
 		select {
+		case <-removalTicks:
+			for _, slot := range removals.Due(time.Now()) {
+				group, tag := C.CString(slot.group), C.CString(slot.tag)
+				code := "grace-expired"
+				if C.scez_toast_remove(context, group, tag) < 0 {
+					code = "send-error"
+				}
+				TraceOpen("toast-remove", code, "", "com.tencent.mm", 0, 0, 0, false)
+				C.free(unsafe.Pointer(group))
+				C.free(unsafe.Pointer(tag))
+			}
+			scheduleRemovals()
+			continue
 		case <-feedbackTicks:
 			if C.scez_copy_feedback_tick(context) == 0 {
 				stopFeedback()
 			}
 			continue
 		case click := <-s.activations:
+			if consumed.Contains(click.token, time.Now()) {
+				TraceOpen("activation", "duplicate", "", "", 0, 0, 0, false)
+				continue
+			}
+			if click.open {
+				entry, valid := opens.Take(click.token, time.Now())
+				code := "expired"
+				if valid {
+					code = "queued"
+				}
+				TraceOpen("activation", code, "", "", 0, 0, 0, false)
+				if valid {
+					consumed.Record(click.token, time.Now())
+					if !opener.Enqueue(entry) {
+						go func() {
+							_ = s.Show(Card{Group: entry.group, Tag: "open-status", Title: "通知打开请求较多", Body: "请稍后重试或在手机上查看"})
+						}()
+					}
+				} else {
+					go func() {
+						_ = s.Show(Card{Group: ShortID("notification-open-expired"), Tag: "open-status", Title: "通知已失效", Body: openFailureBody(&OpenFailure{Code: "stale"})})
+					}()
+				}
+				continue
+			}
 			entry := copies.entries[click.token]
 			copied := copies.Copy(click.token, time.Now(), func(code string) error {
 				if testCopy != nil {
@@ -325,6 +437,9 @@ func (s *WindowsSink) run(appID, exe, shortcut string, initialized chan<- error)
 				return nativeError(C.scez_clipboard_copy(context, text, C.uint32_t(click.sequence)))
 			})
 			if copied {
+				consumed.Record(click.token, time.Now())
+				removals.Remove(entry.group, entry.tag)
+				scheduleRemovals()
 				// The OS normally dismisses a clicked card. Remove it explicitly
 				// as well, so a consumed action never remains in our native cache.
 				// This is a new passive confirmation, never a restoration of the
@@ -354,6 +469,7 @@ func (s *WindowsSink) run(appID, exe, shortcut string, initialized chan<- error)
 			continue
 		case now := <-ticker.C:
 			copies.Sweep(now)
+			opens.Sweep(now)
 			continue
 		case request = <-s.requests:
 		}
@@ -362,11 +478,16 @@ func (s *WindowsSink) run(appID, exe, shortcut string, initialized chan<- error)
 		switch request.op {
 		case "show":
 			request.card.Token = ""
+			request.card.OpenToken = ""
+			opens.Remove(request.group, request.tag)
 			if s.copyAvailable {
 				request.card.Token = copies.Issue(request.card, time.Now())
+				request.card.OpenToken = opens.Issue(request.card, time.Now())
 			} else {
 				copies.Remove(request.group, request.tag)
+				opens.Remove(request.group, request.tag)
 			}
+			icons.pixelSize = nativeToastIconSize()
 			request.card.IconURI = icons.URI(request.card.Icon)
 			payload := ToastXML(request.card)
 			if request.xml != "" {
@@ -381,18 +502,45 @@ func (s *WindowsSink) run(appID, exe, shortcut string, initialized chan<- error)
 			showCode := C.scez_toast_show(context, xml, group, tag, silent, &showPhase)
 			showStages := map[C.int]string{1: "render", 2: "setting", 3: "disabled", 4: "send"}
 			result.err = nativeStageError(showStages[showPhase], showCode)
+			code := "banner"
+			if request.card.Silent {
+				code = "silent"
+			}
+			if result.err != nil {
+				code = "send-error"
+			}
+			TraceOpen("toast-submit", code, "", request.card.Package, 0, 0, 0, false)
 			if result.err != nil {
 				copies.Remove(request.group, request.tag)
+				opens.Remove(request.group, request.tag)
+			} else {
+				if removals.Shown(request.group, request.tag, request.card.Package) {
+					TraceOpen("toast-remove-canceled", "replacement", "", request.card.Package, 0, 0, 0, false)
+				}
+				scheduleRemovals()
 			}
 			C.free(unsafe.Pointer(xml))
 		case "remove":
+			// A withdrawn notification immediately loses both capabilities,
+			// even while its banner waits briefly for a WeChat replacement.
 			copies.Remove(request.group, request.tag)
-			result.err = nativeStageError("remove", C.scez_toast_remove(context, group, tag))
+			opens.Remove(request.group, request.tag)
+			if removals.Queue(request.group, request.tag, time.Now()) {
+				TraceOpen("toast-remove-deferred", "coalescing", "", "com.tencent.mm", 0, 0, 0, false)
+				scheduleRemovals()
+			} else {
+				TraceOpen("toast-remove", "source-remove", "", "", 0, 0, 0, false)
+				result.err = nativeStageError("remove", C.scez_toast_remove(context, group, tag))
+			}
 		case "clear":
+			TraceOpen("toast-clear", "clear", "", "", 0, 0, 0, false)
+			removals.Clear(request.group)
+			scheduleRemovals()
 			if feedbackGroup == request.group {
 				stopFeedback()
 			}
 			copies.Remove(request.group, "")
+			opens.Remove(request.group, "")
 			result.err = nativeStageError("clear", C.scez_toast_clear(context, group))
 		case "count":
 			var count C.int
@@ -422,6 +570,21 @@ func (s *WindowsSink) run(appID, exe, shortcut string, initialized chan<- error)
 			C.free(unsafe.Pointer(value))
 		case "copyWriter":
 			testCopy = request.copier
+		case "openToken":
+			for token, entry := range opens.entries {
+				if entry.group == request.group && entry.tag == request.tag {
+					result.token = token
+					break
+				}
+			}
+		case "openActivate":
+			token := C.CString(request.value)
+			result.err = nativeError(C.scez_toast_test_open(context, token))
+			C.free(unsafe.Pointer(token))
+		case "toastActivate":
+			args := C.CString(request.value)
+			result.err = nativeError(C.scez_toast_test_event(context, group, tag, args))
+			C.free(unsafe.Pointer(args))
 		case "copyToken":
 			for token, entry := range copies.entries {
 				if entry.group == request.group && entry.tag == request.tag {

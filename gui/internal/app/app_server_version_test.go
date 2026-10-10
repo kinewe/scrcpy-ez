@@ -1,16 +1,19 @@
 package app
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"scrcpy-ez/gui/internal/adb"
 )
 
 func TestAppHelperUsesBundledProtocolForCatalogAndIcons(t *testing.T) {
-	for _, version := range []string{"4.1", "4.1-ez2.2.2", "4.1-ez2.2.16", "4.2-dev"} {
+	for _, version := range []string{"4.1", "4.1-ez2.2.2", "4.1-ez2.2.16", "4.2-dev", "5.0.1-ez2.3.1-rc.1"} {
 		t.Run(version, func(t *testing.T) {
 			got, err := parseAppServerVersion("scrcpy " + version + " <https://github.com/Genymobile/scrcpy>\r\nDependencies:\r\n - SDL: 3.4.12\r\n")
 			if err != nil || got != version {
@@ -50,6 +53,18 @@ func TestConnectedAppCatalogAndIcons(t *testing.T) {
 	if runtimeDir == "" || serial == "" {
 		t.Skip("bundled runtime/device verification is opt-in")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	physical, err := exec.CommandContext(ctx, filepath.Join(runtimeDir, "adb.exe"), "-s", serial, "shell", "getprop", "ro.serialno").Output()
+	if err != nil || adb.StableSerial(strings.TrimSpace(string(physical))) == "" {
+		t.Fatalf("read physical device identity: %v", err)
+	}
+	raw := adb.ParseDevices(serial + "\tdevice\n")
+	if len(raw) != 1 {
+		t.Fatal("invalid test transport")
+	}
+	device := adb.BuildDevice(raw)
+	device.StableSerial = strings.TrimSpace(string(physical))
 	for _, retained := range []bool{true, false} {
 		name := "removed-device"
 		if retained {
@@ -67,7 +82,9 @@ func TestConnectedAppCatalogAndIcons(t *testing.T) {
 				}
 			}
 			a := New(Config{BatPath: filepath.Join(runtimeDir, "投屏支持.bat"), AdbPath: filepath.Join(runtimeDir, "adb.exe"), ProfilesPath: profile, Version: "test"})
-			a.profiles.SyncDevices([]adb.Device{identityPhone(serial)})
+			devices := []adb.Device{device}
+			a.profiles.SyncDevices(devices)
+			a.devices = devices
 			identity := a.appListKeyFor(serial)
 			items, helper, err := a.listAppCatalogOnce(identity, serial)
 			if err != nil || len(items) == 0 {
