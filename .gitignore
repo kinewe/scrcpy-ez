@@ -6,6 +6,11 @@
 prebuilt/
 build/
 dist/
+/build-upgrade/
+/build-release/
+/build-tests-5/
+/app/deps/work/
+/gui/dist/
 
 # 临时文件
 *.log
