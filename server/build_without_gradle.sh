@@ -12,7 +12,8 @@
 set -e
 
 SCRCPY_DEBUG=false
-SCRCPY_VERSION_NAME=4.1-ez2.2.2
+SCRCPY_VERSION_NAME=$(sed -n "s/.*version: '\([^']*\)'.*/\1/p" "$(dirname "$0")/../meson.build" | head -n1)
+[ -n "$SCRCPY_VERSION_NAME" ] || { echo "Missing protocol version" >&2; exit 1; }
 
 PLATFORM=${ANDROID_PLATFORM:-36}
 BUILD_TOOLS=${ANDROID_BUILD_TOOLS:-36.0.0}

@@ -2,6 +2,8 @@ package com.genymobile.scrcpy;
 
 import com.genymobile.scrcpy.util.Ln;
 
+import android.annotation.SuppressLint;
+import android.annotation.TargetApi;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -159,6 +161,9 @@ public final class BgNotification {
      * @param scid 会话 id（client 传入）：用于生成会话唯一的通知 id（多会话并行互不干扰）。
      */
     public static BgNotification start(int scid, String title, String text, Runnable onStopRequested) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return null; // Bitmap notification icons are unavailable before Android 6.
+        }
         try {
             Context context = FakeContext.get();
             NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -203,6 +208,7 @@ public final class BgNotification {
      * Icon.createWithResource() 会抛 SecurityException("Package android is not owned
      * by uid 2000")。自造 Bitmap 完全不涉及资源包归属检查。
      */
+    @TargetApi(Build.VERSION_CODES.M)
     private Icon makeIcon() {
         try {
             DisplayMetrics dm = context.getResources().getDisplayMetrics();
@@ -243,6 +249,7 @@ public final class BgNotification {
     }
 
     /** 兜底小图标（旧的白色实心圆）：剪影构造万一失败，也不让通知整体失败。 */
+    @TargetApi(Build.VERSION_CODES.M)
     private static Icon fallbackIcon() {
         int size = 48;
         Bitmap bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
@@ -293,6 +300,7 @@ public final class BgNotification {
         return PendingIntent.getBroadcast(context, REQ_STOP, intent, flags);
     }
 
+    @TargetApi(Build.VERSION_CODES.M)
     private Notification build() {
         Notification.Builder builder;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { // API 26+
@@ -330,7 +338,16 @@ public final class BgNotification {
     }
 
     private void post() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return;
+        }
         lastPostWallMs = System.currentTimeMillis();
+        postAsShell();
+    }
+
+    @TargetApi(Build.VERSION_CODES.M)
+    @SuppressLint("NotificationPermission") // app_process uses the shell package permission; denial is caught by start/repost.
+    private void postAsShell() {
         nm.notify(notificationId, build());
     }
 
@@ -468,7 +485,9 @@ public final class BgNotification {
         if (process != null) {
             try {
                 process.destroy();
-                process.waitFor(200, TimeUnit.MILLISECONDS);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    process.waitFor(200, TimeUnit.MILLISECONDS);
+                }
             } catch (Throwable ignored) {
                 // best effort
             }

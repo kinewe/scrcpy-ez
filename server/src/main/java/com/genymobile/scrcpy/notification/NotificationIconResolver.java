@@ -2,11 +2,16 @@ package com.genymobile.scrcpy.notification;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.function.LongSupplier;
-import java.util.function.Predicate;
 
 /** Worker-owned, bounded application artwork cache. OEM artwork is only a fallback. */
 final class NotificationIconResolver<T> {
+    interface Clock {
+        long getAsLong();
+    }
+
+    interface Validator<T> {
+        boolean test(T value);
+    }
     private static final int CACHE_LIMIT = 128;
     private static final long ICON_TTL_MS = 300000;
     private static final long FAILED_ICON_TTL_MS = 30000;
@@ -32,11 +37,11 @@ final class NotificationIconResolver<T> {
     }
 
     private final Map<String, Entry<T>> cache = new LinkedHashMap<>(16, 0.75f, true);
-    private final LongSupplier clock;
+    private final Clock clock;
     private final Loader<T> loader;
-    private final Predicate<T> usable;
+    private final Validator<T> usable;
 
-    NotificationIconResolver(LongSupplier clock, Loader<T> loader, Predicate<T> usable) {
+    NotificationIconResolver(Clock clock, Loader<T> loader, Validator<T> usable) {
         this.clock = clock;
         this.loader = loader;
         this.usable = usable;

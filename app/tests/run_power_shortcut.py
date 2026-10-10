@@ -1,6 +1,7 @@
 """Build the Windows power shortcut test with an existing Ninja release build."""
 from pathlib import Path
 import argparse
+import json
 import shlex
 import subprocess
 
@@ -13,11 +14,18 @@ repo = Path(__file__).resolve().parents[2]
 build = args.build_dir.resolve()
 obj = build / 'power-shortcut-test.obj'
 exe = build / 'dist/power-shortcut-test.exe'
+exe.parent.mkdir(parents=True, exist_ok=True)
 
 
 def command(target):
     output = subprocess.check_output([args.ninja, '-C', str(build), '-t', 'commands', target], text=True)
     invocation = shlex.split(output.splitlines()[-1])
+    if any(arg.startswith('@') for arg in invocation[1:]):
+        # Newer Ninja builds use response files, which are removed after linking.
+        # compdb -x expands their contents directly from the build description.
+        rows = json.loads(subprocess.check_output(
+            [args.ninja, '-C', str(build), '-t', 'compdb', '-x'], text=True))
+        invocation = shlex.split(next(row['command'] for row in rows if row['output'] == target))
     invocation[0] = args.compiler
     return invocation
 

@@ -147,6 +147,11 @@ sc_process_execute_p(const char *const argv[], HANDLE *handle, unsigned flags,
     if (!inherit_stdout && !inherit_stderr) {
         // DETACHED_PROCESS to disable stdin, stdout and stderr
         dwCreationFlags |= DETACHED_PROCESS;
+    } else if (!GetConsoleWindow()) {
+        // A console-less parent must not make adb allocate a visible console.
+        // Explicit/inherited standard handles still carry the child output.
+        // A CLI parent keeps its existing console and normal console logging.
+        dwCreationFlags |= CREATE_NO_WINDOW;
     }
     BOOL ok = CreateProcessW(NULL, wide, NULL, NULL, bInheritHandles,
                              dwCreationFlags, NULL, NULL, &si.StartupInfo, &pi);

@@ -34,7 +34,7 @@ main_scrcpy(int argc, char *argv[]) {
 #endif
 
     printf("scrcpy " SCRCPY_VERSION
-           " <https://github.com/Genymobile/scrcpy> | launcher v2.3.0\n");
+           " <https://github.com/Genymobile/scrcpy> | launcher v2.4.0\n");
 
     struct scrcpy_cli_args args = {
         .opts = scrcpy_options_default,
@@ -75,10 +75,6 @@ main_scrcpy(int argc, char *argv[]) {
         ret = SCRCPY_EXIT_SUCCESS;
         goto end;
     }
-
-#ifdef SCRCPY_LAVF_REQUIRES_REGISTER_ALL
-    av_register_all();
-#endif
 
 #ifdef HAVE_V4L2
     if (args.opts.v4l2_device) {

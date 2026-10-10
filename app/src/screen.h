@@ -116,6 +116,10 @@ struct sc_screen {
     bool disconnect_started;
     struct sc_disconnect disconnect;
 
+    SDL_Texture *icon_tex;
+    // render icon rather than frame?
+    bool is_icon_active;
+
     // Track resize requests caused by frame-size changes
     struct sc_resize_tracker {
         sc_tick time; // 0 means none
@@ -203,6 +207,8 @@ struct sc_screen_params {
     enum sc_orientation orientation;
     bool mipmaps;
 
+    enum sc_hwdec_mode hwdec_mode;
+
     bool fullscreen;
     bool start_fps_counter;
 };
@@ -273,5 +279,20 @@ sc_screen_handle_disconnection(struct sc_screen *screen);
 struct sc_point
 sc_screen_convert_window_to_frame_coords(struct sc_screen *screen,
                                         int32_t x, int32_t y);
+
+static inline enum AVHWDeviceType
+sc_screen_get_hw_type(struct sc_screen *screen) {
+    return sc_texture_get_hw_type(&screen->tex);
+}
+
+static inline const char *
+sc_screen_get_hw_device(struct sc_screen *screen) {
+    return sc_texture_get_hw_device(&screen->tex);
+}
+
+static inline bool
+sc_screen_disable_hwdec(struct sc_screen *screen) {
+    return sc_texture_disable_hwdec(&screen->tex);
+}
 
 #endif

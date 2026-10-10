@@ -4,6 +4,9 @@ import com.genymobile.scrcpy.FakeContext;
 import com.genymobile.scrcpy.Workarounds;
 
 import android.app.Notification;
+import android.app.PendingIntent;
+import android.hardware.display.DisplayManager;
+import android.view.Display;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
@@ -15,6 +18,7 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
 import android.net.LocalServerSocket;
 import android.os.Bundle;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Parcelable;
@@ -45,6 +49,9 @@ public final class NotificationServer extends NotificationListenerService {
     private static final int MAX_ICON_BYTES = 512 * 1024;
     private static final int MAX_ICON_DIMENSION = 1024;
     private final ArrayBlockingQueue<Item> queue = new ArrayBlockingQueue<>(256);
+    private final Map<String, OpenAction> openActions = new LinkedHashMap<>();
+    private final NotificationActivityLauncher activityLauncher = new NotificationActivityLauncher();
+    private final java.security.SecureRandom actionRandom = new java.security.SecureRandom();
     private final AtomicBoolean stopping = new AtomicBoolean();
     private final PrintWriter output = new PrintWriter(new OutputStreamWriter(System.out, java.nio.charset.StandardCharsets.UTF_8), true);
     private final Map<String, String> labels = new LinkedHashMap<>();
@@ -68,6 +75,7 @@ public final class NotificationServer extends NotificationListenerService {
         final String type;
         final StatusBarNotification notification;
         final StatusBarNotification[] snapshot;
+        JSONObject command;
 
         Item(String type, StatusBarNotification notification, StatusBarNotification[] snapshot) {
             this.type = type;
@@ -99,7 +107,8 @@ public final class NotificationServer extends NotificationListenerService {
             return false;
         }
         if (testTag != null) {
-            return FakeContext.PACKAGE_NAME.equals(sbn.getPackageName()) && testTag.equals(sbn.getTag());
+            return (FakeContext.PACKAGE_NAME.equals(sbn.getPackageName()) || "org.scrcpyez.notificationlab".equals(sbn.getPackageName()))
+                    && testTag.equals(sbn.getTag());
         }
         return !FakeContext.PACKAGE_NAME.equals(sbn.getPackageName());
     }
@@ -245,7 +254,7 @@ public final class NotificationServer extends NotificationListenerService {
     private AppIcon icon(Notification notification, String owner, String display) {
         AppIcon artwork = icons.resolve(owner, display, () -> {
             Object value = notification.extras == null ? null : notification.extras.get("miui.appIcon");
-            if (value instanceof Icon) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && value instanceof Icon) {
                 Icon supplied = (Icon) value;
                 int type = supplied.getType();
                 // Avoid resolving content/file URI artwork or fetching external resources.
@@ -279,7 +288,23 @@ public final class NotificationServer extends NotificationListenerService {
                 value.put("iconId", artwork.id);
             }
         }
-        value.put("key", key(sbn));
+        String notificationKey = key(sbn);
+        value.put("key", notificationKey);
+        // Keep the original capability on the phone. Every update supersedes its
+        // prior capability; a notification copied across sessions cannot open.
+        openActions.remove(notificationKey);
+        if (notification.contentIntent != null && Build.VERSION.SDK_INT >= 26) {
+            if (openActions.size() >= MAX_SNAPSHOT) {
+                openActions.remove(openActions.keySet().iterator().next());
+            }
+            byte[] random = new byte[16];
+            actionRandom.nextBytes(random);
+            String token = digest(random).substring(0, 32);
+            String target = NotificationActivityLauncher.targetPackage(notification.contentIntent, display);
+            openActions.put(notificationKey, new OpenAction(token, notification.contentIntent, target));
+            value.put("openToken", token);
+            value.put("openPackage", target);
+        }
         value.put("package", sbn.getPackageName());
         value.put("displayPackage", display);
         value.put("app", label(display));
@@ -362,6 +387,41 @@ public final class NotificationServer extends NotificationListenerService {
         return written;
     }
 
+    private static final class OpenAction {
+        final String token;
+        final PendingIntent intent;
+        final String targetPackage;
+        OpenAction(String token, PendingIntent intent, String targetPackage) { this.token = token; this.intent = intent; this.targetPackage = targetPackage; }
+    }
+
+    // Runs on the serialized output worker, after preceding removals/updates.
+    private void open(JSONObject command) throws Exception {
+        String key = command.getString("key");
+        OpenAction action = openActions.get(key);
+        String code = "stale";
+        if (action != null && action.token.equals(command.getString("token"))) {
+            DisplayManager manager = (DisplayManager) FakeContext.get().getSystemService(Context.DISPLAY_SERVICE);
+            Display display = manager.getDisplay(command.getInt("display"));
+            // Primary/foreign displays are never valid targets for this feature.
+            if (display == null || !"scrcpy".equals(display.getName()) || Build.VERSION.SDK_INT < 26) {
+                code = "unsupported";
+            } else {
+                try {
+                    code = activityLauncher.send(action.intent, action.targetPackage, display.getDisplayId()) ? "opened" : "launch";
+                } catch (PendingIntent.CanceledException ignored) {
+                    openActions.remove(key);
+                    code = "canceled";
+                } catch (Exception ignored) {
+                    code = "launch";
+                }
+            }
+        }
+        JSONObject frame = new JSONObject().put("v", VERSION).put("session", session).put("seq", ++sequence)
+                .put("type", "open-result").put("request", command.getString("request")).put("code", code);
+        output.println(frame.toString());
+        if (output.checkError()) { stop(); }
+    }
+
     private void drain() {
         try {
             if (!write("hello", null)) {
@@ -374,7 +434,9 @@ public final class NotificationServer extends NotificationListenerService {
                     stop(); // User switch: clear host state rather than forwarding another space.
                     return;
                 }
-                if ("baseline".equals(item.type)) {
+                if ("open".equals(item.type)) {
+                    open(item.command);
+                } else if ("baseline".equals(item.type)) {
                     int count = 0;
                     if (item.snapshot != null) {
                         for (StatusBarNotification sbn : item.snapshot) {
@@ -393,7 +455,9 @@ public final class NotificationServer extends NotificationListenerService {
                 } else {
                     JSONObject value;
                     if ("remove".equals(item.type)) {
-                        value = new JSONObject().put("key", key(item.notification));
+                        String removed = key(item.notification);
+                        openActions.remove(removed);
+                        value = new JSONObject().put("key", removed);
                     } else {
                         value = safeRecord(item.notification, true);
                         if (value == null) {
@@ -447,7 +511,7 @@ public final class NotificationServer extends NotificationListenerService {
                 throw new IllegalStateException("device identity changed");
             }
             failureCode = "busy";
-            ownership = new LocalServerSocket("scez_notification_v1");
+            ownership = new LocalServerSocket(args.length == 3 ? "scez_notification_test_" + digest(args[2].getBytes(java.nio.charset.StandardCharsets.UTF_8)).substring(0,16) : "scez_notification_v1");
             service = new NotificationServer(session, args.length == 3 ? args[2] : null);
             NotificationServer current = service;
             current.startupWatchdog = startup;
@@ -469,8 +533,27 @@ public final class NotificationServer extends NotificationListenerService {
             Thread input = new Thread(() -> {
                 try {
                     BufferedReader reader = new BufferedReader(new InputStreamReader(System.in, java.nio.charset.StandardCharsets.UTF_8));
-                    // No inbound commands or arbitrary intents: any input/EOF means stop.
-                    reader.read();
+                    StringBuilder line = new StringBuilder();
+                    int ch;
+                    while ((ch = reader.read()) != -1 && !current.stopping.get()) {
+                        if (ch == '\n') {
+                            JSONObject command = new JSONObject(line.toString());
+                            line.setLength(0);
+                            if (command.length() != 7 || command.optInt("v") != VERSION
+                                    || !current.session.equals(command.optString("session")) || !"open".equals(command.optString("type"))
+                                    || !command.optString("request").matches("[0-9a-f]{32}")
+                                    || !command.optString("token").matches("[0-9a-f]{32}")
+                                    || !command.optString("key").matches("[0-9a-f]{64}") || command.optInt("display") <= 0) {
+                                break;
+                            }
+                            Item item = new Item("open", null, null);
+                            item.command = command;
+                            current.offer(item);
+                        } else {
+                            if (line.length() >= 2048) { break; }
+                            line.append((char) ch);
+                        }
+                    }
                 } catch (Exception ignored) {
                     // EOF and transport failure both release the listener.
                 }

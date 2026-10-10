@@ -5,6 +5,7 @@ import com.genymobile.scrcpy.AsyncProcessor;
 import com.genymobile.scrcpy.CleanUp;
 import com.genymobile.scrcpy.FakeContext;
 import com.genymobile.scrcpy.Options;
+import com.genymobile.scrcpy.device.AppTaskLauncher;
 import com.genymobile.scrcpy.device.Device;
 import com.genymobile.scrcpy.display.DisplayInfo;
 import com.genymobile.scrcpy.model.DeviceApp;
@@ -96,6 +97,8 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
 
     private static final ScheduledExecutorService EXECUTOR = Executors.newSingleThreadScheduledExecutor();
     private ExecutorService startAppExecutor;
+    private final boolean reuseAppTask;
+    private final boolean flexDisplay;
 
     private Thread thread;
     private Thread keepActiveThread;
@@ -132,6 +135,8 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     private SurfaceCapture surfaceCapture;
 
     public Controller(ControlChannel controlChannel, CleanUp cleanUp, Options options) {
+        this.reuseAppTask = options.getReuseAppTask();
+        this.flexDisplay = options.getFlexDisplay();
         this.camera = options.getVideoSource() == VideoSource.CAMERA;
         this.controlChannel = controlChannel;
         this.cleanUp = cleanUp;
@@ -906,7 +911,13 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         }
 
         Ln.i("Starting app \"" + app.getName() + "\" [" + app.getPackageName() + "] on display " + startAppDisplayId + "...");
-        Device.startApp(app.getPackageName(), startAppDisplayId, forceStopBeforeStart);
+        if (reuseAppTask && !forceStopBeforeStart && startAppDisplayId > 0) {
+            AppTaskLauncher.Result result = AppTaskLauncher.start(app.getPackageName(), startAppDisplayId, flexDisplay);
+            Ln.i("SCRCPY_EZ_APP_LAUNCH=" + result.code());
+        } else {
+            Device.startApp(app.getPackageName(), startAppDisplayId, forceStopBeforeStart);
+            if (reuseAppTask) { Ln.i("SCRCPY_EZ_APP_LAUNCH=started"); }
+        }
     }
 
     private int getStartAppDisplayId() {

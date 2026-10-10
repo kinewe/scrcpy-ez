@@ -483,9 +483,18 @@ execute_server(struct sc_server *server,
     if (params->new_display) {
         VALIDATE_STRING(params->new_display);
         ADD_PARAM("new_display=%s", params->new_display);
+        const char *reuse_app = getenv("SCEZ_REUSE_APP_TASK");
+        if (reuse_app && !strcmp(reuse_app, "1")) {
+            ADD_PARAM("reuse_app_task=true");
+        }
     }
     if (params->flex_display) {
         ADD_PARAM("flex_display=true");
+        // ez distinguishes automatic GUI density from explicitly fixed DPI.
+        const char *auto_dpi = getenv("SCEZ_VD_AUTO_DPI");
+        if (auto_dpi && !strcmp(auto_dpi, "1")) {
+            ADD_PARAM("flex_display_auto_dpi=true");
+        }
     }
     if (params->ignore_video_encoder_constraints) {
         ADD_PARAM("ignore_video_encoder_constraints=true");

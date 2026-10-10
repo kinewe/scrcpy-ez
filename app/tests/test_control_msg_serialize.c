@@ -288,7 +288,8 @@ static void test_serialize_set_clipboard_long(void) {
         },
     };
 
-    char text[SC_CONTROL_MSG_CLIPBOARD_TEXT_MAX_LENGTH + 1];
+    char *text = malloc(SC_CONTROL_MSG_CLIPBOARD_TEXT_MAX_LENGTH + 1);
+    assert(text);
     memset(text, 'a', SC_CONTROL_MSG_CLIPBOARD_TEXT_MAX_LENGTH);
     text[SC_CONTROL_MSG_CLIPBOARD_TEXT_MAX_LENGTH] = '\0';
     msg.set_clipboard.text = text;
@@ -296,9 +297,9 @@ static void test_serialize_set_clipboard_long(void) {
     size_t size;
     uint8_t *buf = sc_control_msg_serialize(&msg, &size);
     assert(buf);
-    assert(size == SC_CONTROL_MSG_MAX_SIZE);
+    assert(size == 14 + SC_CONTROL_MSG_CLIPBOARD_TEXT_MAX_LENGTH);
 
-    uint8_t expected[SC_CONTROL_MSG_MAX_SIZE] = {
+    const uint8_t expected[] = {
         SC_CONTROL_MSG_TYPE_SET_CLIPBOARD,
         0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, // sequence
         1, // paste
@@ -308,10 +309,11 @@ static void test_serialize_set_clipboard_long(void) {
         (SC_CONTROL_MSG_CLIPBOARD_TEXT_MAX_LENGTH >> 8) & 0xff,
         SC_CONTROL_MSG_CLIPBOARD_TEXT_MAX_LENGTH & 0xff,
     };
-    memset(expected + 14, 'a', SC_CONTROL_MSG_CLIPBOARD_TEXT_MAX_LENGTH);
-
     assert(!memcmp(buf, expected, sizeof(expected)));
+    assert(!memcmp(buf + sizeof(expected), text,
+                   SC_CONTROL_MSG_CLIPBOARD_TEXT_MAX_LENGTH));
     free(buf);
+    free(text);
 }
 
 static void test_serialize_set_display_power(void) {

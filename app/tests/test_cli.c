@@ -149,6 +149,33 @@ static void test_parse_shortcut_mods(void) {
     assert(!ok);
 }
 
+static void test_hwdec_with_ez_options(void) {
+    struct scrcpy_cli_args args = {.opts = scrcpy_options_default};
+    char *argv[] = {
+        "scrcpy", "--hwdec=disabled", "--video-codec=h265",
+        "--video-buffer=80", "--abr-lock-fps", "--abr-lock-bitrate",
+    };
+    assert(scrcpy_parse_args(&args, ARRAY_LEN(argv), argv));
+    assert(args.opts.hwdec_mode == SC_HWDEC_MODE_DISABLED);
+    assert(args.opts.video_codec == SC_CODEC_H265);
+    assert(args.opts.video_buffer == SC_TICK_FROM_MS(80));
+    assert(args.opts.abr_lock_fps && args.opts.abr_lock_bitrate);
+
+#ifdef HAVE_D3D11VA
+    args.opts = scrcpy_options_default;
+    char *hwargv[] = {"scrcpy", "--hwdec=d3d11va", "--video-codec=h265"};
+    assert(scrcpy_parse_args(&args, ARRAY_LEN(hwargv), hwargv));
+    assert(args.opts.hwdec_mode == SC_HWDEC_MODE_D3D11VA);
+
+    args.opts = scrcpy_options_default;
+    char *no_video[] = {"scrcpy", "--hwdec=d3d11va", "--no-video"};
+    assert(!scrcpy_parse_args(&args, ARRAY_LEN(no_video), no_video));
+#endif
+    args.opts = scrcpy_options_default;
+    char *invalid[] = {"scrcpy", "--hwdec=invalid"};
+    assert(!scrcpy_parse_args(&args, ARRAY_LEN(invalid), invalid));
+}
+
 int main(int argc, char *argv[]) {
     (void) argc;
     (void) argv;
@@ -158,5 +185,6 @@ int main(int argc, char *argv[]) {
     test_options();
     test_options2();
     test_parse_shortcut_mods();
+    test_hwdec_with_ez_options();
     return 0;
 }

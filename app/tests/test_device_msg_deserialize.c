@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "device_msg.h"
@@ -26,7 +27,8 @@ static void test_deserialize_clipboard(void) {
 }
 
 static void test_deserialize_clipboard_big(void) {
-    uint8_t input[DEVICE_MSG_MAX_SIZE];
+    uint8_t *input = malloc(DEVICE_MSG_MAX_SIZE);
+    assert(input);
     input[0] = DEVICE_MSG_TYPE_CLIPBOARD;
     input[1] = (DEVICE_MSG_TEXT_MAX_LENGTH & 0xff000000u) >> 24;
     input[2] = (DEVICE_MSG_TEXT_MAX_LENGTH & 0x00ff0000u) >> 16;
@@ -36,7 +38,7 @@ static void test_deserialize_clipboard_big(void) {
     memset(input + 5, 'a', DEVICE_MSG_TEXT_MAX_LENGTH);
 
     struct sc_device_msg msg;
-    ssize_t r = sc_device_msg_deserialize(input, sizeof(input), &msg);
+    ssize_t r = sc_device_msg_deserialize(input, DEVICE_MSG_MAX_SIZE, &msg);
     assert(r == DEVICE_MSG_MAX_SIZE);
 
     assert(msg.type == DEVICE_MSG_TYPE_CLIPBOARD);
@@ -45,6 +47,7 @@ static void test_deserialize_clipboard_big(void) {
     assert(msg.clipboard.text[0] == 'a');
 
     sc_device_msg_destroy(&msg);
+    free(input);
 }
 
 static void test_deserialize_ack_set_clipboard(void) {

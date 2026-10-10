@@ -72,6 +72,8 @@ public class Options {
     private boolean vdDestroyContent = true;
     private boolean vdSystemDecorations = true;
     private boolean flexDisplay;
+    private boolean flexDisplayAutoDpi;
+    private boolean reuseAppTask;
 
     private boolean keepActive;
     private boolean ignoreVideoEncoderConstraints;
@@ -294,6 +296,14 @@ public class Options {
 
     public boolean getFlexDisplay() {
         return flexDisplay;
+    }
+
+    public boolean getFlexDisplayAutoDpi() {
+        return flexDisplayAutoDpi;
+    }
+
+    public boolean getReuseAppTask() {
+        return reuseAppTask;
     }
 
     public boolean getIgnoreVideoEncoderConstraints() {
@@ -596,6 +606,12 @@ public class Options {
                     break;
                 case "flex_display":
                     options.flexDisplay = Boolean.parseBoolean(value);
+                    break;
+                case "flex_display_auto_dpi":
+                    options.flexDisplayAutoDpi = Boolean.parseBoolean(value);
+                    break;
+                case "reuse_app_task":
+                    options.reuseAppTask = Boolean.parseBoolean(value);
                     break;
                 case "capture_orientation":
                     Pair<Orientation.Lock, Orientation> pair = parseCaptureOrientation(value);

@@ -61,6 +61,8 @@ public class NewDisplayCapture extends SurfaceCapture {
     private final boolean vdDestroyContent;
     private final boolean vdSystemDecorations;
     private final boolean flexDisplay;
+    private final boolean flexDisplayAutoDpi;
+    private FlexDisplayDensity density;
 
     private VideoConstraints videoConstraints;
 
@@ -88,6 +90,7 @@ public class NewDisplayCapture extends SurfaceCapture {
         this.vdDestroyContent = options.getVDDestroyContent();
         this.vdSystemDecorations = options.getVDSystemDecorations();
         this.flexDisplay = options.getFlexDisplay();
+        this.flexDisplayAutoDpi = options.getFlexDisplayAutoDpi();
     }
 
     @Override
@@ -112,6 +115,9 @@ public class NewDisplayCapture extends SurfaceCapture {
             if (dpi == 0) {
                 dpi = 160;
             }
+            if (flexDisplayAutoDpi) {
+                density = new FlexDisplayDensity(displaySize, dpi);
+            }
         } else if (displaySize == null || dpi == 0) {
             DisplayInfo displayInfo = ServiceManager.getDisplayManager().getDisplayInfo(0);
             if (displayInfo != null) {
@@ -135,6 +141,9 @@ public class NewDisplayCapture extends SurfaceCapture {
             if (flexDisplay) {
                 assert displaySize != null;
                 displaySize = displaySize.constrain(videoConstraints, false);
+                if (density != null) {
+                    dpi = density.forSize(displaySize);
+                }
             } else {
                 if (displaySize == null) {
                     assert !flexDisplay;
@@ -303,6 +312,9 @@ public class NewDisplayCapture extends SurfaceCapture {
         if (virtualDisplay != null) {
             // synchronized with triggerResize()
             synchronized (this) {
+                if (!vdDestroyContent) {
+                    VirtualDisplayTaskRestorer.restoreToBackground(virtualDisplay.getDisplay().getDisplayId());
+                }
                 virtualDisplay.release();
                 setCurrentVirtualDisplay(null);
             }
@@ -360,6 +372,9 @@ public class NewDisplayCapture extends SurfaceCapture {
             DisplayInfo displayInfo = ServiceManager.getDisplayManager().getDisplayInfo(displayId);
             @SuppressWarnings("checkstyle:HiddenField") // hides this.dpi on purpose
             int dpi = displayInfo.getDpi();
+            if (density != null) {
+                dpi = density.forSize(size);
+            }
             int displayRotation = displayInfo.getRotation();
             if (captureOrientation.isSwap()) {
                 size = size.rotate();
