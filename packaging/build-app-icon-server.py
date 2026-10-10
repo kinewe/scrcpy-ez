@@ -1,6 +1,6 @@
 """Build the current Android helper with an already-installed SDK/JDK, without Gradle/network."""
 from pathlib import Path
-import argparse, subprocess, zipfile
+import argparse, re, subprocess, zipfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--sdk', required=True)
@@ -16,7 +16,10 @@ build = out / ('server-' + uuid.uuid4().hex)
 build.mkdir()
 classes, gen = build/'classes', build/'gen'
 classes.mkdir(); (gen/'com/genymobile/scrcpy').mkdir(parents=True)
-(gen/'com/genymobile/scrcpy/BuildConfig.java').write_text('package com.genymobile.scrcpy; public final class BuildConfig { public static final boolean DEBUG=false; public static final String VERSION_NAME="4.1"; }',encoding='utf-8')
+version = re.search(r"version:\s*'([^']+)'", (root/'meson.build').read_text(encoding='utf-8')).group(1)
+(gen/'com/genymobile/scrcpy/BuildConfig.java').write_text(
+    'package com.genymobile.scrcpy; public final class BuildConfig { public static final boolean DEBUG=false; '
+    f'public static final String VERSION_NAME="{version}"; }}', encoding='utf-8')
 sdk, jdk = Path(args.sdk), Path(args.jdk)
 tools = sdk/'build-tools/36.0.0'
 android = sdk/'platforms/android-36/android.jar'

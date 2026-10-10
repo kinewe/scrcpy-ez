@@ -16,6 +16,13 @@ if not defined SCEZ_EVENT_ROUTE exit /b 1
 set "WATCH_TAG=%SCEZ_WATCH_TAG%"
 set "PICK=%SCEZ_EVENT_ROUTE%"
 set "USB_DEV=%SCEZ_EVENT_ROUTE%"
+rem The supervisor knows the actual transport even when ADB uses an mDNS name.
+set "ROUTE_WIRELESS=0"
+if "%SCEZ_EVENT_KIND%"=="wifi" set "ROUTE_WIRELESS=1"
+if not defined SCEZ_EVENT_KIND (
+    echo !PICK! | findstr /i /c:":" /c:"._adb-tls-connect." /c:"._adb._tcp" >nul 2>&1
+    if not errorlevel 1 set "ROUTE_WIRELESS=1"
+)
 set "SCRCPY_SERVER_PATH=%~dp0scrcpy-server"
 set "ADB=adb"
 if exist "%~dp0adb.exe" set "ADB=%~dp0adb.exe"
@@ -35,7 +42,7 @@ if defined SCEZ_VCODEC_USB set "VCODEC_USB=!SCEZ_VCODEC_USB!"
 if defined SCEZ_ACODEC_USB set "ACODEC_USB=!SCEZ_ACODEC_USB!"
 if defined SCEZ_VCODEC_WIFI set "VCODEC_WIFI=!SCEZ_VCODEC_WIFI!"
 if defined SCEZ_ACODEC_WIFI set "ACODEC_WIFI=!SCEZ_ACODEC_WIFI!"
-set "USB_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_USB! --audio-codec=!ACODEC_USB! --video-bit-rate=50M --max-size 2560 --max-fps 120 --video-codec-options="max-b-frames:int=0,bitrate-mode:int=1" --render-driver=direct3d --video-buffer=0"
+set "USB_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_USB! --audio-codec=!ACODEC_USB! --video-bit-rate=50M --max-size 2560 --max-fps 120 --video-codec-options="max-b-frames:int=0,bitrate-mode:int=1" --video-buffer=0"
 set "WIFI_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_WIFI! --audio-codec=!ACODEC_WIFI! --video-bit-rate=15M --max-size 1920 --max-fps 60"
 
 
@@ -99,10 +106,10 @@ for /f "tokens=1 delims=." %%a in ("!DEV_FPS!") do set "DEV_FPS=%%a"
 if not defined DEV_H (
     rem 读取/解析失败：回退默认有线规格；老设备用兼容档
     if defined LEGACY_DEVICE (
-        set "USB_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_USB! --audio-codec=!ACODEC_USB! --video-bit-rate=6M --max-size 720 --max-fps 24 --render-driver=direct3d --video-buffer=0"
+        set "USB_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_USB! --audio-codec=!ACODEC_USB! --video-bit-rate=6M --max-size 720 --max-fps 24 --video-buffer=0"
         set "SPEC_INFO=兼容模式 !VCODEC_USB!/6M/720/24fps（老设备）"
     ) else (
-        set "USB_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_USB! --audio-codec=!ACODEC_USB! --video-bit-rate=50M --max-size 2560 --max-fps 120 --video-codec-options="max-b-frames:int=0,bitrate-mode:int=1" --render-driver=direct3d --video-buffer=0"
+        set "USB_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_USB! --audio-codec=!ACODEC_USB! --video-bit-rate=50M --max-size 2560 --max-fps 120 --video-codec-options="max-b-frames:int=0,bitrate-mode:int=1" --video-buffer=0"
         set "SPEC_INFO=设备规格读取失败，使用默认规格 !VCODEC_USB!/50M/2560/120fps"
     )
     exit /b 0
@@ -126,15 +133,15 @@ if defined LEGACY_DEVICE (
         set "MAX_SIZE=720"
         set "DEV_FPS=24"
         set "USB_BITRATE=6M"
-        set "USB_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_USB! --audio-codec=!ACODEC_USB! --video-bit-rate=!USB_BITRATE! --max-size !MAX_SIZE! --max-fps !DEV_FPS! --render-driver=direct3d --video-buffer=0"
+        set "USB_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_USB! --audio-codec=!ACODEC_USB! --video-bit-rate=!USB_BITRATE! --max-size !MAX_SIZE! --max-fps !DEV_FPS! --video-buffer=0"
         set "SPEC_INFO=兼容模式 !VCODEC_USB!/6M/720/24fps（Android 8 及更早设备）"
     ) else (
         if !DEV_FPS! GTR 30 set "DEV_FPS=30"
-        set "USB_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_USB! --audio-codec=!ACODEC_USB! --video-bit-rate=!USB_BITRATE! --max-size !MAX_SIZE! --max-fps !DEV_FPS! --video-codec-options="max-b-frames:int=0,bitrate-mode:int=1" --render-driver=direct3d --video-buffer=0"
+        set "USB_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_USB! --audio-codec=!ACODEC_USB! --video-bit-rate=!USB_BITRATE! --max-size !MAX_SIZE! --max-fps !DEV_FPS! --video-codec-options="max-b-frames:int=0,bitrate-mode:int=1" --video-buffer=0"
         set "SPEC_INFO=检测到设备 !DEV_W!x!DEV_H!@!DEV_FPS!Hz，有线规格 !VCODEC_USB!/!USB_BITRATE!/!MAX_SIZE!/!DEV_FPS!fps（老设备限 30fps）"
     )
 ) else (
-    set "USB_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_USB! --audio-codec=!ACODEC_USB! --video-bit-rate=!USB_BITRATE! --max-size !MAX_SIZE! --max-fps !DEV_FPS! --video-codec-options="max-b-frames:int=0,bitrate-mode:int=1" --render-driver=direct3d --video-buffer=0"
+    set "USB_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_USB! --audio-codec=!ACODEC_USB! --video-bit-rate=!USB_BITRATE! --max-size !MAX_SIZE! --max-fps !DEV_FPS! --video-codec-options="max-b-frames:int=0,bitrate-mode:int=1" --video-buffer=0"
     set "SPEC_INFO=检测到设备 !DEV_W!x!DEV_H!@!DEV_FPS!Hz，有线规格 !VCODEC_USB!/!USB_BITRATE!/!MAX_SIZE!/!DEV_FPS!fps"
 )
 exit /b 0
@@ -173,8 +180,7 @@ if defined LEGACY_DEVICE (
 )
 set "AUDIO_MODE="
 set "CAST_ARGS=!WIFI_ARGS!"
-echo !PICK! | findstr /i ":" >nul 2>&1
-if not errorlevel 1 (
+if "!ROUTE_WIRELESS!"=="1" (
     echo [自动切换] 无线投屏中：会话监督器正在订阅插拔线事件
     echo [流畅] 无线模式：带宽有限，已启用低延迟串流（!VCODEC_WIFI!/15M/1920/60fps，剪贴板自动同步（电脑复制即达手机））
     rem scrcpy-ez 参数浮窗覆盖（无线 SCEZ_*_WIFI）：未设置=原逻辑
@@ -190,7 +196,7 @@ if defined SCEZ_LOCK_BITRATE_WIFI set "CAST_ARGS=!CAST_ARGS! --abr-lock-bitrate"
     set "CAST_ARGS=!USB_ARGS!"
     echo [高清] 有线模式：!SPEC_INFO!（低延迟优化，剪贴板自动同步（电脑复制即达手机））
     rem scrcpy-ez 参数浮窗覆盖（有线 SCEZ_*_USB）：未设置=原逻辑
-    if defined SCEZ_RES_USB set "CAST_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_USB! --audio-codec=!ACODEC_USB! --video-bit-rate=!SCEZ_BITRATE_USB!M --max-size !SCEZ_RES_USB! --max-fps !SCEZ_FPS_USB! --video-codec-options="max-b-frames:int=0,bitrate-mode:int=1" --render-driver=direct3d --video-buffer=0"
+    if defined SCEZ_RES_USB set "CAST_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC_USB! --audio-codec=!ACODEC_USB! --video-bit-rate=!SCEZ_BITRATE_USB!M --max-size !SCEZ_RES_USB! --max-fps !SCEZ_FPS_USB! --video-codec-options="max-b-frames:int=0,bitrate-mode:int=1" --video-buffer=0"
     if defined SCEZ_RES_USB echo [custom] wired res=!SCEZ_RES_USB! fps=!SCEZ_FPS_USB! bitrate=!SCEZ_BITRATE_USB! ^(usb^) codec=!VCODEC_USB! acodec=!ACODEC_USB!
     set "AUDIO_MODE=!SCEZ_AUDIO_USB!"
 rem ABR 锁定（GUI 参数浮窗「锁定」）：锁定维度不被自适应调整
@@ -208,13 +214,15 @@ if defined SCEZ_VD_SIZE_USB set "VD_ON=1"
 if defined SCEZ_VD_SIZE_WIFI set "VD_ON=1"
 if "!VD_ON!"=="1" (
     set "VD_WIRE=0"
-    echo !PICK! | findstr /i ":" >nul 2>&1
-    if not errorlevel 1 set "VD_WIRE=1"
+    if "!ROUTE_WIRELESS!"=="1" set "VD_WIRE=1"
     set "VD_SIZE="
     set "VD_DPI="
     set "VD_FPS="
     set "VD_BIT="
     set "VD_FLEX="
+    set "VD_AUTO_DPI="
+    set "VD_MATCH_PHONE="
+    set "VD_MAX_SIZE="
     set "VD_AUDIO="
     if "!VD_WIRE!"=="0" (
         set "VD_SIZE=!SCEZ_VD_SIZE_USB!"
@@ -222,6 +230,9 @@ if "!VD_ON!"=="1" (
         set "VD_FPS=!SCEZ_VD_FPS_USB!"
         set "VD_BIT=!SCEZ_VD_BIT_USB!"
         set "VD_FLEX=!SCEZ_VD_FLEX_USB!"
+        set "VD_AUTO_DPI=!SCEZ_VD_AUTO_DPI_USB!"
+        set "VD_MATCH_PHONE=!SCEZ_VD_MATCH_PHONE_USB!"
+        set "VD_MAX_SIZE=!SCEZ_VD_MAX_SIZE_USB!"
         set "VD_AUDIO=!SCEZ_VD_AUDIO_USB!"
     ) else (
         set "VD_SIZE=!SCEZ_VD_SIZE_WIFI!"
@@ -229,6 +240,9 @@ if "!VD_ON!"=="1" (
         set "VD_FPS=!SCEZ_VD_FPS_WIFI!"
         set "VD_BIT=!SCEZ_VD_BIT_WIFI!"
         set "VD_FLEX=!SCEZ_VD_FLEX_WIFI!"
+        set "VD_AUTO_DPI=!SCEZ_VD_AUTO_DPI_WIFI!"
+        set "VD_MATCH_PHONE=!SCEZ_VD_MATCH_PHONE_WIFI!"
+        set "VD_MAX_SIZE=!SCEZ_VD_MAX_SIZE_WIFI!"
         set "VD_AUDIO=!SCEZ_VD_AUDIO_WIFI!"
     )
     rem 回退：对应形态无新变量时用旧单套变量（旧 GUI 组合）
@@ -237,6 +251,12 @@ if "!VD_ON!"=="1" (
     if not defined VD_FPS if defined SCEZ_VD_FPS set "VD_FPS=!SCEZ_VD_FPS!"
     if not defined VD_BIT if defined SCEZ_VD_BIT set "VD_BIT=!SCEZ_VD_BIT!"
     if not defined VD_FLEX if defined SCEZ_VD_FLEX set "VD_FLEX=!SCEZ_VD_FLEX!"
+    if not defined VD_AUTO_DPI if defined SCEZ_VD_AUTO_DPI set "VD_AUTO_DPI=!SCEZ_VD_AUTO_DPI!"
+    if not defined VD_AUTO_DPI set "VD_AUTO_DPI=0"
+    set "SCEZ_VD_AUTO_DPI=!VD_AUTO_DPI!"
+    if not defined VD_MATCH_PHONE if defined SCEZ_VD_MATCH_PHONE set "VD_MATCH_PHONE=!SCEZ_VD_MATCH_PHONE!"
+    if not defined VD_MAX_SIZE if defined SCEZ_VD_MAX_SIZE set "VD_MAX_SIZE=!SCEZ_VD_MAX_SIZE!"
+    if not defined VD_MAX_SIZE set "VD_MAX_SIZE=0"
     if not defined VD_AUDIO if defined SCEZ_VD_AUDIO set "VD_AUDIO=!SCEZ_VD_AUDIO!"
     if defined VD_SIZE (
         if not defined VD_BIT set "VD_BIT=8"
@@ -245,14 +265,20 @@ if "!VD_ON!"=="1" (
         if "!VD_WIRE!"=="0" (set "VCODEC=!VCODEC_USB!") else (set "VCODEC=!VCODEC_WIFI!")
         if "!VD_WIRE!"=="0" (set "ACODEC=!ACODEC_USB!") else (set "ACODEC=!ACODEC_WIFI!")
         set "CAST_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC! --audio-codec=!ACODEC! --video-bit-rate=!VD_BIT!M --max-fps !VD_FPS!"
-        if "!VD_WIRE!"=="0" set "CAST_ARGS=!CAST_ARGS! --video-codec-options="max-b-frames:int=0,bitrate-mode:int=1" --render-driver=direct3d --video-buffer=0"
+        if "!VD_WIRE!"=="0" set "CAST_ARGS=!CAST_ARGS! --video-codec-options="max-b-frames:int=0,bitrate-mode:int=1" --video-buffer=0"
         if defined LEGACY_DEVICE set "CAST_ARGS=--keyboard=!KEYBOARD! --video-codec=!VCODEC! --audio-codec=!ACODEC! --video-bit-rate=4M --max-fps 24"
         if defined VD_DPI (
             set "VD_ARGS=--new-display=!VD_SIZE!/!VD_DPI!"
         ) else (
             set "VD_ARGS=--new-display=!VD_SIZE!"
         )
-        if "!VD_FLEX!"=="1" set "VD_ARGS=!VD_ARGS! --flex-display"
+        if "!VD_MATCH_PHONE!"=="1" (
+            set "VD_ARGS=--new-display"
+            set "SCEZ_VD_AUTO_DPI=0"
+        ) else (
+            if "!VD_FLEX!"=="1" set "VD_ARGS=!VD_ARGS! --flex-display"
+        )
+        if defined VD_MAX_SIZE if !VD_MAX_SIZE! GTR 0 set "CAST_ARGS=!CAST_ARGS! --max-size !VD_MAX_SIZE!"
         if defined SCEZ_VD_IME set "VD_ARGS=!VD_ARGS! --display-ime-policy=!SCEZ_VD_IME!"
         if "%SCEZ_VD_NO_DECOR%"=="1" set "VD_ARGS=!VD_ARGS! --no-vd-system-decorations"
         if "%SCEZ_VD_KEEP_CONTENT%"=="1" set "VD_ARGS=!VD_ARGS! --no-vd-destroy-content"
@@ -273,9 +299,9 @@ if "!VD_ON!"=="1" (
         echo [窗口] 虚拟屏参数缺失（SCEZ_VD_SIZE[_USB/_WIFI] 均未定义，跳过虚拟屏参数）
     )
 )
-rem 所有设备统一使用定制 scrcpy-server：server 内对 SDK<29（Android 10 以下）
-rem 已自动关闭 ABR，保留图片剪贴板等定制功能。若某台老设备仍异常，可手动
-rem 切回最后兜底：把下一行改成 set "SCRCPY_SERVER_PATH=%~dp0scrcpy-server-legacy"
+rem 默认使用当前版本定制 server，旧 Android 的功能保护由 server 处理。
+rem scrcpy-server-legacy 保留为旧版备份，其协议与 5.0.1 客户端不同。
+rem 回退请恢复完整旧包，勿只替换服务端。
 set "SCRCPY_SERVER_PATH=%~dp0scrcpy-server"
 if defined LEGACY_DEVICE (
     echo [兼容] 老设备使用定制 server（已自动关闭 ABR，保留图片剪贴板）
@@ -291,6 +317,7 @@ if not "!VD_ON!"=="1" (
 )
 rem Global ez idle-sleep policy applies after both main and virtual-display arguments.
 if "%SCEZ_KEEP_ACTIVE%"=="1" set "CAST_ARGS=!CAST_ARGS! --keep-active"
+if "!SCEZ_REUSE_APP_TASK!"=="1" if "!SCEZ_START_APP:~0,1!"=="+" set "SCEZ_START_APP=!SCEZ_START_APP:~1!"
 "%~dp0scrcpy.exe" --serial !PICK! !CAST_ARGS! !VD_ARGS! !CLIP_START_PUSH! %*
 set "CAST_RC=!ERRORLEVEL!"
 chcp !OLD_CP! >nul 2>&1
