@@ -1,0 +1,429 @@
+{
+  "date": "2026-11-01",
+  "task": "RC25性能、结构分类和近期厂商API调研",
+  "runtimeUnchanged": {
+    "scrcpy.exe": "69791550274377d02cc52446b8f2749daf07705fbfb16e5c9c6af6897f522eee",
+    "scrcpy-server": "fc18beea9926b0f25e83041ce398b000da92baf539a76e902edad157d869781a",
+    "scrcpy-ez.exe": "0224b3f7422e4ad373e523e78b22fd09a7a5f750de7ec14757b12632d50144cc"
+  },
+  "candidateServerSHA256": "0afef919793866933d0cafd1e27612134b17c55153d5a41e1c12ca1fe9b114f5",
+  "readbackOptimizationReverted": true,
+  "sourceSnapshot": "Final helper snapshot includes later read-only capability inventory additions; historical profile SHA fields retain their actual values.",
+  "summary": {
+    "wireFrames": 480,
+    "allFrameCRC": "PASS",
+    "baselineMeanFps": 27.169714017804626,
+    "optimizedMeanFps": 29.522956671571038,
+    "shortTrialGainPercent": 8.661271341407218,
+    "codecCpuP50GainPercent": 17.571336026752004,
+    "realAllocationReductionPercent": 97.16815290623624,
+    "xhs": {
+      "package": "com.xingin.xhs",
+      "version": "9.49.1",
+      "sameDeviceAndVersion": true,
+      "physicalRendering": "TextureView",
+      "perspectiveRendering": "ResizableSurfaceView",
+      "virtualCameraOwner": [
+        "(Camera ID: v110_1109, Cost: 100, PID: 9319, Score: 101, State: 2User Id: 0, Client Package Name: com.xingin.xhs, Conflicting Client Devices: {})"
+      ],
+      "productAlphaValidated": true,
+      "productExitReportedRestored": true,
+      "qrBusinessRevalidated": false
+    },
+    "readbackAttempt": "byte-exact but no stable speed gain; reverted",
+    "optimizedServerSHA256": "0afef919793866933d0cafd1e27612134b17c55153d5a41e1c12ca1fe9b114f5"
+  },
+  "cleanup": {
+    "devices": [
+      {
+        "device": "k80",
+        "researchProcesses": [],
+        "temporaryFilesRemoved": [
+          "rc25-perf-probes.zip",
+          "rc25-perf-base.jar"
+        ],
+        "remainingNativeAlphaProcesses": []
+      },
+      {
+        "device": "pad",
+        "researchProcesses": [],
+        "temporaryFilesRemoved": [
+          "rc25-perf-probes.zip",
+          "rc25-perf-base.jar"
+        ],
+        "remainingNativeAlphaProcesses": []
+      }
+    ],
+    "researchForwards": 0
+  },
+  "exitCleanup": {
+    "observedClientPID": 37360,
+    "clientTitle": "RC25 Perf - Pad-XHS-Product",
+    "verifiedClientResponding": false,
+    "originalRuntimeServerSHA256": "FC18BEEA9926B0F25E83041CE398B000DA92BAF539A76E902EDAD157D869781A",
+    "alphaStopLogReportedRestored": true,
+    "serverPIDBefore": 9106,
+    "serverSessionId": "475cd5df",
+    "displayBefore": 267,
+    "action": "Normal close hung; verified exact own client command line and terminated only PID 37360",
+    "serverRemaining": false,
+    "display267Remaining": false,
+    "xhsIdleWhitelistAfter": false,
+    "rootCauseConfirmed": false,
+    "regressionCausedByCodecOptimization": false,
+    "regressionAttributionReason": "The observed GUI used the unchanged original runtime, not the optimized research server"
+  },
+  "files": [
+    {
+      "path": "before-product/NativeAlphaFrameCodec.java",
+      "bytes": 2501,
+      "sha256": "be4425c728cb918179d089ee69ba7bee40278f5d4078a112882b1bca5d0a2abd"
+    },
+    {
+      "path": "before-product/NativeAlphaReadback.java",
+      "bytes": 7301,
+      "sha256": "c8fe9c2e6ede9f650f1b4992c1699cb6d8e5e2bee545d028c7a69459463f4931"
+    },
+    {
+      "path": "before-product/scrcpy-server.jar",
+      "bytes": 362624,
+      "sha256": "c96886946d75b149b2da619ae46d04051186a3b575cc41623d61f2d247e62fdc"
+    },
+    {
+      "path": "build-probes.py",
+      "bytes": 900,
+      "sha256": "985b70d74dbe3047f37b344fba4eeac05ec4cda20ec64989e769b6ffd66268e7"
+    },
+    {
+      "path": "cleanup-performance.py",
+      "bytes": 1789,
+      "sha256": "58f980f8e2929e67129ad4cf5cfd28ebf7bb933ca12798be9cdd4143d8fc46ae"
+    },
+    {
+      "path": "CodecBenchmarkProbe.java",
+      "bytes": 2198,
+      "sha256": "a3520a6731a431b51cc39ed1389924c3efbcffaf1da105f5d1b1c51ef9663fb0"
+    },
+    {
+      "path": "CodecProfilingParity.java",
+      "bytes": 1501,
+      "sha256": "53c06af1dabb9dff80ef1a14209c8cf49e8f12f83b1c06aceece2fbd32b3c312"
+    },
+    {
+      "path": "COMPLETION.md",
+      "bytes": 1837,
+      "sha256": "700331f1bd4f8f2222c61090b9084886e4c101f5e736d7b8aba685ebb85ff018"
+    },
+    {
+      "path": "DeviceCapabilitiesProbe.java",
+      "bytes": 2292,
+      "sha256": "4ec0e754b143360af68c5dee9bf4c2c457dd526963a7ea19637068fe86cc2b95"
+    },
+    {
+      "path": "fetch-modern-evidence.py",
+      "bytes": 2512,
+      "sha256": "db13fc3a40b06634ffc88e3e8e8e35607a86883febcacec5944bbe0e8aff6bf7"
+    },
+    {
+      "path": "fetch-raw-modern.py",
+      "bytes": 2167,
+      "sha256": "91c5c83cd7ec96f31d914429bfa4ae0d405f75d83db3d84409bed2bb5b28a2bb"
+    },
+    {
+      "path": "out/cleanup.json",
+      "bytes": 492,
+      "sha256": "907e6a7189505d37dae1ca593a6b49e8652f9d6d09935d9b835eb892f83a70bf"
+    },
+    {
+      "path": "out/codec-a1-CodecBenchmarkProbe.log",
+      "bytes": 332,
+      "sha256": "f8ce11240114e8b9ec668776f1a53baf267b7500fe29fdea39ed8efdb6d56d63"
+    },
+    {
+      "path": "out/codec-a2-CodecBenchmarkProbe.log",
+      "bytes": 335,
+      "sha256": "99d0fce6e8ee04e75b79953d7111b50ae92274f7b7d2c618571900659fde338f"
+    },
+    {
+      "path": "out/codec-b1-CodecBenchmarkProbe.log",
+      "bytes": 329,
+      "sha256": "b21b14c00d2ebdea1297bde0e9f23fad8b8813c2ca41acd0571b2bcd668748e4"
+    },
+    {
+      "path": "out/codec-b2-CodecBenchmarkProbe.log",
+      "bytes": 331,
+      "sha256": "aa11b75b38992a4dcc66275564865a378e3ddf11d13537a7f52ea98859cdb68a"
+    },
+    {
+      "path": "out/codec-parity/result.log",
+      "bytes": 131,
+      "sha256": "d9672f2200cb08663c9bbb474e16dd992cb1e3d17db2c82365d300cf3b60f749"
+    },
+    {
+      "path": "out/exit-hang.json",
+      "bytes": 758,
+      "sha256": "0a74444dca474fcac16d54fe514234eaa9e820c21c6d3ba4b7ef281e7dfb69eb"
+    },
+    {
+      "path": "out/historical-rules-audit.json",
+      "bytes": 12485,
+      "sha256": "65ce51abb960984c8ae54afda89807a533c366a197b859e8792e03655a7e1e03"
+    },
+    {
+      "path": "out/K80-AB-window.log",
+      "bytes": 19159,
+      "sha256": "458a1951489aae9f43e30172658493597aaf519c7fcbb9d00a5323439f0febe7"
+    },
+    {
+      "path": "out/k80-modern-api-DeviceCapabilitiesProbe.log",
+      "bytes": 9426,
+      "sha256": "0c60416dff7dbbda7813aff34d7479982a3294d8ee0b2ee3ab3a5b2dae1b3c1e"
+    },
+    {
+      "path": "out/modern-sources/pinned-index.json",
+      "bytes": 1726,
+      "sha256": "4392e29d4b7d049651179fad7981627e8f77ccbbb9bd16e8b1fc55bf0d85dfe7"
+    },
+    {
+      "path": "out/modern-sources/raw-index.json",
+      "bytes": 2678,
+      "sha256": "4789b23917af3abf27bb8c75b45a5c3ad1adec9ec21ecdfd2c5e141e4e4679b3"
+    },
+    {
+      "path": "out/modern-sources/source-index.json",
+      "bytes": 218,
+      "sha256": "864b0a814be6fa974095196e6fb9fc1461a53b46019a2d97950d4f9182696c45"
+    },
+    {
+      "path": "out/NativeAlphaFrameCodec-optimized.java",
+      "bytes": 2610,
+      "sha256": "ddccab508f59de5b1768e4e41692873c0ede0b0dfc29ef594a3d447bbc0935b4"
+    },
+    {
+      "path": "out/owned-ab.json",
+      "bytes": 4966,
+      "sha256": "c79d9a81b953fccf896f835e6bd74e69374c952b65455c00f77045c1c6c7440e"
+    },
+    {
+      "path": "out/pad-modern-api-DeviceCapabilitiesProbe.log",
+      "bytes": 9429,
+      "sha256": "0997537cfd639fd5ad280bbe4939d45b8e6dbe657cf32a129b1e6898c4356d27"
+    },
+    {
+      "path": "out/pad-xhs-product-camera-client.json",
+      "bytes": 118,
+      "sha256": "8b2a1c93207b76ef5743dd2f9cca044011a3d6d70a7fc956fb3b7f6881cf888f"
+    },
+    {
+      "path": "out/pad-xhs-product-confirm-camera-client.json",
+      "bytes": 274,
+      "sha256": "e6cd26265614d4d1e6de94984aa75a43e38e8d6e03e83dca59aa5115ab468ec6"
+    },
+    {
+      "path": "out/pad-xhs-product-SceneProbe.log",
+      "bytes": 417,
+      "sha256": "6301b0030ed155abda20aa054321eae483b525e05cbab07dd0c8147b35030dac"
+    },
+    {
+      "path": "out/pad-xhs-product-tree-WindowTreeProbe.log",
+      "bytes": 4114,
+      "sha256": "de9acbcf57e1225e9aff46fc210166323e613716add32a3cd57a190f40c8a57e"
+    },
+    {
+      "path": "out/Pad-XHS-Product-window.log",
+      "bytes": 98611,
+      "sha256": "b02a4fedb2c62ae840d07f6cce35a60be431b0c2af6fd19c7bc07fb7b17a9e25"
+    },
+    {
+      "path": "out/perf-k80-before-power.json",
+      "bytes": 3940,
+      "sha256": "d39cbf43a2d9b687de0c81062a573beb1b907dc656724b5f278f8141ba437a6c"
+    },
+    {
+      "path": "out/probes.zip",
+      "bytes": 19825,
+      "sha256": "e027de00e70ff07a6c491792da686d1944b2d0244ce3650e9e6cbb19b345eb17"
+    },
+    {
+      "path": "out/rc25-performance-server.jar",
+      "bytes": 362826,
+      "sha256": "0afef919793866933d0cafd1e27612134b17c55153d5a41e1c12ca1fe9b114f5"
+    },
+    {
+      "path": "out/readback-a-1440-SyntheticReadbackProbe.log",
+      "bytes": 592,
+      "sha256": "95e3c1bdd9da50be8bf1402ea5c843a1e1c806becf06423ad781b756c3b36a89"
+    },
+    {
+      "path": "out/readback-a-1441-SyntheticReadbackProbe.log",
+      "bytes": 587,
+      "sha256": "6fdda53a0eae3d2546a1f0e81e73bb0ec94ea540c4a45f6aba35f84e7f662ca7"
+    },
+    {
+      "path": "out/readback-b-1440-SyntheticReadbackProbe.log",
+      "bytes": 575,
+      "sha256": "88f1d52d11e2a027cdbe52e877e2f9db9c8be13377be20855f8174b128ef0977"
+    },
+    {
+      "path": "out/readback-b-1441-SyntheticReadbackProbe.log",
+      "bytes": 581,
+      "sha256": "d5c420dca28484ddd98900c2e4c08773972791c0285ed475d6a633ddedb4bb85"
+    },
+    {
+      "path": "out/real-a1.json",
+      "bytes": 9500,
+      "sha256": "26922524b442ac5351af92a567ecaf30b7d82982bc590dbc1889b8665b0359bd"
+    },
+    {
+      "path": "out/real-a1.log",
+      "bytes": 6866,
+      "sha256": "b3df6598fa274b61b84dd578f4b6bbe47fbdbe4053f7f02789042a547331ae91"
+    },
+    {
+      "path": "out/real-a2.json",
+      "bytes": 9488,
+      "sha256": "0098c519d82e28644076097cfd713f3425371c6c1f4e4d8a06c2a0facb4fd9e0"
+    },
+    {
+      "path": "out/real-a2.log",
+      "bytes": 6863,
+      "sha256": "e2395eb102c159f0a05f99e9b5fd394c1797ac0dd5bc27fd1811bd417611ddec"
+    },
+    {
+      "path": "out/real-ab.json",
+      "bytes": 40731,
+      "sha256": "b1fafe1d78ec3b6e8a773a09e34e502b4ebc7e2ed55049694d3d0a495b085833"
+    },
+    {
+      "path": "out/real-b1.json",
+      "bytes": 9504,
+      "sha256": "226bd74bd78120be8a30881e62ea16a6674206cb2ce3b6447f98beaab1deecf9"
+    },
+    {
+      "path": "out/real-b1.log",
+      "bytes": 6879,
+      "sha256": "e50289cfd0ac012eb95dae6ee6df9302fc3f35ab5ea8e7de46043e77d4f5ac4c"
+    },
+    {
+      "path": "out/real-b2.json",
+      "bytes": 9480,
+      "sha256": "251bcaaecb45186e52827c23a9c9e1bccdac768a3475b6e8547ea5db53b6aaf8"
+    },
+    {
+      "path": "out/real-b2.log",
+      "bytes": 6866,
+      "sha256": "29ca0e6d6a6288cee684c28cff66e17283079e93ef90fec2e726664f642ca6b7"
+    },
+    {
+      "path": "out/summary.json",
+      "bytes": 968,
+      "sha256": "dc330d20304b315d2536670483b8bf7b27de9817e5e1a71dfeaac436e6dbc7a4"
+    },
+    {
+      "path": "out/xhs-context-comparison.json",
+      "bytes": 10841,
+      "sha256": "6d408b6de2c0eca7b30b9c6f9aef52fa4be75d4143d5bb7ce516dd55d7834c02"
+    },
+    {
+      "path": "package-performance.py",
+      "bytes": 3396,
+      "sha256": "3e7ac5eac2377c8378dda0a1ebf784bc100007cc517bafec2f044e5727acc67d"
+    },
+    {
+      "path": "pin-modern-evidence.py",
+      "bytes": 1840,
+      "sha256": "1f581573677656f9262d234d7781a5a18c16640d66451ff54b3cedd2eb873acd"
+    },
+    {
+      "path": "PipelineProbe.java",
+      "bytes": 7690,
+      "sha256": "6f64ff11fbd45ea51810d0d363720c2caab22a5d80bdf4d3a2023842d3df5105"
+    },
+    {
+      "path": "product-performance.patch",
+      "bytes": 1535,
+      "sha256": "c9b25bc13bc4a1b240eda448cec07519c4f82aba55cdcf62d035be6400b004fc"
+    },
+    {
+      "path": "profile-run.py",
+      "bytes": 4988,
+      "sha256": "ca81fb449569750d66c81be4e38f8256660b87c565361f84ecd19da2f5a28a35"
+    },
+    {
+      "path": "README.md",
+      "bytes": 477,
+      "sha256": "c0600f84669cd87a3b0261bd569bf706b4a6d8cd75c8444f6f333f0ee32c36d5"
+    },
+    {
+      "path": "record-camera-client.py",
+      "bytes": 1006,
+      "sha256": "26ad5ed8c67966e82bc23fe5670ad769d76c416690ab0088f68d0e1d7411764f"
+    },
+    {
+      "path": "record-exit-cleanup.py",
+      "bytes": 1539,
+      "sha256": "cd45570d432b7d963088dbdd8e6dc39a5cab3024912fe729354ce9e7042925a5"
+    },
+    {
+      "path": "record-power.py",
+      "bytes": 1387,
+      "sha256": "e1962c15af8ed6d0f0035ee5d5deac6af52253f6200b7466cbbd5ddac923c14b"
+    },
+    {
+      "path": "REPORT.md",
+      "bytes": 10415,
+      "sha256": "0cef42198471806bff2f220d2d47531662385e7a7ecd822ab14d74654ca51c02"
+    },
+    {
+      "path": "run-owned-ab.py",
+      "bytes": 1812,
+      "sha256": "773b7a5a0770030fcefda4a74cd1978d6c5983d9500dbf939eb6717c52ef3466"
+    },
+    {
+      "path": "run-probe.py",
+      "bytes": 1262,
+      "sha256": "a713ed2f6f0640723c46f7c39e96cef4863770c547dcab9249089b6cde1eae37"
+    },
+    {
+      "path": "run-real-ab.py",
+      "bytes": 1098,
+      "sha256": "2bdbce34e33abc698d438a6acbc54896864646f706638c6ee13dbdb4f5cc8e18"
+    },
+    {
+      "path": "SceneContext.java",
+      "bytes": 9411,
+      "sha256": "0afaf6ad93010b2370797e5098781eaef28762cca4329815e55cac26b647c0a0"
+    },
+    {
+      "path": "SceneProbe.java",
+      "bytes": 1454,
+      "sha256": "1303b49bf67b07f6619c68c368e4fddc1732bae3b15877f96f8ac31e5e888b92"
+    },
+    {
+      "path": "start-window.ps1",
+      "bytes": 915,
+      "sha256": "169f36f9c4c3e9b446d431aa15a9be459107ffa7cb83d063755a982b6c65f8ae"
+    },
+    {
+      "path": "summarize-performance.py",
+      "bytes": 14596,
+      "sha256": "b26fc20a050fc5f36701e4b66f02be429e13dc5876860060023fac8261df406c"
+    },
+    {
+      "path": "SyntheticReadbackProbe.java",
+      "bytes": 2329,
+      "sha256": "20f621cda0749aea607bd513658767134793b55eecf329926bc32ff33cf079ab"
+    },
+    {
+      "path": "test-codec-profile.py",
+      "bytes": 808,
+      "sha256": "78c6d1abd72e574f36e5ebaa2115ea950d71e23c9a41a53c111df76e321fae85"
+    },
+    {
+      "path": "WindowTreeProbe.java",
+      "bytes": 618,
+      "sha256": "2cefd0b3348b2364a77b530d0810ce29e1d11fe14e64485474990757227bddb5"
+    }
+  ],
+  "publicArchiveNotice": "Historical experiment/build snapshot. Hashes below are original observations, not checksums of the parameterized public scripts. Current files: research/perspective-camera/PUBLIC_MANIFEST.json."
+}

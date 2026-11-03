@@ -31,3 +31,17 @@ local.properties
 /config.identity.txt
 /icons/
 /图标/
+
+# Perspective-camera public research archive: local evidence and builds stay local.
+/research/**/out/
+/research/**/private-work/
+/research/**/local-config.json
+/research/**/profiles.json
+/research/**/settings.json
+/research/**/.env
+/research/**/.env.*
+**/__pycache__/
+/profiles.json
+/settings.json
+/.env
+/.env.*

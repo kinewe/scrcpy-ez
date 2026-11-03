@@ -1,0 +1,125 @@
+--- before/app/src/sys/win/process.c
++++ app/src/sys/win/process.c
+@@ -17,8 +17,7 @@
+     bool inherit_stdout = !pout && !(flags & SC_PROCESS_NO_STDOUT);
+     bool inherit_stderr = !perr && !(flags & SC_PROCESS_NO_STDERR);
+
+-    // Add 1 per non-NULL pointer
+-    unsigned handle_count = !!pin || !!pout || !!perr;
++    unsigned handle_count = 0;
+
+     enum sc_process_result ret = SC_PROCESS_ERROR_GENERIC;
+
+@@ -30,6 +29,8 @@
+     HANDLE stdin_read_handle;
+     HANDLE stdout_write_handle;
+     HANDLE stderr_write_handle;
++    HANDLE inherited_stdout = NULL;
++    HANDLE inherited_stderr = NULL;
+     if (pin) {
+         if (!CreatePipe(&stdin_read_handle, pin, &sa, 0)) {
+             perror("pipe");
+@@ -69,30 +70,46 @@
+
+     si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+     if (inherit_stdout) {
+-        si.StartupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
++        HANDLE source = GetStdHandle(STD_OUTPUT_HANDLE);
++        if (source && source != INVALID_HANDLE_VALUE) {
++            if (!DuplicateHandle(GetCurrentProcess(), source,
++                                 GetCurrentProcess(), &inherited_stdout,
++                                 0, TRUE, DUPLICATE_SAME_ACCESS)) {
++                LOGE("Could not duplicate stdout handle: %lu", GetLastError());
++                goto error_close_stderr;
++            }
++            si.StartupInfo.hStdOutput = inherited_stdout;
++            handles[handle_count++] = inherited_stdout;
++        }
+     }
+     if (inherit_stderr) {
+-        si.StartupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
++        HANDLE source = GetStdHandle(STD_ERROR_HANDLE);
++        if (source && source != INVALID_HANDLE_VALUE) {
++            if (!DuplicateHandle(GetCurrentProcess(), source,
++                                 GetCurrentProcess(), &inherited_stderr,
++                                 0, TRUE, DUPLICATE_SAME_ACCESS)) {
++                LOGE("Could not duplicate stderr handle: %lu", GetLastError());
++                goto error_close_stderr;
++            }
++            si.StartupInfo.hStdError = inherited_stderr;
++            handles[handle_count++] = inherited_stderr;
++        }
++    }
++    if (pin) {
++        si.StartupInfo.hStdInput = stdin_read_handle;
++        handles[handle_count++] = stdin_read_handle;
++    }
++    if (pout) {
++        si.StartupInfo.hStdOutput = stdout_write_handle;
++        handles[handle_count++] = stdout_write_handle;
++    }
++    if (perr) {
++        si.StartupInfo.hStdError = stderr_write_handle;
++        handles[handle_count++] = stderr_write_handle;
+     }
+
+     LPPROC_THREAD_ATTRIBUTE_LIST lpAttributeList = NULL;
+     if (handle_count) {
+-        unsigned i = 0;
+-        if (pin) {
+-            si.StartupInfo.hStdInput = stdin_read_handle;
+-            handles[i++] = si.StartupInfo.hStdInput;
+-        }
+-        if (pout) {
+-            assert(!inherit_stdout);
+-            si.StartupInfo.hStdOutput = stdout_write_handle;
+-            handles[i++] = si.StartupInfo.hStdOutput;
+-        }
+-        if (perr) {
+-            assert(!inherit_stderr);
+-            si.StartupInfo.hStdError = stderr_write_handle;
+-            handles[i++] = si.StartupInfo.hStdError;
+-        }
+-
+         SIZE_T size;
+         // Call it once to know the required buffer size
+         BOOL ok =
+@@ -139,7 +156,11 @@
+         goto error_free_attribute_list;
+     }
+
+-    BOOL bInheritHandles = handle_count > 0 || inherit_stdout || inherit_stderr;
++    // Every launch uses an explicit list, including inherited console/log
++    // streams. A concurrent launch must never inherit another thread's pipe
++    // write end: that would keep its reader from seeing EOF during shutdown.
++    BOOL bInheritHandles = handle_count > 0;
++    si.StartupInfo.cb = handle_count ? sizeof(si) : sizeof(si.StartupInfo);
+     DWORD dwCreationFlags = 0;
+     if (handle_count > 0) {
+         dwCreationFlags |= EXTENDED_STARTUPINFO_PRESENT;
+@@ -171,6 +192,12 @@
+     }
+
+     CloseHandle(pi.hThread);
++    if (inherited_stdout) {
++        CloseHandle(inherited_stdout);
++    }
++    if (inherited_stderr) {
++        CloseHandle(inherited_stderr);
++    }
+
+     // These handles are used by the child process, close them for this process
+     if (pin) {
+@@ -193,6 +220,12 @@
+         free(lpAttributeList);
+     }
+ error_close_stderr:
++    if (inherited_stdout) {
++        CloseHandle(inherited_stdout);
++    }
++    if (inherited_stderr) {
++        CloseHandle(inherited_stderr);
++    }
+     if (perr) {
+         CloseHandle(*perr);
+         CloseHandle(stderr_write_handle);

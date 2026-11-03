@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-27",
+  "status": "rejected-quality-regression",
+  "desktopFps": 1,
+  "pairedLocalProcessing": {
+    "samples": 3034,
+    "cpu_us": {
+      "median": 2750.5,
+      "p95": 4049.0
+    },
+    "gpu_us": {
+      "median": 98.304,
+      "p95": 100.352
+    }
+  },
+  "restoredBlueBaselineLocalProcessing": {
+    "samples": 8740,
+    "cpu_us": {
+      "median": 1852.5,
+      "p95": 2662.0
+    },
+    "gpu_us": {
+      "median": 75.776,
+      "p95": 249.856
+    }
+  },
+  "lastPairingCounters": [
+    "TEMPORAL blue=1601 red=1549 paired=3098 rejected=108 stale=47 dy=24.0 correlation=0.977"
+  ],
+  "inputFields": {
+    "0": 55,
+    "3": 795,
+    "7": 795
+  },
+  "userObserved": "Severe flicker, grids and stripes; no exposed backing; original baseline restored cleaner",
+  "qrAcceptance": "not attempted after visual quality gate failed",
+  "closeClean": true,
+  "productionNativeSHA256": "E8FEF016D30A04A2C0265585DFAD237357D75FE81B760C0A198267A4600D006A",
+  "experimentNativeSHA256": "9152B538620A82C12C0FB626B7CF0475A6569D523E56B0543ACDFA06C042E27E",
+  "performanceLimit": "Observational CPU/GPU processing only; not end-to-end latency or a controlled same-scene benchmark"
+}

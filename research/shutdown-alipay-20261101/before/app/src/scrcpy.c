@@ -1,0 +1,1467 @@
+#include "scrcpy.h"
+
+#include <assert.h>
+#include <inttypes.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <SDL3/SDL.h>
+
+#ifdef _WIN32
+// not needed here, but winsock2.h must never be included AFTER windows.h
+# include <winsock2.h>
+# include <windows.h>
+#endif
+
+#include "audio_player.h"
+#include "controller.h"
+#include "clipboard_sync.h"
+#include "decoder.h"
+#include "demuxer.h"
+#include "events.h"
+#include "file_pusher.h"
+#include "hwdec.h"
+#include "keyboard_sdk.h"
+#include "mouse_sdk.h"
+#include "recorder.h"
+#include "screen.h"
+#include "frame_trace.h"
+#include "sdl_hints.h"
+#include "server.h"
+#include "native_source.h"
+#include "util/env.h"
+#include "uhid/gamepad_uhid.h"
+#include "uhid/keyboard_uhid.h"
+#include "uhid/mouse_uhid.h"
+#ifdef HAVE_USB
+# include "usb/aoa_hid.h"
+# include "usb/gamepad_aoa.h"
+# include "usb/keyboard_aoa.h"
+# include "usb/mouse_aoa.h"
+# include "usb/usb.h"
+#endif
+#include "util/acksync.h"
+#include "util/log.h"
+#include "util/rand.h"
+#include "util/str.h"
+#include "util/term.h"
+#include "util/timeout.h"
+#include "util/tick.h"
+
+#ifdef _WIN32
+struct session_monitor {
+    HANDLE done, stop, route, parent, thread;
+};
+
+static DWORD WINAPI
+session_monitor_run(void *data) {
+    struct session_monitor *m = data;
+    HANDLE handles[4];
+    DWORD count = 0, route_index = 0;
+    handles[count++] = m->done;
+    if (m->stop) { handles[count++] = m->stop; }
+    if (m->parent) { handles[count++] = m->parent; }
+    if (m->route) { route_index = count; handles[count++] = m->route; }
+    DWORD result = WaitForMultipleObjects(count, handles, FALSE, INFINITE);
+    if (result == WAIT_OBJECT_0) { return 0; }
+    if (result >= WAIT_OBJECT_0 + count) {
+        LOGE("Session control wait failed: %lu (error=%lu)",
+             (unsigned long) result, (unsigned long) GetLastError());
+        return 0;
+    }
+    bool route = m->route && result == WAIT_OBJECT_0 + route_index;
+    const char *cause = route ? "route"
+        : m->stop && handles[result - WAIT_OBJECT_0] == m->stop ? "stop"
+        : "parent";
+    fprintf(stdout, "SCRCPY_EZ_CONTROL cause=%s\n", cause);
+    fflush(stdout);
+    sc_push_event(route ? SC_EVENT_ROUTE_SWITCH : SDL_EVENT_QUIT);
+    return 0;
+}
+
+static bool
+session_monitor_start(struct session_monitor *m) {
+    memset(m, 0, sizeof(*m));
+    const char *stop = getenv("SCEZ_EVENT_STOP_NAME");
+    const char *route = getenv("SCEZ_EVENT_SWITCH_NAME");
+    const char *parent = getenv("SCEZ_EVENT_SUPERVISOR_PID");
+    if (!stop || !route || !parent) { return true; }
+    m->stop = OpenEventA(SYNCHRONIZE, FALSE, stop);
+    m->route = OpenEventA(SYNCHRONIZE, FALSE, route);
+    m->parent = OpenProcess(SYNCHRONIZE, FALSE, (DWORD) strtoul(parent, NULL, 10));
+    m->done = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (m->done && m->stop && m->route && m->parent) {
+        m->thread = CreateThread(NULL, 0, session_monitor_run, m, 0, NULL);
+    }
+    if (!m->thread) {
+        LOGE("Session control unavailable");
+        return false;
+    }
+    return true;
+}
+
+static void
+session_monitor_finish(struct session_monitor *m) {
+    if (m->thread) {
+        SetEvent(m->done);
+        WaitForSingleObject(m->thread, INFINITE);
+        CloseHandle(m->thread);
+    }
+    if (m->done) { CloseHandle(m->done); }
+    if (m->stop) { CloseHandle(m->stop); }
+    if (m->route) { CloseHandle(m->route); }
+    if (m->parent) { CloseHandle(m->parent); }
+}
+#endif
+#ifdef HAVE_V4L2
+# include "v4l2_sink.h"
+#endif
+#include "video_regulator.h"
+
+#define SC_BACKPRESSURE_THRESHOLD 8 // in-flight frames in video regulator
+
+/* RC.21: target package from --start-app (accepts "+pkg", "pkg/activity" and
+ * "pkg:..." forms). The key colour and the native probe are both chosen from
+ * it: WeCom's scan light is blue (green key), WeChat's scan line is green
+ * (production blue key). */
+static const char *
+scrcpy_target_package(const char *start_app) {
+    static char package[128];
+    if (!start_app || !*start_app) {
+        return NULL;
+    }
+    const char *p = start_app;
+    if (*p == '+') {
+        ++p;
+    }
+    size_t n = 0;
+    while (p[n] && p[n] != '/' && p[n] != ':' && n < sizeof(package) - 1) {
+        package[n] = p[n];
+        ++n;
+    }
+    package[n] = '\0';
+    return n ? package : NULL;
+}
+
+struct scrcpy {
+    struct sc_server server;
+    struct sc_screen screen;
+    struct sc_audio_player audio_player;
+    struct sc_demuxer video_demuxer;
+    struct sc_demuxer audio_demuxer;
+    struct sc_decoder video_decoder;
+    struct sc_abr_monitor abr_monitor;
+    struct sc_decoder audio_decoder;
+    struct sc_hwdec hwdec;
+    struct sc_recorder recorder;
+    struct sc_video_regulator video_regulator;
+#ifdef HAVE_V4L2
+    struct sc_v4l2_sink v4l2_sink;
+    struct sc_video_regulator v4l2_regulator;
+#endif
+    struct sc_controller controller;
+    struct sc_file_pusher file_pusher;
+#ifdef HAVE_USB
+    struct sc_usb usb;
+    struct sc_aoa aoa;
+    // sequence/ack helper to synchronize clipboard and Ctrl+v via HID
+    struct sc_acksync acksync;
+#endif
+    struct sc_uhid_devices uhid_devices;
+    union {
+        struct sc_keyboard_sdk keyboard_sdk;
+        struct sc_keyboard_uhid keyboard_uhid;
+#ifdef HAVE_USB
+        struct sc_keyboard_aoa keyboard_aoa;
+#endif
+    };
+    union {
+        struct sc_mouse_sdk mouse_sdk;
+        struct sc_mouse_uhid mouse_uhid;
+#ifdef HAVE_USB
+        struct sc_mouse_aoa mouse_aoa;
+#endif
+    };
+    union {
+        struct sc_gamepad_uhid gamepad_uhid;
+#ifdef HAVE_USB
+        struct sc_gamepad_aoa gamepad_aoa;
+#endif
+    };
+    struct sc_timeout timeout;
+};
+
+#ifdef _WIN32
+static BOOL WINAPI windows_ctrl_handler(DWORD ctrl_type) {
+    if (ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT) {
+        sc_push_event(SDL_EVENT_QUIT);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static void
+sdl_configure_ctrl_c_windows(void) {
+    // Clean up properly on Ctrl+C on Windows
+    bool ok = SetConsoleCtrlHandler(windows_ctrl_handler, TRUE);
+    if (!ok) {
+        LOGW("Could not set Ctrl+C handler");
+    }
+}
+#endif // _WIN32
+
+static void
+restore_device_screen(struct scrcpy *s, bool has_screen) {
+    if (has_screen) {
+        // No-op unless the screen was turned off by Ctrl+H.
+        sc_input_manager_turn_screen_on(&s->screen.im);
+    }
+}
+
+static enum scrcpy_exit_code
+event_loop(struct scrcpy *s, bool has_screen) {
+    SDL_Event event;
+    while (SDL_WaitEvent(&event)) {
+        switch (event.type) {
+            case SC_EVENT_DEVICE_DISCONNECTED:
+                LOGW("Device disconnected");
+                if (has_screen) {
+                    sc_screen_handle_event(&s->screen, &event);
+                }
+                // The device-side cleanup process restores the screen.
+                return SCRCPY_EXIT_DISCONNECTED;
+            case SC_EVENT_DEMUXER_ERROR:
+                LOGE("Demuxer error");
+                restore_device_screen(s, has_screen);
+                return SCRCPY_EXIT_FAILURE;
+            case SC_EVENT_CONTROLLER_ERROR:
+                LOGE("Controller error");
+                return SCRCPY_EXIT_FAILURE;
+            case SC_EVENT_DECODER_ERROR:
+                LOGE("Decoder error");
+                return SCRCPY_EXIT_FAILURE;
+            case SC_EVENT_RECORDER_ERROR:
+                LOGE("Recorder error");
+                restore_device_screen(s, has_screen);
+                return SCRCPY_EXIT_FAILURE;
+            case SC_EVENT_AOA_OPEN_ERROR:
+                LOGE("AOA open error");
+                restore_device_screen(s, has_screen);
+                return SCRCPY_EXIT_FAILURE;
+            case SC_EVENT_TIME_LIMIT_REACHED:
+                LOGI("Time limit reached");
+                restore_device_screen(s, has_screen);
+                return SCRCPY_EXIT_SUCCESS;
+            case SDL_EVENT_QUIT:
+                LOGD("User requested to quit");
+                fprintf(stdout, "SCRCPY_EZ_USER_CLOSE\n");
+                fflush(stdout);
+                restore_device_screen(s, has_screen);
+                return SCRCPY_EXIT_SUCCESS;
+            case SC_EVENT_ROUTE_SWITCH:
+                fprintf(stdout, "SCRCPY_EZ_ROUTE_SWITCH\n");
+                fflush(stdout);
+                restore_device_screen(s, has_screen);
+                return SCRCPY_EXIT_ROUTE_SWITCH;
+            case SC_EVENT_STOP_MIRRORING:
+                // scrcpy-ez: user pressed "stop mirroring" on the device
+                // notification. Treated exactly like a user closing the window:
+                // same sentinel line for the GUI, exit code 0 so the launcher
+                // script stops the mirroring loop instead of reconnecting.
+                LOGI("Stop mirroring requested from device notification");
+                fprintf(stdout, "SCRCPY_EZ_USER_CLOSE\n");
+                fflush(stdout);
+                restore_device_screen(s, has_screen);
+                return SCRCPY_EXIT_SUCCESS;
+            default:
+                if (has_screen) {
+                    sc_screen_handle_event(&s->screen, &event);
+                }
+                break;
+        }
+    }
+    LOGE("SDL_WaitEvent() error: %s", SDL_GetError());
+    return SCRCPY_EXIT_FAILURE;
+}
+
+// Return true on success, false on error
+static int
+await_for_server(bool *connected) {
+    SDL_Event event;
+    while (SDL_WaitEvent(&event)) {
+        switch (event.type) {
+            case SC_EVENT_ROUTE_SWITCH:
+                if (connected) { *connected = false; }
+                return 2;
+            case SDL_EVENT_QUIT:
+                if (connected) {
+                    *connected = false;
+                }
+                return true;
+            case SC_EVENT_SERVER_CONNECTION_FAILED:
+                return false;
+            case SC_EVENT_SERVER_CONNECTED:
+                if (connected) {
+                    *connected = true;
+                }
+                return true;
+            default:
+                break;
+        }
+    }
+
+    LOGE("SDL_WaitEvent() error: %s", SDL_GetError());
+    return false;
+}
+
+static void
+sc_decoder_on_ended(struct sc_decoder *decoder, bool success, void *userdata) {
+    (void) decoder;
+    (void) userdata;
+
+    if (!success) {
+        sc_push_event(SC_EVENT_DECODER_ERROR);
+    }
+}
+
+static void
+sc_recorder_on_ended(struct sc_recorder *recorder, bool success,
+                     void *userdata) {
+    (void) recorder;
+    (void) userdata;
+
+    if (!success) {
+        sc_push_event(SC_EVENT_RECORDER_ERROR);
+    }
+}
+
+static void
+sc_video_demuxer_on_ended(struct sc_demuxer *demuxer,
+                          enum sc_demuxer_status status, void *userdata) {
+    (void) demuxer;
+    (void) userdata;
+
+    // The device may not decide to disable the video
+    assert(status != SC_DEMUXER_STATUS_DISABLED);
+
+    if (status == SC_DEMUXER_STATUS_EOS) {
+        sc_push_event(SC_EVENT_DEVICE_DISCONNECTED);
+    } else {
+        sc_push_event(SC_EVENT_DEMUXER_ERROR);
+    }
+}
+
+static void
+sc_audio_demuxer_on_ended(struct sc_demuxer *demuxer,
+                          enum sc_demuxer_status status, void *userdata) {
+    (void) demuxer;
+
+    const struct scrcpy_options *options = userdata;
+
+    // Contrary to the video demuxer, keep mirroring if only the audio fails
+    // (unless --require-audio is set).
+    if (status == SC_DEMUXER_STATUS_EOS) {
+        sc_push_event(SC_EVENT_DEVICE_DISCONNECTED);
+    } else if (status == SC_DEMUXER_STATUS_ERROR
+            || (status == SC_DEMUXER_STATUS_DISABLED
+                && options->require_audio)) {
+        sc_push_event(SC_EVENT_DEMUXER_ERROR);
+    }
+}
+
+static void
+sc_controller_on_ended(struct sc_controller *controller, bool error,
+                       void *userdata) {
+    // Note: this function may be called twice, once from the controller thread
+    // and once from the receiver thread
+    (void) controller;
+    (void) userdata;
+
+    if (error) {
+        sc_push_event(SC_EVENT_CONTROLLER_ERROR);
+    } else {
+        sc_push_event(SC_EVENT_DEVICE_DISCONNECTED);
+    }
+}
+
+static void
+sc_server_on_connection_failed(struct sc_server *server, void *userdata) {
+    (void) server;
+    (void) userdata;
+
+    sc_push_event(SC_EVENT_SERVER_CONNECTION_FAILED);
+}
+
+static void
+sc_server_on_connected(struct sc_server *server, void *userdata) {
+    (void) server;
+    (void) userdata;
+
+    sc_push_event(SC_EVENT_SERVER_CONNECTED);
+}
+
+static void
+sc_server_on_disconnected(struct sc_server *server, void *userdata) {
+    (void) server;
+    (void) userdata;
+
+    LOGD("Server disconnected");
+    // Do nothing, the disconnection will be handled by the "stream stopped"
+    // event
+}
+
+static void
+sc_timeout_on_timeout(struct sc_timeout *timeout, void *userdata) {
+    (void) timeout;
+    (void) userdata;
+
+    sc_push_event(SC_EVENT_TIME_LIMIT_REACHED);
+}
+
+// Generate a scrcpy id to differentiate multiple running scrcpy instances
+static uint32_t
+scrcpy_generate_scid(void) {
+    struct sc_rand rand;
+    sc_rand_init(&rand);
+    // Only use 31 bits to avoid issues with signed values on the Java-side
+    return sc_rand_u32(&rand) & 0x7FFFFFFF;
+}
+
+static void
+init_sdl_gamepads(void) {
+    // Trigger a SDL_EVENT_GAMEPAD_ADDED event for all gamepads already
+    // connected
+    int count;
+    SDL_JoystickID *joysticks = SDL_GetJoysticks(&count);
+    if (!joysticks) {
+        LOGE("Could not list joysticks: %s", SDL_GetError());
+        return;
+    }
+
+    for (int i = 0; i < count; ++i) {
+        SDL_JoystickID joystick = joysticks[i];
+        if (SDL_IsGamepad(joystick)) {
+            SDL_Event event;
+            event.gdevice.type = SDL_EVENT_GAMEPAD_ADDED;
+            event.gdevice.which = joystick;
+            SDL_PushEvent(&event);
+        }
+    }
+
+    SDL_free(joysticks);
+}
+
+static void
+set_terminal_title_with_prefix(const char *value) {
+    char title[128];
+    memcpy(title, "scrcpy - ", 9);
+    size_t trunc_len = sc_str_utf8_truncation_index(value, 128 - 9 - 1);
+    assert(trunc_len <= 128 - 9 - 1);
+    memcpy(&title[9], value, trunc_len);
+    title[9 + trunc_len] = '\0';
+    sc_term_set_title(title);
+}
+
+static bool
+sc_init_video_hwdec(struct sc_hwdec *hwdec, enum sc_hwdec_mode mode,
+                    struct sc_screen *screen) {
+    enum AVHWDeviceType hw_type = AV_HWDEVICE_TYPE_NONE;
+    const char *hw_device = NULL;
+    SDL_Renderer *renderer = NULL;
+    if (screen) {
+        hw_type = sc_screen_get_hw_type(screen);
+        hw_device = sc_screen_get_hw_device(screen);
+        renderer = screen->renderer;
+    }
+    bool hw_forced = hw_type != AV_HWDEVICE_TYPE_NONE
+                  && mode != SC_HWDEC_MODE_AUTO;
+    if (sc_hwdec_init(hwdec, hw_type, hw_device, hw_forced, renderer)) {
+        return true;
+    }
+
+    // The software decoder cannot fail
+    assert(hw_type != AV_HWDEVICE_TYPE_NONE);
+
+    if (mode != SC_HWDEC_MODE_AUTO) {
+        LOGE("Hardware decoder %s unavailable",
+             av_hwdevice_get_type_name(hw_type));
+        return false;
+    }
+
+    // The screen created its interop according to the requested hardware
+    // decoder mode, but in the end the hardware decoder is unavailable, fall
+    // back to software decoding and replace the screen interop with a software
+    // interop.
+    LOGI("Hardware decoding unavailable; using software decoding");
+    if (!sc_screen_disable_hwdec(screen)) {
+        return false;
+    }
+
+    // Initialize software decoder
+    return sc_hwdec_init(hwdec, AV_HWDEVICE_TYPE_NONE, NULL, false, NULL);
+}
+
+enum scrcpy_exit_code
+scrcpy(struct scrcpy_options *options) {
+    static struct scrcpy scrcpy;
+#ifndef NDEBUG
+    // Detect missing initializations
+    memset(&scrcpy, 42, sizeof(scrcpy));
+#endif
+    struct scrcpy *s = &scrcpy;
+
+#ifdef _WIN32
+    // Record the real system keyboard layout before SDL initializes. The
+    // thread layout (GetKeyboardLayout(0)) always returns the Preload
+    // default (e.g. Chinese 00000804), which is NOT the user's current
+    // input language: on a system whose current language is English, a new
+    // thread still starts with the Preload default, so restoring it on
+    // focus loss would switch the layout away (problem B residual). The
+    // foreground window thread layout is the system-wide current input
+    // language; the scrcpy window does not exist yet at this point, so the
+    // foreground window is the user's active window.
+    HKL startup_hkl = NULL;
+    HWND fg = GetForegroundWindow();
+    DWORD fg_tid = fg ? GetWindowThreadProcessId(fg, NULL) : 0;
+    if (fg_tid) {
+        startup_hkl = GetKeyboardLayout(fg_tid);
+    }
+    if (!startup_hkl) {
+        // Fallback: thread layout (Preload default)
+        startup_hkl = GetKeyboardLayout(0);
+    }
+    LOGI("Startup HKL from foreground thread: 0x%08lx%s",
+         (unsigned long) (uintptr_t) startup_hkl,
+         fg_tid ? "" : " (fallback: no foreground window)");
+#else
+    HKL startup_hkl = NULL; // unused on non-Windows
+#endif
+
+    // Minimal SDL initialization
+    if (!SDL_Init(SDL_INIT_EVENTS)) {
+        LOGE("Could not initialize SDL: %s", SDL_GetError());
+        return SCRCPY_EXIT_FAILURE;
+    }
+
+    atexit(SDL_Quit);
+
+#ifdef _WIN32
+    struct session_monitor session;
+    if (!session_monitor_start(&session)) {
+        session_monitor_finish(&session);
+        return SCRCPY_EXIT_FAILURE;
+    }
+#endif
+
+    enum scrcpy_exit_code ret = SCRCPY_EXIT_FAILURE;
+
+    bool server_started = false;
+    bool file_pusher_initialized = false;
+    bool recorder_initialized = false;
+    bool recorder_started = false;
+#ifdef HAVE_V4L2
+    bool v4l2_sink_initialized = false;
+    bool v4l2_regulator_initialized = false;
+#endif
+    bool video_regulator_initialized = false;
+    bool video_demuxer_started = false;
+    bool audio_demuxer_started = false;
+    bool hwdec_initialized = false;
+    bool abr_monitor_initialized = false;
+    bool video_decoder_initialized = false;
+    bool video_decoder_started = false;
+    bool audio_decoder_initialized = false;
+    bool audio_decoder_started = false;
+#ifdef HAVE_USB
+    bool aoa_hid_initialized = false;
+    bool keyboard_aoa_initialized = false;
+    bool mouse_aoa_initialized = false;
+    bool gamepad_aoa_initialized = false;
+#endif
+    bool controller_initialized = false;
+    bool controller_started = false;
+    bool screen_initialized = false;
+    bool timeout_initialized = false;
+    bool timeout_started = false;
+    bool disconnected = false;
+
+    struct sc_acksync *acksync = NULL;
+
+    uint32_t scid = scrcpy_generate_scid();
+
+    struct sc_server_params params = {
+        .scid = scid,
+        .req_serial = options->serial,
+        .select_usb = options->select_usb,
+        .select_tcpip = options->select_tcpip,
+        .log_level = options->log_level,
+        .video_codec = options->video_codec,
+        .audio_codec = options->audio_codec,
+        .video_source = options->video_source,
+        .audio_source = options->audio_source,
+        .camera_facing = options->camera_facing,
+        .crop = options->crop,
+        .port_range = options->port_range,
+        .tunnel_host = options->tunnel_host,
+        .tunnel_port = options->tunnel_port,
+        .min_size_alignment = options->min_size_alignment,
+        .max_size = options->max_size,
+        .video_bit_rate = options->video_bit_rate,
+        .audio_bit_rate = options->audio_bit_rate,
+        .max_fps = options->max_fps,
+        .abr_lock_fps = options->abr_lock_fps,
+        .abr_lock_bitrate = options->abr_lock_bitrate,
+        .angle = options->angle,
+        .screen_off_timeout = options->screen_off_timeout,
+        .capture_orientation = options->capture_orientation,
+        .capture_orientation_lock = options->capture_orientation_lock,
+        .control = options->control,
+        .display_id = options->display_id,
+        .new_display = options->new_display,
+        .display_ime_policy = options->display_ime_policy,
+        .video = options->video,
+        .audio = options->audio,
+        .audio_dup = options->audio_dup,
+        .show_touches = options->show_touches,
+        .stay_awake = options->stay_awake,
+        .video_codec_options = options->video_codec_options,
+        .audio_codec_options = options->audio_codec_options,
+        .video_encoder = options->video_encoder,
+        .audio_encoder = options->audio_encoder,
+        .camera_id = options->camera_id,
+        .camera_size = options->camera_size,
+        .camera_ar = options->camera_ar,
+        .camera_fps = options->camera_fps,
+        .force_adb_forward = options->force_adb_forward,
+        .power_off_on_close = options->power_off_on_close,
+        .clipboard_autosync = options->clipboard_autosync,
+        .downsize_on_error = options->downsize_on_error,
+        .tcpip = options->tcpip,
+        .tcpip_dst = options->tcpip_dst,
+        .cleanup = options->cleanup,
+        .power_on = options->power_on,
+        .kill_adb_on_close = options->kill_adb_on_close,
+        .camera_high_speed = options->camera_high_speed,
+        .camera_torch = options->camera_torch,
+        .camera_zoom = options->camera_zoom,
+        .perspective_camera = options->perspective_camera,
+        .perspective_package = options->start_app,
+        .vd_destroy_content = options->vd_destroy_content,
+        .vd_system_decorations = options->vd_system_decorations,
+        .keep_active = options->keep_active,
+        .flex_display = options->flex_display,
+        .ignore_video_encoder_constraints =
+            options->ignore_video_encoder_constraints,
+        .list = options->list,
+    };
+
+    static const struct sc_server_callbacks cbs = {
+        .on_connection_failed = sc_server_on_connection_failed,
+        .on_connected = sc_server_on_connected,
+        .on_disconnected = sc_server_on_disconnected,
+    };
+    const char *target_package = scrcpy_target_package(options->start_app);
+    if (target_package && !getenv("SCEZ_PERSPECTIVE_KEY_COLOR")) {
+        /* Per-app backing colour: WeCom's scan light is blue -> green key;
+         * WeChat's green scan line needs the production blue default. */
+        sc_set_env("SCEZ_PERSPECTIVE_KEY_COLOR",
+                   !strcmp(target_package, "com.tencent.wework") ? "green"
+                                                                 : "blue");
+        LOGI("PERSPECTIVE key colour auto: package=%s colour=%s",
+             target_package,
+             !strcmp(target_package, "com.tencent.wework") ? "green" : "blue");
+    }
+
+    if (!sc_server_init(&s->server, &params, &cbs, NULL)) {
+        return SCRCPY_EXIT_FAILURE;
+    }
+
+#ifdef _WIN32
+    sdl_configure_ctrl_c_windows();
+#endif
+
+    // Set hints before starting the server thread to avoid race conditions in
+    // SDL
+    sc_sdl_set_hints(options->render_driver, options->disable_screensaver);
+    if (options->video_playback && options->control) {
+        sc_tick allowance = options->video_buffer_auto ? SC_TICK_FROM_MS(32) : options->video_buffer;
+        if (!sc_abr_monitor_init(&s->abr_monitor, allowance)) goto end;
+        abr_monitor_initialized = true;
+    }
+    sc_frame_trace_init(options);
+
+    if (!sc_server_start(&s->server)) {
+        goto end;
+    }
+
+    server_started = true;
+
+#ifdef _WIN32
+    if (options->perspective_camera) {
+        /* RC.20: start the automatic native-UI capture as soon as the device
+         * server is running; the probe waits for the scanner window itself.
+         * The serial may still be resolved asynchronously by the server thread,
+         * so prefer the explicitly requested serial from the command line. */
+        const char *native_source_serial =
+            s->server.serial ? s->server.serial : options->serial;
+        if (!sc_native_source_start(native_source_serial, target_package)) {
+            LOGW("Native alpha unavailable; keeping ordinary video preview");
+        }
+    }
+#endif
+
+    if (options->list) {
+        int ok = await_for_server(NULL);
+        ret = ok == 2 ? SCRCPY_EXIT_ROUTE_SWITCH : ok ? SCRCPY_EXIT_SUCCESS : SCRCPY_EXIT_FAILURE;
+        goto end;
+    }
+
+    // playback implies capture
+    assert(!options->video_playback || options->video);
+    assert(!options->audio_playback || options->audio);
+
+    if (options->window ||
+            (options->control && options->clipboard_autosync)) {
+        // Initialize the video subsystem even if --no-video or
+        // --no-video-playback is passed so that clipboard synchronization
+        // still works.
+        // <https://github.com/Genymobile/scrcpy/issues/4418>
+        if (!SDL_Init(SDL_INIT_VIDEO)) {
+            // If it fails, it is an error only if video playback is enabled
+            if (options->video_playback) {
+                LOGE("Could not initialize SDL video: %s", SDL_GetError());
+                goto end;
+            } else {
+                LOGW("Could not initialize SDL video: %s", SDL_GetError());
+            }
+        }
+    }
+
+    if (options->audio_playback) {
+        if (!SDL_Init(SDL_INIT_AUDIO)) {
+            LOGE("Could not initialize SDL audio: %s", SDL_GetError());
+            goto end;
+        }
+    }
+
+    if (options->gamepad_input_mode != SC_GAMEPAD_INPUT_MODE_DISABLED) {
+        if (!SDL_Init(SDL_INIT_GAMEPAD)) {
+            LOGE("Could not initialize SDL gamepad: %s", SDL_GetError());
+            goto end;
+        }
+    }
+
+    // Await for server without blocking Ctrl+C handling
+    bool connected;
+    int awaited = await_for_server(&connected);
+    if (awaited == 2) { ret = SCRCPY_EXIT_ROUTE_SWITCH; goto end; }
+    if (!awaited) {
+        LOGE("Server connection failed");
+        goto end;
+    }
+
+    if (!connected) {
+        // This is not an error, user requested to quit
+        LOGD("User requested to quit");
+        ret = SCRCPY_EXIT_SUCCESS;
+        goto end;
+    }
+
+    LOGD("Server connected");
+
+    // It is necessarily initialized here, since the device is connected
+    struct sc_server_info *info = &s->server.info;
+
+    const char *window_title =
+        options->window_title ? options->window_title : info->device_name;
+    assert(window_title);
+
+    if (options->update_terminal_title) {
+        set_terminal_title_with_prefix(window_title);
+    }
+
+    const char *serial = s->server.serial;
+    assert(serial);
+#ifdef _WIN32
+    if (!sc_clipboard_sync_init(serial)) {
+        LOGW("Clipboard coordinator unavailable; automatic push is disabled");
+    }
+#endif
+
+    struct sc_file_pusher *fp = NULL;
+
+    if (options->window && options->control) {
+        if (!sc_file_pusher_init(&s->file_pusher, &s->controller, serial,
+                                 options->push_target)) {
+            goto end;
+        }
+        fp = &s->file_pusher;
+        file_pusher_initialized = true;
+    }
+
+    bool has_video_buffer = options->video_buffer;
+#ifdef HAVE_V4L2
+    has_video_buffer |= options->v4l2_buffer;
+#endif
+
+    if (options->video) {
+        static const struct sc_demuxer_callbacks video_demuxer_cbs = {
+            .on_ended = sc_video_demuxer_on_ended,
+        };
+        // If a video buffer is present, then the recv date must be set
+        bool set_recv_date = has_video_buffer;
+        sc_demuxer_init(&s->video_demuxer, "video", s->server.video_socket,
+                        set_recv_date, &video_demuxer_cbs, NULL);
+        s->video_demuxer.abr_monitor = abr_monitor_initialized ? &s->abr_monitor : NULL;
+    }
+
+    if (options->audio) {
+        static const struct sc_demuxer_callbacks audio_demuxer_cbs = {
+            .on_ended = sc_audio_demuxer_on_ended,
+        };
+        sc_demuxer_init(&s->audio_demuxer, "audio", s->server.audio_socket,
+                        false, &audio_demuxer_cbs, options);
+    }
+
+    static const struct sc_decoder_callbacks decoder_cbs = {
+        .on_ended = sc_decoder_on_ended,
+    };
+
+    if (options->record_filename) {
+        static const struct sc_recorder_callbacks recorder_cbs = {
+            .on_ended = sc_recorder_on_ended,
+        };
+        if (!sc_recorder_init(&s->recorder, options->record_filename,
+                              options->record_format, options->video,
+                              options->audio, options->record_orientation,
+                              &recorder_cbs, NULL)) {
+            goto end;
+        }
+        recorder_initialized = true;
+
+        if (!sc_recorder_start(&s->recorder)) {
+            goto end;
+        }
+        recorder_started = true;
+
+        if (options->video) {
+            sc_packet_source_add_sink(&s->video_demuxer.packet_source,
+                                      &s->recorder.video_packet_sink);
+        }
+        if (options->audio) {
+            sc_packet_source_add_sink(&s->audio_demuxer.packet_source,
+                                      &s->recorder.audio_packet_sink);
+        }
+    }
+
+    struct sc_controller *controller = NULL;
+    struct sc_key_processor *kp = NULL;
+    struct sc_mouse_processor *mp = NULL;
+    struct sc_gamepad_processor *gp = NULL;
+
+    if (options->control) {
+        static const struct sc_controller_callbacks controller_cbs = {
+            .on_ended = sc_controller_on_ended,
+        };
+
+        if (!sc_controller_init(&s->controller, s->server.control_socket,
+            (options->new_display || (options->keep_active && !options->display_id))
+                && options->video_source == SC_VIDEO_SOURCE_DISPLAY,
+            &controller_cbs, NULL)) {
+            goto end;
+        }
+        controller_initialized = true;
+        s->controller.abr_monitor = abr_monitor_initialized ? &s->abr_monitor : NULL;
+
+        controller = &s->controller;
+
+#ifdef HAVE_USB
+        bool use_keyboard_aoa =
+            options->keyboard_input_mode == SC_KEYBOARD_INPUT_MODE_AOA;
+        bool use_mouse_aoa =
+            options->mouse_input_mode == SC_MOUSE_INPUT_MODE_AOA;
+        bool use_gamepad_aoa =
+            options->gamepad_input_mode == SC_GAMEPAD_INPUT_MODE_AOA;
+        if (use_keyboard_aoa || use_mouse_aoa || use_gamepad_aoa) {
+            bool ok = sc_acksync_init(&s->acksync);
+            if (!ok) {
+                goto end;
+            }
+
+            ok = sc_usb_init(&s->usb);
+            if (!ok) {
+                LOGE("Failed to initialize USB");
+                sc_acksync_destroy(&s->acksync);
+                goto end;
+            }
+
+            assert(serial);
+            struct sc_usb_device usb_device;
+            ok = sc_usb_select_device(&s->usb, serial, &usb_device);
+            if (!ok) {
+                sc_usb_destroy(&s->usb);
+                goto end;
+            }
+
+            LOGI("USB device: %s (%04" PRIx16 ":%04" PRIx16 ") %s %s",
+                 usb_device.serial, usb_device.vid, usb_device.pid,
+                 usb_device.manufacturer, usb_device.product);
+
+            ok = sc_usb_connect(&s->usb, usb_device.device, NULL, NULL);
+            sc_usb_device_destroy(&usb_device);
+            if (!ok) {
+                LOGE("Failed to connect to USB device %s", serial);
+                sc_usb_destroy(&s->usb);
+                sc_acksync_destroy(&s->acksync);
+                goto end;
+            }
+
+            ok = sc_aoa_init(&s->aoa, &s->usb, &s->acksync);
+            if (!ok) {
+                LOGE("Failed to enable HID over AOA");
+                sc_usb_disconnect(&s->usb);
+                sc_usb_destroy(&s->usb);
+                sc_acksync_destroy(&s->acksync);
+                goto end;
+            }
+
+            bool aoa_fail = false;
+            if (use_keyboard_aoa) {
+                if (sc_keyboard_aoa_init(&s->keyboard_aoa, &s->aoa)) {
+                    keyboard_aoa_initialized = true;
+                    kp = &s->keyboard_aoa.key_processor;
+                } else {
+                    LOGE("Could not initialize HID keyboard");
+                    aoa_fail = true;
+                    goto aoa_complete;
+                }
+            }
+
+            if (use_mouse_aoa) {
+                if (sc_mouse_aoa_init(&s->mouse_aoa, &s->aoa)) {
+                    mouse_aoa_initialized = true;
+                    mp = &s->mouse_aoa.mouse_processor;
+                } else {
+                    LOGE("Could not initialized HID mouse");
+                    aoa_fail = true;
+                    goto aoa_complete;
+                }
+            }
+
+            if (use_gamepad_aoa) {
+                sc_gamepad_aoa_init(&s->gamepad_aoa, &s->aoa);
+                gp = &s->gamepad_aoa.gamepad_processor;
+                gamepad_aoa_initialized = true;
+            }
+
+aoa_complete:
+            if (aoa_fail || !sc_aoa_start(&s->aoa)) {
+                sc_acksync_destroy(&s->acksync);
+                sc_usb_disconnect(&s->usb);
+                sc_usb_destroy(&s->usb);
+                sc_aoa_destroy(&s->aoa);
+                goto end;
+            }
+
+            acksync = &s->acksync;
+
+            aoa_hid_initialized = true;
+        }
+#else
+        assert(options->keyboard_input_mode != SC_KEYBOARD_INPUT_MODE_AOA);
+        assert(options->mouse_input_mode != SC_MOUSE_INPUT_MODE_AOA);
+#endif
+
+        struct sc_keyboard_uhid *uhid_keyboard = NULL;
+
+        if (options->keyboard_input_mode == SC_KEYBOARD_INPUT_MODE_SDK) {
+            sc_keyboard_sdk_init(&s->keyboard_sdk, &s->controller,
+                                 options->key_inject_mode,
+                                 options->forward_key_repeat);
+            kp = &s->keyboard_sdk.key_processor;
+        } else if (options->keyboard_input_mode
+                == SC_KEYBOARD_INPUT_MODE_UHID) {
+            bool ok = sc_keyboard_uhid_init(&s->keyboard_uhid, &s->controller);
+            if (!ok) {
+                goto end;
+            }
+            kp = &s->keyboard_uhid.key_processor;
+            uhid_keyboard = &s->keyboard_uhid;
+        }
+
+        if (options->mouse_input_mode == SC_MOUSE_INPUT_MODE_SDK) {
+            sc_mouse_sdk_init(&s->mouse_sdk, &s->controller,
+                              options->mouse_hover);
+            mp = &s->mouse_sdk.mouse_processor;
+        } else if (options->mouse_input_mode == SC_MOUSE_INPUT_MODE_UHID) {
+            bool ok = sc_mouse_uhid_init(&s->mouse_uhid, &s->controller);
+            if (!ok) {
+                goto end;
+            }
+            mp = &s->mouse_uhid.mouse_processor;
+        }
+
+        if (options->gamepad_input_mode == SC_GAMEPAD_INPUT_MODE_UHID) {
+            sc_gamepad_uhid_init(&s->gamepad_uhid, &s->controller);
+            gp = &s->gamepad_uhid.gamepad_processor;
+        }
+
+        struct sc_uhid_devices *uhid_devices = NULL;
+        if (uhid_keyboard) {
+            sc_uhid_devices_init(&s->uhid_devices, uhid_keyboard);
+            uhid_devices = &s->uhid_devices;
+        }
+
+        sc_controller_configure(&s->controller, acksync, uhid_devices);
+
+        if (!sc_controller_start(&s->controller)) {
+            goto end;
+        }
+        controller_started = true;
+    }
+
+    // There is a controller if and only if control is enabled
+    assert(options->control == !!controller);
+
+    if (options->window) {
+        struct sc_screen_params screen_params = {
+            .video = options->video_playback,
+            .camera = options->video_source == SC_VIDEO_SOURCE_CAMERA,
+            .perspective_socket = s->server.perspective_socket,
+            .perspective_input_period = options->perspective_input_period,
+            .flex_display = options->flex_display,
+            .controller = controller,
+            .fp = fp,
+            .kp = kp,
+            .mp = mp,
+            .gp = gp,
+            .hid_keyboard = options->keyboard_input_mode
+                == SC_KEYBOARD_INPUT_MODE_UHID,
+#ifdef _WIN32
+            .startup_hkl = (void *) startup_hkl,
+#endif
+            .mouse_bindings = options->mouse_bindings,
+            .legacy_paste = options->legacy_paste,
+            .clipboard_autosync = options->clipboard_autosync,
+            .clipboard_sync = options->clipboard_sync,
+            .clipboard_push_on_start = options->clipboard_push_on_start,
+            .shortcut_mods = options->shortcut_mods,
+            .window_title = window_title,
+            .always_on_top = options->always_on_top,
+            .window_x = options->window_x,
+            .window_y = options->window_y,
+            .window_width = options->window_width,
+            .window_height = options->window_height,
+            .background_color = options->background_color,
+            .window_aspect_ratio_lock = options->window_aspect_ratio_lock,
+            .window_borderless = options->window_borderless,
+            .render_fit = options->render_fit,
+            .flex_resize_preview = options->flex_resize_preview,
+            .orientation = options->display_orientation,
+            .mipmaps = options->mipmaps,
+            .hwdec_mode = options->perspective_camera ? SC_HWDEC_MODE_DISABLED : options->hwdec_mode,
+            .fullscreen = options->fullscreen,
+            .start_fps_counter = options->start_fps_counter,
+        };
+
+        if (!sc_screen_init(&s->screen, &screen_params)) {
+            goto end;
+        }
+        screen_initialized = true;
+
+        // Register ez's ABR overlay only after the screen is initialized.
+        // The receiver drops early ABR messages until an overlay is available.
+        const char *overlay_serial = s->server.serial;
+        enum sc_overlay_mode overlay_mode = overlay_serial
+                && strchr(overlay_serial, ':')
+                ? SC_OVERLAY_MODE_WIFI : SC_OVERLAY_MODE_USB;
+        sc_fps_overlay_set_mode(&s->screen.fps_overlay, overlay_mode);
+        sc_receiver_set_abr_overlay(&s->screen.fps_overlay);
+    }
+
+    bool needs_video_decoder = options->video_playback;
+    bool needs_audio_decoder = options->audio_playback;
+#ifdef HAVE_V4L2
+    needs_video_decoder |= !!options->v4l2_device;
+#endif
+    if (needs_video_decoder) {
+        struct sc_screen *screen = options->video_playback ? &s->screen : NULL;
+        assert(!screen || screen_initialized);
+
+        if (!sc_init_video_hwdec(&s->hwdec, options->perspective_camera ? SC_HWDEC_MODE_DISABLED : options->hwdec_mode, screen)) {
+            goto end;
+        }
+        hwdec_initialized = true;
+
+        // If a video buffer is present, then the recv date must be forwarded
+        // from the AVPacket to the AVFrame
+        bool copy_opaque = has_video_buffer || sc_frame_trace_enabled;
+        if (!sc_decoder_init(&s->video_decoder, "video", &s->hwdec, copy_opaque,
+                             &decoder_cbs, NULL)) {
+            goto end;
+        }
+        video_decoder_initialized = true;
+        s->video_decoder.abr_monitor = abr_monitor_initialized ? &s->abr_monitor : NULL;
+
+        sc_packet_source_add_sink(&s->video_demuxer.packet_source,
+                                  &s->video_decoder.packet_sink);
+
+        if (!sc_decoder_start(&s->video_decoder)) {
+            goto end;
+        }
+        video_decoder_started = true;
+    }
+
+    if (needs_audio_decoder) {
+        if (!sc_decoder_init(&s->audio_decoder, "audio", NULL, false,
+                             &decoder_cbs, NULL)) {
+            goto end;
+        }
+        audio_decoder_initialized = true;
+
+        sc_packet_source_add_sink(&s->audio_demuxer.packet_source,
+                                  &s->audio_decoder.packet_sink);
+
+        if (!sc_decoder_start(&s->audio_decoder)) {
+            goto end;
+        }
+        audio_decoder_started = true;
+    }
+
+    if (options->video_playback) {
+        assert(options->window);
+        assert(screen_initialized);
+        struct sc_frame_source *src = &s->video_decoder.frame_source;
+        if (options->video_buffer) {
+            uint32_t backpressure_threshold = SC_BACKPRESSURE_THRESHOLD;
+#ifdef HAVE_V4L2
+            if (options->v4l2_device && options->v4l2_buffer
+                    && options->v4l2_buffer < options->video_buffer) {
+                // Disable the backpressure threshold for this video regulator,
+                // it will be handled by the v4l2 video regulator
+                backpressure_threshold = 0; // disabled
+            }
+#endif
+            if (!sc_video_regulator_init(&s->video_regulator,
+                                         options->video_buffer, true,
+                                         backpressure_threshold,
+                                         options->video_buffer_auto,
+                                         options->video_buffer_auto_frames)) {
+                goto end;
+            }
+            video_regulator_initialized = true;
+            sc_frame_source_add_sink(src, &s->video_regulator.frame_sink);
+            src = &s->video_regulator.frame_source;
+        }
+
+        sc_frame_source_add_sink(src, &s->screen.frame_sink);
+    }
+
+    if (options->audio_playback) {
+        sc_audio_player_init(&s->audio_player, options->audio_buffer,
+                             options->audio_output_buffer);
+        sc_frame_source_add_sink(&s->audio_decoder.frame_source,
+                                 &s->audio_player.frame_sink);
+    }
+
+#ifdef HAVE_V4L2
+    if (options->v4l2_device) {
+        if (!sc_v4l2_sink_init(&s->v4l2_sink, options->v4l2_device)) {
+            goto end;
+        }
+
+        struct sc_frame_source *src = &s->video_decoder.frame_source;
+        if (options->v4l2_buffer) {
+            uint32_t backpressure_threshold = SC_BACKPRESSURE_THRESHOLD;
+            if (options->video_playback && options->video_buffer
+                    && options->video_buffer <= options->v4l2_buffer) {
+                // Disable the backpressure threshold for this video
+                // regulator, it will be handled by the display video regulator
+                backpressure_threshold = 0; // disabled
+            }
+            if (!sc_video_regulator_init(&s->v4l2_regulator,
+                                         options->v4l2_buffer,
+                                          true, backpressure_threshold, false, 2)) {
+                goto end;
+            }
+            v4l2_regulator_initialized = true;
+            sc_frame_source_add_sink(src, &s->v4l2_regulator.frame_sink);
+            src = &s->v4l2_regulator.frame_source;
+        }
+
+        sc_frame_source_add_sink(src, &s->v4l2_sink.frame_sink);
+
+        v4l2_sink_initialized = true;
+    }
+#endif
+
+    // Now that the header values have been consumed, the socket(s) will
+    // receive the stream(s). Start the demuxer(s).
+
+    if (options->video) {
+        if (!sc_demuxer_start(&s->video_demuxer)) {
+            goto end;
+        }
+        video_demuxer_started = true;
+    }
+
+    if (options->audio) {
+        if (!sc_demuxer_start(&s->audio_demuxer)) {
+            goto end;
+        }
+        audio_demuxer_started = true;
+    }
+
+    // If the device screen is to be turned off, send the control message after
+    // everything is set up
+    if (options->control && options->turn_screen_off) {
+        struct sc_control_msg msg;
+        msg.type = SC_CONTROL_MSG_TYPE_SET_DISPLAY_POWER;
+        msg.set_display_power.on = false;
+
+        if (!sc_controller_push_msg(&s->controller, &msg)) {
+            LOGW("Could not request 'set display power'");
+        }
+    }
+
+    if (options->time_limit) {
+        bool ok = sc_timeout_init(&s->timeout);
+        if (!ok) {
+            goto end;
+        }
+
+        timeout_initialized = true;
+
+        sc_tick deadline = sc_tick_now() + options->time_limit;
+        static const struct sc_timeout_callbacks cbs = {
+            .on_timeout = sc_timeout_on_timeout,
+        };
+
+        ok = sc_timeout_start(&s->timeout, deadline, &cbs, NULL);
+        if (!ok) {
+            goto end;
+        }
+
+        timeout_started = true;
+    }
+
+    if (options->control
+            && options->gamepad_input_mode != SC_GAMEPAD_INPUT_MODE_DISABLED) {
+        init_sdl_gamepads();
+    }
+
+    if (options->control && options->start_app) {
+        assert(controller);
+
+        char *name = strdup(options->start_app);
+        if (!name) {
+            LOG_OOM();
+            goto end;
+        }
+
+        struct sc_control_msg msg;
+        msg.type = SC_CONTROL_MSG_TYPE_START_APP;
+        msg.start_app.name = name;
+
+        if (!sc_controller_push_msg(controller, &msg)) {
+            LOGW("Could not request start app '%s'", name);
+            free(name);
+        }
+    }
+
+#ifdef _WIN32
+    fprintf(stdout, "SCRCPY_EZ_READY pid=%lu\n", (unsigned long) GetCurrentProcessId());
+#else
+    fprintf(stdout, "SCRCPY_EZ_READY\n");
+#endif
+    fflush(stdout);
+    ret = event_loop(s, options->window);
+
+    // Reject all new runnables, and execute the pending ones now
+    // (they could access memory that will be cleaned up below)
+    sc_main_thread_stop();
+
+    disconnected = ret == SCRCPY_EXIT_DISCONNECTED;
+
+end:
+#ifdef _WIN32
+    sc_native_source_stop();
+#endif
+    if (timeout_started) {
+        sc_timeout_stop(&s->timeout);
+    }
+
+    // The demuxer is not stopped explicitly, because it will stop by itself on
+    // end-of-stream
+#ifdef HAVE_USB
+    if (aoa_hid_initialized) {
+        sc_aoa_stop(&s->aoa);
+        sc_usb_stop(&s->usb);
+    }
+#endif
+    // Restore the device screen if it was turned off by Ctrl+H. The
+    // device-side cleanup process is a second safety net for abnormal exits.
+    if (screen_initialized && controller_started) {
+        sc_input_manager_turn_screen_on(&s->screen.im);
+    }
+    if (controller_started) {
+        sc_controller_stop(&s->controller);
+    }
+    if (file_pusher_initialized) {
+        sc_file_pusher_stop(&s->file_pusher);
+    }
+    if (video_decoder_started) {
+        sc_decoder_stop(&s->video_decoder);
+    }
+    if (audio_decoder_started) {
+        sc_decoder_stop(&s->audio_decoder);
+    }
+    if (video_regulator_initialized) {
+        sc_video_regulator_stop(&s->video_regulator);
+    }
+#ifdef HAVE_V4L2
+    if (v4l2_regulator_initialized) {
+        sc_video_regulator_stop(&s->v4l2_regulator);
+    }
+#endif
+    if (recorder_initialized) {
+        sc_recorder_stop(&s->recorder);
+    }
+    if (screen_initialized) {
+        sc_screen_interrupt(&s->screen);
+    }
+
+    if (server_started) {
+        // shutdown the sockets and kill the server
+        sc_server_stop(&s->server);
+    }
+
+    if (screen_initialized) {
+        if (disconnected) {
+            sc_screen_handle_disconnection(&s->screen);
+        }
+        LOGD("Quit...");
+
+        // Close the window immediately, because sc_screen_destroy() may only be
+        // called once the video decoder thread is joined (it may take time)
+        sc_screen_hide_window(&s->screen);
+    }
+
+    if (video_decoder_started) {
+        sc_decoder_join(&s->video_decoder);
+    }
+
+    if (audio_decoder_started) {
+        sc_decoder_join(&s->audio_decoder);
+    }
+
+    if (timeout_started) {
+        sc_timeout_join(&s->timeout);
+    }
+    if (timeout_initialized) {
+        sc_timeout_destroy(&s->timeout);
+    }
+
+    // now that the sockets are shutdown, the demuxer and controller are
+    // interrupted, we can join them
+    if (video_demuxer_started) {
+        sc_demuxer_join(&s->video_demuxer);
+    }
+
+    if (audio_demuxer_started) {
+        sc_demuxer_join(&s->audio_demuxer);
+    }
+
+    if (video_regulator_initialized) {
+        sc_video_regulator_destroy(&s->video_regulator);
+    }
+
+#ifdef HAVE_V4L2
+    if (v4l2_regulator_initialized) {
+        sc_video_regulator_destroy(&s->v4l2_regulator);
+    }
+    if (v4l2_sink_initialized) {
+        sc_v4l2_sink_destroy(&s->v4l2_sink);
+    }
+#endif
+
+#ifdef HAVE_USB
+    if (aoa_hid_initialized) {
+        sc_aoa_join(&s->aoa);
+        sc_aoa_destroy(&s->aoa);
+        sc_usb_join(&s->usb);
+        sc_usb_disconnect(&s->usb);
+        sc_usb_destroy(&s->usb);
+
+        if (keyboard_aoa_initialized) {
+            sc_keyboard_aoa_destroy(&s->keyboard_aoa);
+        }
+        if (mouse_aoa_initialized) {
+            sc_mouse_aoa_destroy(&s->mouse_aoa);
+        }
+        if (gamepad_aoa_initialized) {
+            sc_gamepad_aoa_destroy(&s->gamepad_aoa);
+        }
+    }
+    if (acksync) {
+        sc_acksync_destroy(acksync);
+    }
+#endif
+
+    if (video_decoder_initialized) {
+        sc_decoder_destroy(&s->video_decoder);
+    }
+
+    // The hwdec must outlive the video decoder
+    if (hwdec_initialized) {
+        sc_hwdec_destroy(&s->hwdec);
+    }
+
+    if (audio_decoder_initialized) {
+        sc_decoder_destroy(&s->audio_decoder);
+    }
+
+    // Destroy the screen only after the video demuxer is guaranteed to be
+    // finished, because otherwise the screen could receive new frames after
+    // destruction
+    if (screen_initialized) {
+        sc_screen_join(&s->screen);
+        sc_screen_destroy(&s->screen);
+    }
+
+    if (controller_started) {
+        sc_controller_join(&s->controller);
+    }
+    if (controller_initialized) {
+        sc_controller_destroy(&s->controller);
+    }
+
+    if (recorder_started) {
+        sc_recorder_join(&s->recorder);
+    }
+    if (recorder_initialized) {
+        sc_recorder_destroy(&s->recorder);
+    }
+
+    if (file_pusher_initialized) {
+        sc_file_pusher_join(&s->file_pusher);
+        sc_file_pusher_destroy(&s->file_pusher);
+    }
+
+    if (server_started) {
+        sc_server_join(&s->server);
+    }
+
+    sc_server_destroy(&s->server);
+    sc_frame_trace_destroy();
+    if (abr_monitor_initialized) sc_abr_monitor_destroy(&s->abr_monitor);
+
+#ifdef _WIN32
+    sc_clipboard_sync_destroy();
+    session_monitor_finish(&session);
+#endif
+    fprintf(stdout, "SCRCPY_EZ_EXIT code=%d\n", ret);
+    fflush(stdout);
+    return ret;
+}

@@ -1,0 +1,37 @@
+[
+  {
+    "file": "LayerCaptureArgs.aidl",
+    "url": "https://android.googlesource.com/platform/frameworks/native/+/refs/heads/android16-release/libs/gui/aidl/android/gui/LayerCaptureArgs.aidl?format=TEXT",
+    "bytes": 1037
+  },
+  {
+    "file": "ISurfaceComposer.aidl",
+    "url": "https://android.googlesource.com/platform/frameworks/native/+/refs/heads/android16-release/libs/gui/aidl/android/gui/ISurfaceComposer.aidl?format=TEXT",
+    "bytes": 23443
+  },
+  {
+    "file": "ISurfaceComposerClient.aidl",
+    "url": "https://android.googlesource.com/platform/frameworks/native/+/refs/heads/android16-release/libs/gui/aidl/android/gui/ISurfaceComposerClient.aidl?format=TEXT",
+    "bytes": 2159
+  },
+  {
+    "file": "VirtualCameraRenderThread.cc",
+    "url": "https://android.googlesource.com/platform/frameworks/av/+/refs/heads/android16-release/services/camera/virtualcamera/VirtualCameraRenderThread.cc?format=TEXT",
+    "bytes": 34689
+  },
+  {
+    "file": "VirtualCameraRenderThread.cpp",
+    "url": "https://android.googlesource.com/platform/frameworks/av/+/refs/heads/android16-release/services/camera/virtualcamera/VirtualCameraRenderThread.cpp?format=TEXT",
+    "error": "HTTP Error 404: Not Found"
+  },
+  {
+    "file": "VirtualCameraTextureUtil.cc",
+    "url": "https://android.googlesource.com/platform/frameworks/av/+/refs/heads/android16-release/services/camera/virtualcamera/util/VirtualCameraTextureUtil.cc?format=TEXT",
+    "error": "HTTP Error 404: Not Found"
+  },
+  {
+    "file": "virtualcamera-directory.json",
+    "url": "https://android.googlesource.com/platform/frameworks/av/+/refs/heads/android16-release/services/camera/virtualcamera/?format=JSON",
+    "bytes": 4658
+  }
+]

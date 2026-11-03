@@ -1,0 +1,192 @@
+)]}'
+{
+  "id": "7d73afd1a5734de9f45dcf8d542149875d308d3a",
+  "entries": [
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "f3974548f6d4f3f0208308357b3b312b6b1d6993",
+      "name": ".clang-format"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "c76bb1bb248fc4c96e6c569ba475ec0b4c8dd5b3",
+      "name": "Android.bp"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "22c2eb742120efc891ebf55f15dc53db24fc4502",
+      "name": "OWNERS"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "04b481124e0b1057aa8bbf5ae4695f9b97afe77c",
+      "name": "README.md"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "e97670405d3074d20dd2404f17095486cd76a5e5",
+      "name": "TEST_MAPPING"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "cf5402eab9adfb0cb7852871d902cf8c598068e4",
+      "name": "VirtualCameraCaptureRequest.h"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "da1c208b0ab32965b040c3fda72cee2323eea72e",
+      "name": "VirtualCameraCaptureResult.cc"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "c3978f7a499a1275ef4476a73c4935ebd67bc17d",
+      "name": "VirtualCameraCaptureResult.h"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "c3be62b326fc8c4e5555fec10d082e8e503c8941",
+      "name": "VirtualCameraDevice.cc"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "a33d4cfbaf70bed265edbd865bb9e7ef3f7fe8dd",
+      "name": "VirtualCameraDevice.h"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "b2c10f69c2b65b06903d3e479b0f96af5bd1f399",
+      "name": "VirtualCameraProvider.cc"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "606b44c8234d991e4b59cb2dbce017fbce3ee18e",
+      "name": "VirtualCameraProvider.h"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "3c757637cc4c840410bf2fe761cd0bb9f4257b6c",
+      "name": "VirtualCameraRenderThread.cc"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "4cad39e4be1c0b7f56703b18255ee949ec275c28",
+      "name": "VirtualCameraRenderThread.h"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "18bebdeba762d0d8d263715301cec865e28946f4",
+      "name": "VirtualCameraService.cc"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "3b4b06d2f3689855de48bced415336e6f08ae859",
+      "name": "VirtualCameraService.h"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "a01889a739a23e2e9ec152377bef04612e2963c3",
+      "name": "VirtualCameraSession.cc"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "c2044b9b18c1c23efa68fc8b7a9b4b0e4adad0c0",
+      "name": "VirtualCameraSession.h"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "aab2d0dc887816b8396270db9c3dde17f9e97d9c",
+      "name": "VirtualCameraSessionContext.cc"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "e5cf5f441e8ef80e6584dafec754c8d6d973e423",
+      "name": "VirtualCameraSessionContext.h"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "fad6cac2f7cbeb038b6d3a2f59e644e172c191c1",
+      "name": "VirtualCameraStream.cc"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "d76d05c22a4d2d6cf4865e90cccdac226492bc7e",
+      "name": "VirtualCameraStream.h"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "ff4a2d80d8e1df1d2c2bf60ed8d6b4de347608e1",
+      "name": "VirtualCameraTestInstance.cc"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "c130645a3b3c10a7b421f43ef6d54fb761d68eab",
+      "name": "VirtualCameraTestInstance.h"
+    },
+    {
+      "mode": 16384,
+      "type": "tree",
+      "id": "db74d1df85cf6b9cb95d4d4f161f49c7f976ff66",
+      "name": "aidl"
+    },
+    {
+      "mode": 16384,
+      "type": "tree",
+      "id": "ef765d7bc3c9a3c44d6527db2478ec79725f27f5",
+      "name": "flags"
+    },
+    {
+      "mode": 16384,
+      "type": "tree",
+      "id": "40e291dfcd71dd02b7465ce4abf075d8a2ae7ba1",
+      "name": "fuzzer"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "3db9d9c8edd91ca306784d4b76795acd328e81b2",
+      "name": "main.cc"
+    },
+    {
+      "mode": 16384,
+      "type": "tree",
+      "id": "55cf4ca59c2e2f5c2e4bfbb3ba2f0769198b043e",
+      "name": "tests"
+    },
+    {
+      "mode": 16384,
+      "type": "tree",
+      "id": "6d4bcb012c5b7b947f3784377384b0591335b3e8",
+      "name": "util"
+    },
+    {
+      "mode": 33188,
+      "type": "blob",
+      "id": "a8bb61da727b8929d7e6ae2a081123c2e0f7e853",
+      "name": "virtual_camera.hal.rc"
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+[
+  {
+    "pair": 2,
+    "phase": 0,
+    "pixels": 4082,
+    "alphaMedianError": 7.0,
+    "alphaP95AbsError": 43.0
+  },
+  {
+    "pair": 3,
+    "phase": 1,
+    "pixels": 7866,
+    "alphaMedianError": 4.0,
+    "alphaP95AbsError": 21.0
+  },
+  {
+    "pair": 4,
+    "phase": 0,
+    "pixels": 4377,
+    "alphaMedianError": 2.0,
+    "alphaP95AbsError": 43.0
+  },
+  {
+    "pair": 5,
+    "phase": 1,
+    "pixels": 7842,
+    "alphaMedianError": 4.0,
+    "alphaP95AbsError": 28.0
+  },
+  {
+    "pair": 7,
+    "phase": 1,
+    "pixels": 417516,
+    "alphaMedianError": 1.0,
+    "alphaP95AbsError": 1.0
+  },
+  {
+    "pair": 8,
+    "phase": 0,
+    "pixels": 3832,
+    "alphaMedianError": 0.0,
+    "alphaP95AbsError": 46.0
+  },
+  {
+    "pair": 9,
+    "phase": 0,
+    "pixels": 4458,
+    "alphaMedianError": 3.0,
+    "alphaP95AbsError": 44.0
+  },
+  {
+    "pair": 10,
+    "phase": 0,
+    "pixels": 4436,
+    "alphaMedianError": 3.0,
+    "alphaP95AbsError": 40.0
+  }
+]

@@ -1,0 +1,122 @@
+[
+  {
+    "pair": 2,
+    "phase": 0,
+    "samples": 48891,
+    "rawMedianRGB255": [
+      0.04706,
+      0.07843,
+      0.70196
+    ],
+    "effectiveBackingRGB": [
+      0.06704,
+      0.11173,
+      1.0
+    ]
+  },
+  {
+    "pair": 3,
+    "phase": 1,
+    "samples": 48891,
+    "rawMedianRGB255": [
+      0.27451,
+      0.05882,
+      0.04314
+    ],
+    "effectiveBackingRGB": [
+      0.39106,
+      0.0838,
+      0.06145
+    ]
+  },
+  {
+    "pair": 4,
+    "phase": 0,
+    "samples": 48891,
+    "rawMedianRGB255": [
+      0.04706,
+      0.07843,
+      0.70196
+    ],
+    "effectiveBackingRGB": [
+      0.06704,
+      0.11173,
+      1.0
+    ]
+  },
+  {
+    "pair": 5,
+    "phase": 1,
+    "samples": 48891,
+    "rawMedianRGB255": [
+      0.27451,
+      0.05882,
+      0.04314
+    ],
+    "effectiveBackingRGB": [
+      0.39106,
+      0.0838,
+      0.06145
+    ]
+  },
+  {
+    "pair": 7,
+    "phase": 1,
+    "samples": 48891,
+    "rawMedianRGB255": [
+      0.23922,
+      0.01569,
+      0.00392
+    ],
+    "effectiveBackingRGB": [
+      0.34078,
+      0.02235,
+      0.00559
+    ]
+  },
+  {
+    "pair": 8,
+    "phase": 0,
+    "samples": 48891,
+    "rawMedianRGB255": [
+      0.04706,
+      0.07843,
+      0.70196
+    ],
+    "effectiveBackingRGB": [
+      0.06704,
+      0.11173,
+      1.0
+    ]
+  },
+  {
+    "pair": 9,
+    "phase": 0,
+    "samples": 48891,
+    "rawMedianRGB255": [
+      0.04706,
+      0.07843,
+      0.70196
+    ],
+    "effectiveBackingRGB": [
+      0.06704,
+      0.11173,
+      1.0
+    ]
+  },
+  {
+    "pair": 10,
+    "phase": 0,
+    "samples": 48891,
+    "rawMedianRGB255": [
+      0.04706,
+      0.07843,
+      0.70196
+    ],
+    "effectiveBackingRGB": [
+      0.06704,
+      0.11173,
+      1.0
+    ]
+  }
+]

@@ -1,0 +1,174 @@
+{
+  "kind": "sanitized historical reports and scalar summaries",
+  "files": [
+    {
+      "source": "rc18-temporal-20261027/EXPERIMENT_RESULTS.json",
+      "sourceSHA256": "2e9d7e4d1ecf414136fd0d76db11c6c7c14af4cb8bb61c4577b164eca275b36f",
+      "file": "docs/perspective-camera/history/rc18-temporal/EXPERIMENT_RESULTS.json",
+      "preparedSHA256": "2e3e468f53c67cf7c189156c853558a225275ba93f4cc0cdbd8d86712ca68e2b",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "rc18-temporal-20261027/ALPHA_OBSERVATIONS.json",
+      "sourceSHA256": "43386afee401c698edc385b5d2fac40ccbaa2703ddb038ffae3e83433a6011a2",
+      "file": "docs/perspective-camera/history/rc18-temporal/ALPHA_OBSERVATIONS.json",
+      "preparedSHA256": "d88db15d7acd377a6282cb367944214a5ccf62898bc9e774d9492da829a5ef8e",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "rc18-temporal-20261027/BACKING_OBSERVATIONS.json",
+      "sourceSHA256": "de3c0ac51f533e41f1f8297b6acfd1dff31bbc1465c0f43b47f1e09bc183e1a4",
+      "file": "docs/perspective-camera/history/rc18-temporal/BACKING_OBSERVATIONS.json",
+      "preparedSHA256": "1d70df1f1af26a13752e00f5da2136a4dda88b8c8c72ffe25e8ccf05f9c19b3e",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "rc18-native-alpha-20261027/SMALL_SUMMARY.json",
+      "sourceSHA256": "71139400a3dca6f2a6bae000014e15674635efa6238c1f63ed41e2de875b6e8d",
+      "file": "docs/perspective-camera/history/rc18-native/SMALL_SUMMARY.json",
+      "preparedSHA256": "906fa2c3cfd44ffdc456b64231b47658074e770e88815eb91bfb050b914d4665",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "ez-mdns-rc15/research/native-ui-alpha-20261028/README.md",
+      "sourceSHA256": "7badf92ab33ff8ede15f92f07423e2aef366f788eebc64df65425708923105d3",
+      "file": "docs/perspective-camera/history/native-ui/README.md",
+      "preparedSHA256": "153842e0d83062af342eff609d4dd3981e2edab75e7039df0f1ebea45376a48d",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "ez-mdns-rc15/research/native-ui-alpha-20261028/INVERSE_LIVE_20261028.md",
+      "sourceSHA256": "955a8dee9db722f19dbfa59d70a5461c6afdb252732cb86c3fda6b5dcce71391",
+      "file": "docs/perspective-camera/history/native-ui/INVERSE_LIVE_20261028.md",
+      "preparedSHA256": "394e1e1ec6c5722d3055fe1b729281152f4aa601ba34b56d5448f98e34138192",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "ez-mdns-rc15/research/virtual-display-alpha-20261028/README.md",
+      "sourceSHA256": "84592b878784d9ff53f5000ca425f3709f657d47597466f7772faa8c187c8a2b",
+      "file": "docs/perspective-camera/history/virtual-display/README.md",
+      "preparedSHA256": "79ee2e83a80f382cb02713d0a39821f9f6350f2529bdb4adfaf0133e5480b459",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "rc19-native-alpha-flex-20261028/INVERSE6_DESIGN.md",
+      "sourceSHA256": "907a023108a10367038f362de31fbf003d8f16c08c6543d778ac8c2ab857fb49",
+      "file": "docs/perspective-camera/history/rc19/INVERSE6_DESIGN.md",
+      "preparedSHA256": "1766885d9516c9ee71e3c3c18a050a01c577b8d179b3cc46a58af1b0daa651b0",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "rc19-native-alpha-flex-20261028/RC20_INTEGRATION_PLAN.md",
+      "sourceSHA256": "aa42912636886c85c966b58b28b5f691ca41093256c564c0a93d1c9f330a63b0",
+      "file": "docs/perspective-camera/history/rc19/RC20_INTEGRATION_PLAN.md",
+      "preparedSHA256": "6435181fe8c0e31ad4b909bd2d541d0843b1978983812aeb4e9ad3195a6f9241",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "rc19-native-alpha-flex-20261028/inverse6-sim/REPORT.md",
+      "sourceSHA256": "eb9d0cec59a873b6feba0cd115dbec9294f5d66351f3ee061574c726dd280df7",
+      "file": "docs/perspective-camera/history/rc19/inverse6-sim/REPORT.md",
+      "preparedSHA256": "d8996771a847d19bee52a432e07947a20bcad7c2141f26e4c56fcb799983a91c",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "srgb-alpha-research-20261028/内部渲染器研究记录.md",
+      "sourceSHA256": "93ccb89264ab5107cf43f65c1dc2ed0218cb87a0f907e7806a49437ae7abeb89",
+      "file": "docs/perspective-camera/history/srgb-alpha/内部渲染器研究记录.md",
+      "preparedSHA256": "d0512e3d2e82bd11d9b0b8511402ebf07aa86ed7346a0b593bded8ba8f07c8b2",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "srgb-alpha-research-20261028/初始化假说_延时与主动重绘验证.md",
+      "sourceSHA256": "67947343b814cc53a8a07826eccfae1cd588470b3947d4dc025818b6902c5795",
+      "file": "docs/perspective-camera/history/srgb-alpha/初始化假说_延时与主动重绘验证.md",
+      "preparedSHA256": "02326b29bb5e16ebf3c3e4c5d89d8e6f6c1c84bc07d76a1d5fe6590391dd8502",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "srgb-alpha-research-20261028/原生Alpha吞吐上限实测_20261030.md",
+      "sourceSHA256": "8bf5ca80ae0cbc51092fa28475c6613ac3a98cfa3ec5563e3a868f0bd7979d46",
+      "file": "docs/perspective-camera/history/srgb-alpha/原生Alpha吞吐上限实测_20261030.md",
+      "preparedSHA256": "f48236681a59ae7832dba06516da8b3a31c15fcf38ded42359e26c8e560b6298",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "srgb-alpha-research-20261028/场景过渡原生Alpha实测记录.md",
+      "sourceSHA256": "1ac6c6e4a6494c728a5ce2626cc445b3985634ace11406dcb39cde8ff6fb3ddf",
+      "file": "docs/perspective-camera/history/srgb-alpha/场景过渡原生Alpha实测记录.md",
+      "preparedSHA256": "493ee236d46ef89e3b598b43a3a63114e7db9e069a10ab4b4cadbce88441757b",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "srgb-alpha-research-20261028/微信原始Alpha实验记录.md",
+      "sourceSHA256": "1712472e73a235783bcbc97bc7f8b4343f1cbe33728952f6b767e4dde713772e",
+      "file": "docs/perspective-camera/history/srgb-alpha/微信原始Alpha实验记录.md",
+      "preparedSHA256": "7318bad104c5d54c1f432666ac373f00e2a1c8f39f39559c2143eeee1a5e8dfb",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "srgb-alpha-research-20261028/调研结论_sRGB与免root实时Alpha.md",
+      "sourceSHA256": "7135887257e3f56081039aaa5251080b3dc2f54d0a0d9c97bd32b09cf1b33521",
+      "file": "docs/perspective-camera/history/srgb-alpha/调研结论_sRGB与免root实时Alpha.md",
+      "preparedSHA256": "e98e4ea525193adb5fc6fc68848224080b01024963feb2d68530480b26c7a87a",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "andromeld-analysis/逆向与Windows实测报告_20261028.md",
+      "sourceSHA256": "5bc82a3c09670bfd3769a492dfb322f6ca306d99f22342190847fe2a07b162ff",
+      "file": "docs/perspective-camera/history/andromeld/逆向与Windows实测报告_20261028.md",
+      "preparedSHA256": "010e46f0da12c8e5f869029b03b90d18b25abc99474ed7be7b98e0cc3cf01c0e",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "ez-rc24/docs/RC24_NATIVE_ALPHA.md",
+      "sourceSHA256": "c132e42c23177a9f0161260280c9cfc78343cc33d01b3218f011c69755bc7310",
+      "file": "docs/perspective-camera/history/rc24/RC24_NATIVE_ALPHA.md",
+      "preparedSHA256": "27a88165f8e7366d496b4d6a48f6e99996d76114abff5132c87018b25096d6f3",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "ez-rc24/docs/RC24_UI_REDRAW_RESEARCH.md",
+      "sourceSHA256": "04aa9860b251b91e08f50f960d3a71a33f9321381373295e64125758e0ef7ce7",
+      "file": "docs/perspective-camera/history/rc24/RC24_UI_REDRAW_RESEARCH.md",
+      "preparedSHA256": "decf67fc78a9f07ebf7c184c20c8b1294c61d4805f3713bb3d99b3491e529b64",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "ez-rc24/docs/RC24_CAPABILITY_REPORT.md",
+      "sourceSHA256": "26f6d6ec9b65ce60fc5804034e051453c123c8f592e0f61b2b6e581c62c380bf",
+      "file": "docs/perspective-camera/history/rc24/RC24_CAPABILITY_REPORT.md",
+      "preparedSHA256": "2d02cd38b81e18f728de302243a86e343da4f56a36513f63075b415f807db421",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "ez-rc24/docs/RC24_AUTO_ALPHA_PROFILES.md",
+      "sourceSHA256": "76f9ecaf8e630581f936f4f058a1f0e12aad11ca7fadc528877a5e400c6ca226",
+      "file": "docs/perspective-camera/history/rc24/RC24_AUTO_ALPHA_PROFILES.md",
+      "preparedSHA256": "faa11abb6ebd8a7b6596756a0f441d6b32aefdbac0dd031ada32845cd3f91f61",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "ez-rc24/docs/RC24_RULES_DESIGN.md",
+      "sourceSHA256": "295b9ca34a8d0e85e0924e8153ed64af8ab1f778d6f555a8baee97053fe0afc4",
+      "file": "docs/perspective-camera/history/rc24/RC24_RULES_DESIGN.md",
+      "preparedSHA256": "c0495295a8062e607dedf57d1fa1b02092f454bf014c5ecddcbf5511e392d77e",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "ez-rc24/docs/RC24_SOURCE_ARCHIVE.md",
+      "sourceSHA256": "78c3c0241708131ebb6fd658d6f9ba19dac44678f1c6701dc2dde4b17ee856cc",
+      "file": "docs/perspective-camera/history/rc24/RC24_SOURCE_ARCHIVE.md",
+      "preparedSHA256": "037828b6a267d1d983270e26ec7ea22443bed9cd4f28800c5cf5cb727cfcc9f6",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    },
+    {
+      "source": "ez-rc24/docs/handoffs/分析_原生UI重绘与相机分离通道_20261031.md",
+      "sourceSHA256": "f7305c306daffee6e2669f93b119c7df152c6fc844218ad6047a60a5202dfd34",
+      "file": "docs/perspective-camera/history/rc24/handoffs/分析_原生UI重绘与相机分离通道_20261031.md",
+      "preparedSHA256": "26eaa7ccdccb472f199055a22078e031af449991b7ddf1deb57dba6d04b25ea4",
+      "transform": "redact identities and machine paths; annotate unpublished evidence; remap report links; normalize LF and trailing whitespace"
+    }
+  ],
+  "preparedHashNormalization": "CRLF to LF; original sourceSHA256 uses unchanged original bytes"
+}

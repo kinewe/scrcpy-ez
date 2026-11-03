@@ -196,3 +196,7 @@ ninja -C build
 ## 📄 License
 
 Apache License 2.0（继承自 scrcpy 官方）。
+
+## 透视相机研究档案
+
+[rc17 至 rc25 的研发记录与历史实验](docs/perspective-camera/README.md)包含成功路径、失败对照、性能边界及复现入口。研究原型与正式功能分别标注，原始设备日志和个人配置不入库。

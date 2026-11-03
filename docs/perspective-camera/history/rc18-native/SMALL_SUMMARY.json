@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-28",
+  "app": "com.tencent.wework",
+  "display": 24,
+  "source": "ViewDebug CAPTURE original RGBA",
+  "width": 576,
+  "height": 1280,
+  "dpi": 240,
+  "frames": 765,
+  "medianCaptureMs": 116.0,
+  "p95CaptureMs": 141,
+  "deliveredFPS": 8.49245053510255,
+  "medianIntervalMs": 110.00000000058208,
+  "medianBytes": 66037.0,
+  "userFeedback": "Noticeably smoother; native Alpha, colors, layout and sharpness satisfactory",
+  "limitations": [
+    "Fixed test display, no flex resizing in this comparison",
+    "Polling-based Android debug snapshots, not compositor buffer push",
+    "WeWork only, no other app verified"
+  ]
+}

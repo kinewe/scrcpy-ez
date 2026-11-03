@@ -1,0 +1,870 @@
+{
+  "format": 1,
+  "preparedOn": "2026-11-03",
+  "purpose": "Explicit public perspective-camera archive; excludes raw/local/generated artifacts",
+  "files": [
+    {
+      "file": "docs/RC23-UI1-implementation.md",
+      "sha256": "d1f9668585d2f5faaae0dcbabd1ec0ee36fd99088904231ad9be067f16ae698f"
+    },
+    {
+      "file": "docs/RC23_AUTO_ALPHA_PROFILES.md",
+      "sha256": "b057f9bb5a101cf9e7f10d1774675500da8c7c7bc8366b51ff736097d1c82e9b"
+    },
+    {
+      "file": "docs/RC23_CAPABILITY_REPORT.md",
+      "sha256": "28df8ff9d0b02e59f290947b28b49b4e3fa99b2826c389c4fe6af6a0b3e24120"
+    },
+    {
+      "file": "docs/RC23_NATIVE_ALPHA.md",
+      "sha256": "40e3c963bdf49b32242746c0bd44db6f07f319c2fd8152210ec916b4487b6cff"
+    },
+    {
+      "file": "docs/RC23_RULES_DESIGN.md",
+      "sha256": "ac13104de2c6900077101e4056b9a5e10700a1766900bc8f65656665a43f5a32"
+    },
+    {
+      "file": "docs/RC23_SOURCE_ARCHIVE.md",
+      "sha256": "4c325e7dc1a81c5d9d84ccfe91c123f26f37e193009ca53922cf2cd0d3712006"
+    },
+    {
+      "file": "docs/RC25_PROGRESS_20261102.md",
+      "sha256": "f0ab071f7a949dc91d00c6e3e80e1f70338e99753ff3a09a6ad6d5a8dd5ca64b"
+    },
+    {
+      "file": "docs/RC25_RGBA_RESEARCH.md",
+      "sha256": "3c4b69c42a6d9e9538e3ee528369c1a700cc332ba71e5f8ae8364cf84ff3dc20"
+    },
+    {
+      "file": "docs/RC25_WECOM_DIAGNOSIS.md",
+      "sha256": "260c0f0df7363e1ea13356b59f250960b1a1816fcbce29b57ffd03d7e157477f"
+    },
+    {
+      "file": "docs/RC25_性能与近期ROM调研_20261101.md",
+      "sha256": "5bb51e4760f1d4df67554590f21df2c60691a5e1ff35c1d4ac2f0e356ce65a2c"
+    },
+    {
+      "file": "docs/RC25_退出挂起修复与支付宝虚拟扫码_20261102.md",
+      "sha256": "0269f5af61ebeaf41fca8b2d56e288c455819ba02180e91d2d0bd094a684b9a3"
+    },
+    {
+      "file": "docs/app-power-save-2.4.2-rc.17.md",
+      "sha256": "0c0d157d31efbf53c605876ccb0513e75d52e1739061d640710782e80f5253fb"
+    },
+    {
+      "file": "docs/handoffs/匹配键去设备指纹_笔记.md",
+      "sha256": "5c11d2c62587e2e1fe72090c44f13eef9cadd76a15cdc66e536cd00193f58dd8"
+    },
+    {
+      "file": "docs/handoffs/变更_Engine13_原生透明规则候选.md",
+      "sha256": "13223ed29cd95b32f1287b5fa9b3ec6eaa51326ac086e5353784968aedf91698"
+    },
+    {
+      "file": "docs/handoffs/结果_失败应用结构探测_20261030.md",
+      "sha256": "50f2ecaf17853ae3b1abddffa91d830a4e669be42fa6bcbb207fd06f9849b052"
+    },
+    {
+      "file": "docs/handoffs/调查_Engine13失败与Engine14修正_20261031.md",
+      "sha256": "3e0e1f21ca7395a1da1586444fa92fc4d467b0222f363201854cd186ea2b8bd2"
+    },
+    {
+      "file": "docs/handoffs/调研_合成前UI原生Alpha_20261031.md",
+      "sha256": "1fc77064b749d38068307a381728dc031d14f347423bd95a3106da981e56fc87"
+    },
+    {
+      "file": "docs/perspective-camera/HISTORY_MANIFEST.json",
+      "sha256": "41dda3cfb3493a42e6ac8104683749bbe3a97c2c925e82a00a50990aafd8255d"
+    },
+    {
+      "file": "docs/perspective-camera/PREPARATION-20261103.md",
+      "sha256": "667daf4a96b190247ee73d2fc866a9e45c24199e8e47a014ca30fd302c89e700"
+    },
+    {
+      "file": "docs/perspective-camera/README.md",
+      "sha256": "85e46b85a3a54b7a8e3618d7eeeeb7d7f3faf332329ceb55b52b94dcd1be0a03"
+    },
+    {
+      "file": "docs/perspective-camera/history/andromeld/逆向与Windows实测报告_20261028.md",
+      "sha256": "010e46f0da12c8e5f869029b03b90d18b25abc99474ed7be7b98e0cc3cf01c0e"
+    },
+    {
+      "file": "docs/perspective-camera/history/native-ui/INVERSE_LIVE_20261028.md",
+      "sha256": "394e1e1ec6c5722d3055fe1b729281152f4aa601ba34b56d5448f98e34138192"
+    },
+    {
+      "file": "docs/perspective-camera/history/native-ui/README.md",
+      "sha256": "153842e0d83062af342eff609d4dd3981e2edab75e7039df0f1ebea45376a48d"
+    },
+    {
+      "file": "docs/perspective-camera/history/rc18-native/SMALL_SUMMARY.json",
+      "sha256": "906fa2c3cfd44ffdc456b64231b47658074e770e88815eb91bfb050b914d4665"
+    },
+    {
+      "file": "docs/perspective-camera/history/rc18-temporal/ALPHA_OBSERVATIONS.json",
+      "sha256": "d88db15d7acd377a6282cb367944214a5ccf62898bc9e774d9492da829a5ef8e"
+    },
+    {
+      "file": "docs/perspective-camera/history/rc18-temporal/BACKING_OBSERVATIONS.json",
+      "sha256": "1d70df1f1af26a13752e00f5da2136a4dda88b8c8c72ffe25e8ccf05f9c19b3e"
+    },
+    {
+      "file": "docs/perspective-camera/history/rc18-temporal/EXPERIMENT_RESULTS.json",
+      "sha256": "2e3e468f53c67cf7c189156c853558a225275ba93f4cc0cdbd8d86712ca68e2b"
+    },
+    {
+      "file": "docs/perspective-camera/history/rc19/INVERSE6_DESIGN.md",
+      "sha256": "1766885d9516c9ee71e3c3c18a050a01c577b8d179b3cc46a58af1b0daa651b0"
+    },
+    {
+      "file": "docs/perspective-camera/history/rc19/RC20_INTEGRATION_PLAN.md",
+      "sha256": "6435181fe8c0e31ad4b909bd2d541d0843b1978983812aeb4e9ad3195a6f9241"
+    },
+    {
+      "file": "docs/perspective-camera/history/rc19/inverse6-sim/REPORT.md",
+      "sha256": "d8996771a847d19bee52a432e07947a20bcad7c2141f26e4c56fcb799983a91c"
+    },
+    {
+      "file": "docs/perspective-camera/history/rc24/RC24_AUTO_ALPHA_PROFILES.md",
+      "sha256": "faa11abb6ebd8a7b6596756a0f441d6b32aefdbac0dd031ada32845cd3f91f61"
+    },
+    {
+      "file": "docs/perspective-camera/history/rc24/RC24_CAPABILITY_REPORT.md",
+      "sha256": "2d02cd38b81e18f728de302243a86e343da4f56a36513f63075b415f807db421"
+    },
+    {
+      "file": "docs/perspective-camera/history/rc24/RC24_NATIVE_ALPHA.md",
+      "sha256": "27a88165f8e7366d496b4d6a48f6e99996d76114abff5132c87018b25096d6f3"
+    },
+    {
+      "file": "docs/perspective-camera/history/rc24/RC24_RULES_DESIGN.md",
+      "sha256": "c0495295a8062e607dedf57d1fa1b02092f454bf014c5ecddcbf5511e392d77e"
+    },
+    {
+      "file": "docs/perspective-camera/history/rc24/RC24_SOURCE_ARCHIVE.md",
+      "sha256": "037828b6a267d1d983270e26ec7ea22443bed9cd4f28800c5cf5cb727cfcc9f6"
+    },
+    {
+      "file": "docs/perspective-camera/history/rc24/RC24_UI_REDRAW_RESEARCH.md",
+      "sha256": "decf67fc78a9f07ebf7c184c20c8b1294c61d4805f3713bb3d99b3491e529b64"
+    },
+    {
+      "file": "docs/perspective-camera/history/rc24/handoffs/分析_原生UI重绘与相机分离通道_20261031.md",
+      "sha256": "26eaa7ccdccb472f199055a22078e031af449991b7ddf1deb57dba6d04b25ea4"
+    },
+    {
+      "file": "docs/perspective-camera/history/srgb-alpha/内部渲染器研究记录.md",
+      "sha256": "d0512e3d2e82bd11d9b0b8511402ebf07aa86ed7346a0b593bded8ba8f07c8b2"
+    },
+    {
+      "file": "docs/perspective-camera/history/srgb-alpha/初始化假说_延时与主动重绘验证.md",
+      "sha256": "02326b29bb5e16ebf3c3e4c5d89d8e6f6c1c84bc07d76a1d5fe6590391dd8502"
+    },
+    {
+      "file": "docs/perspective-camera/history/srgb-alpha/原生Alpha吞吐上限实测_20261030.md",
+      "sha256": "f48236681a59ae7832dba06516da8b3a31c15fcf38ded42359e26c8e560b6298"
+    },
+    {
+      "file": "docs/perspective-camera/history/srgb-alpha/场景过渡原生Alpha实测记录.md",
+      "sha256": "493ee236d46ef89e3b598b43a3a63114e7db9e069a10ab4b4cadbce88441757b"
+    },
+    {
+      "file": "docs/perspective-camera/history/srgb-alpha/微信原始Alpha实验记录.md",
+      "sha256": "7318bad104c5d54c1f432666ac373f00e2a1c8f39f39559c2143eeee1a5e8dfb"
+    },
+    {
+      "file": "docs/perspective-camera/history/srgb-alpha/调研结论_sRGB与免root实时Alpha.md",
+      "sha256": "e98e4ea525193adb5fc6fc68848224080b01024963feb2d68530480b26c7a87a"
+    },
+    {
+      "file": "docs/perspective-camera/history/virtual-display/README.md",
+      "sha256": "79ee2e83a80f382cb02713d0a39821f9f6350f2529bdb4adfaf0133e5480b459"
+    },
+    {
+      "file": "docs/rc17-app-window-layout-investigation.md",
+      "sha256": "cdff31ecd552e04232b855aa57a627ed9ccbb85e1d30e649d6b8ec63127bd445"
+    },
+    {
+      "file": "docs/rc17-calibration-mask.md",
+      "sha256": "ccb82f1436554246b923fc174ebcf3c8ede965c63de13f76e6642222b7e5fbb3"
+    },
+    {
+      "file": "docs/rc17-flex-ui-layout6.md",
+      "sha256": "76ff387aa3224a9de6b683a19b4e2733360040873cd0cc66adab8f7d836030d2"
+    },
+    {
+      "file": "docs/rc17-layout6-checkpoint.md",
+      "sha256": "43bdc4e7755283e99c6932e05d4265aebf69283726e5e630df70fe7483e8b262"
+    },
+    {
+      "file": "docs/rc17-perspective-matting-experiments.md",
+      "sha256": "a7bb5bfe6dafc8c3b7eb5483dd401b407d78b6a8f73e26ab6031c7614f2e3f6e"
+    },
+    {
+      "file": "docs/rc17-resize-preview7.md",
+      "sha256": "e187ec3bf0bb9d15f1a55f1e5eedd0e46f8faa7c090753643b304a0ab8d6b6fa"
+    },
+    {
+      "file": "docs/rc17-resize8-checkpoint.md",
+      "sha256": "57c68619a46147bfae2d8533f989908bb3b8ab4ec739ed250ec38ed9ada10da3"
+    },
+    {
+      "file": "docs/rc17-resize8.md",
+      "sha256": "c7c7be53d033b259dd04ba3a9ec8782dbc4a5d13d092370a3d6c7bab418ba2ea"
+    },
+    {
+      "file": "docs/rc18-automatic-camera-calibration.md",
+      "sha256": "48834c9076c06035d2a5116ec2d847333751bda491420f701214e5e6d8bdba18"
+    },
+    {
+      "file": "docs/rc18-checkpoint.md",
+      "sha256": "cc973860f18e8e4949bf1d46e356044a5aa38f48acd7a2534d240d8d4083aaf4"
+    },
+    {
+      "file": "docs/rc18-color-preservation-research.md",
+      "sha256": "57f467fc999806208cf1c53c11ece17ab587cf117170785ea8ada0f674ff6805"
+    },
+    {
+      "file": "docs/rc18-resize8-inheritance-audit.md",
+      "sha256": "72976577c44b122ca9e78b49792b82aa5d9113c4927c8248115c85c9f6607df3"
+    },
+    {
+      "file": "docs/rc18-wework-scan-verification.md",
+      "sha256": "2a59b73bd0ba213fb7090a6143064bc2c9f4e8e0977052014c8de18267bf2f01"
+    },
+    {
+      "file": "docs/rc23-ui1-test-migration.md",
+      "sha256": "c41abfbafbc46fe7fc5445aa1bd380329e7193acbb0b8f941df497d314bcdfe2"
+    },
+    {
+      "file": "docs/图层过滤泛用性调研报告_20261101.md",
+      "sha256": "db6cedc8de42c326af8c1f278bd143d47b7bb8de9b91bfcd01937b9bdbc82a79"
+    },
+    {
+      "file": "docs/透视相机研发全记录_rc17至rc25_20261103.md",
+      "sha256": "eb638a9aa9eaa39eb593d203bff7da23ce376ba39e0552734b0381894df5ba49"
+    },
+    {
+      "file": "packaging/TEST_REPORT.md",
+      "sha256": "eca88137938c90a98d46e18df1b95f58bbdc1950e8defbc2d90fe12192142017"
+    },
+    {
+      "file": "packaging/rc20/RELEASE_NOTES.md",
+      "sha256": "d420997b952f4805646aa462bada0c5758f2e3b09d346089801e8405811976f3"
+    },
+    {
+      "file": "packaging/rc21/RELEASE_NOTES.md",
+      "sha256": "cab8cbab86346a9fde651671d40aa98d14c8110b00bc1022c324a2365b9c904d"
+    },
+    {
+      "file": "packaging/rc22/TEST_REPORT.md",
+      "sha256": "eca88137938c90a98d46e18df1b95f58bbdc1950e8defbc2d90fe12192142017"
+    },
+    {
+      "file": "research/alipay-texture-20261102/BackgroundControlProbe.java",
+      "sha256": "065a857b8dc9fe6d61df82bb19123085aaf086e5454c3c30c45593972747358d"
+    },
+    {
+      "file": "research/alipay-texture-20261102/BitmapHintProbe.java",
+      "sha256": "346b1ca1b5b98ee5f6c38e53dfedc2ee34c6d170f990d12370b6d33365e480e1"
+    },
+    {
+      "file": "research/alipay-texture-20261102/BracketUiProbe.java",
+      "sha256": "d4c78016d680db3f5b3fe944a39fe48ecf218ce2df18a29ea3d6431772b858e9"
+    },
+    {
+      "file": "research/alipay-texture-20261102/BridgeApiInventory.java",
+      "sha256": "b943a92139996a1d7f6e0cc790b3fb1b75bfa2e971a594e1664ede75623a180f"
+    },
+    {
+      "file": "research/alipay-texture-20261102/BufferBridgeProbe.java",
+      "sha256": "518e95e7b9dec2933fe9e0184902679eca6977683b4622b9a7851ed7fd95085c"
+    },
+    {
+      "file": "research/alipay-texture-20261102/COMMUNITY-OPACITY-FOLLOWUP.md",
+      "sha256": "9573fd6494582412f5873cbafd74a77283cfee96ad1ddbe29f919ca9444f7e9b"
+    },
+    {
+      "file": "research/alipay-texture-20261102/CaptureSourceMatrix.java",
+      "sha256": "89037573be30d7690d89a7d3faf5f4faa44af7b5c0207101e95f62dca0055185"
+    },
+    {
+      "file": "research/alipay-texture-20261102/CompositeResponseProbe.java",
+      "sha256": "8872d4279c6aa2410f10aabb00070ac0b4b2f7d1ecbdb22533d8985a14b39c8e"
+    },
+    {
+      "file": "research/alipay-texture-20261102/DEADLINE-VALIDATION-20261103.md",
+      "sha256": "50d536f18ed3072b711dcd613666a3fb04c9ac779b414c12c76208f140b81745"
+    },
+    {
+      "file": "research/alipay-texture-20261102/DiagnosticPageProbe.java",
+      "sha256": "cfd3fd652a1c3e47a3608bf9d7b3ea779a1db768996b172eb0f5b15644ac467a"
+    },
+    {
+      "file": "research/alipay-texture-20261102/FOUNDATION-ACCESS-20261103.md",
+      "sha256": "92da970a21d60814f134a85c9cfc7893fe5a1221ab1b6c1379d54c0fddd2c8eb"
+    },
+    {
+      "file": "research/alipay-texture-20261102/FreeformProbe.java",
+      "sha256": "5a5b4a22f06f7e8855711b53c115c1b246f6b5647237ae80a4486a351275c163"
+    },
+    {
+      "file": "research/alipay-texture-20261102/GenericUiProbe.java",
+      "sha256": "7e2132f995d35f0203932b49ab48416e53c2b4e6cd1763570b13cd8d20b66ac9"
+    },
+    {
+      "file": "research/alipay-texture-20261102/GraphicsCaptureCapabilityProbe.java",
+      "sha256": "fa8a954cde2c1da936a6c1f903bc99f5bda3b7a5eaf09769aed419435a439d44"
+    },
+    {
+      "file": "research/alipay-texture-20261102/OpaqueApiInventory.java",
+      "sha256": "a2219b4e0eda3d776ed5f878603211a2cacf539c6c5e4c0b783b0d0db6ade39c"
+    },
+    {
+      "file": "research/alipay-texture-20261102/PrimitiveRefreshProbe.java",
+      "sha256": "01886d25a2d643b774c3d0470e4e0c68cc564fd7b74db5b0189bc3c26205a346"
+    },
+    {
+      "file": "research/alipay-texture-20261102/REAL-CAST-FOLLOWUP.md",
+      "sha256": "b54d8984d02fa7aa6853cee728cbcc26617c8554cb45c2ca1d0a6955a059d6e5"
+    },
+    {
+      "file": "research/alipay-texture-20261102/RENDER-BRIDGE-20261103.md",
+      "sha256": "1426e9dd00a8cd5ea68044365a0ab970add25664726631655ca2ec7ebb06c8b6"
+    },
+    {
+      "file": "research/alipay-texture-20261102/RENDER-ENTRYPOINTS-20261103.md",
+      "sha256": "5e9a3f319621ed5c8f2821aeb84fcf9332419b886d97b26166547a689ec01e1c"
+    },
+    {
+      "file": "research/alipay-texture-20261102/REPORT.md",
+      "sha256": "9f93a59126b46d4461e913ea2d177bc13aed11a6b024b73809f08490ebf672b1"
+    },
+    {
+      "file": "research/alipay-texture-20261102/SceneCleanupProbe.java",
+      "sha256": "9e8eca3fca822df8c08abb3f114c5b17a080a9046aefd1731e5b3f935d627717"
+    },
+    {
+      "file": "research/alipay-texture-20261102/SourceFrameProbe.java",
+      "sha256": "d6ad60c86325346bc404d0677ab01a109086a846e6b0c8df849f890b07bf5048"
+    },
+    {
+      "file": "research/alipay-texture-20261102/SurfaceBridgeProbe.java",
+      "sha256": "307ec9b4fa5aaaee1656fd1e8d8025f3d57a5b169c412591fc861f9d20fef13d"
+    },
+    {
+      "file": "research/alipay-texture-20261102/TAKEOVER.md",
+      "sha256": "d2ba530ec3d71fa5e905a42d577af34dedb384f5b3fcf5949a7ac08b7f60855f"
+    },
+    {
+      "file": "research/alipay-texture-20261102/TEMPORAL-AND-TRAILS.md",
+      "sha256": "bc009fda6d82b4af222a0c6001828500ecf699325bd4cd400ac1c225115a9053"
+    },
+    {
+      "file": "research/alipay-texture-20261102/TexturePathProbe.java",
+      "sha256": "8a1b4490d318ee2ce63f9b2dee48a9e77d225a14c71d2679623932ca639d956a"
+    },
+    {
+      "file": "research/alipay-texture-20261102/UiLeafIsolationProbe.java",
+      "sha256": "cc963a52e829cc6364dd447f615adca44d6b49bbd3947e4bbd0e1f6f910f9d3f"
+    },
+    {
+      "file": "research/alipay-texture-20261102/VirtualCameraControlProbe.java",
+      "sha256": "a8aac6b416a54e5c44deda6fc08057c2d22e7e2437b469c5ae78a04ff16ea00b"
+    },
+    {
+      "file": "research/alipay-texture-20261102/VirtualInputScene.java",
+      "sha256": "c2f90073f28b293dac1415c3122e8d007615df832f5e9324547e5b1865f6984d"
+    },
+    {
+      "file": "research/alipay-texture-20261102/WindowAdaptationProbe.java",
+      "sha256": "03a84c4daf6827251fd9e96a3164f2d99a1add21a1b98b21a3394208f3ce9b37"
+    },
+    {
+      "file": "research/alipay-texture-20261102/analyze-composite-response.py",
+      "sha256": "3a4598a883af169b3790cab4cf830a798c5980b81173bb22181b04e7cdc4a36d"
+    },
+    {
+      "file": "research/alipay-texture-20261102/buffer-bridge.c",
+      "sha256": "5e94e9cfb3db2109514bff361fbb4abfe0a7c26f4e5edcbee10e64a338b63c5e"
+    },
+    {
+      "file": "research/alipay-texture-20261102/build-buffer-bridge.py",
+      "sha256": "f1d292d9349c7a11a694dfc6dff7a3d1e7753402f810e83adb7578870246670f"
+    },
+    {
+      "file": "research/alipay-texture-20261102/build-dsh-client.py",
+      "sha256": "f8aa9808693a9d2eab650a3b11921e6afc64dddd72d5de87f16810c946a50de9"
+    },
+    {
+      "file": "research/alipay-texture-20261102/build-external-alpha-client.py",
+      "sha256": "a0c28443823c2d6f529c23af47c513b02454dd965e590af9420fbad2139a255f"
+    },
+    {
+      "file": "research/alipay-texture-20261102/build-probe.py",
+      "sha256": "a067803d3d06833303a97b06e8a2f9e68f2836fe48aedd69d09198c0de4cef42"
+    },
+    {
+      "file": "research/alipay-texture-20261102/check-renderbridge-cleanup.py",
+      "sha256": "17a3e248949915378a6e8f0fe3dfd383fd44b52c61aeee6b31833e1ed5f379e6"
+    },
+    {
+      "file": "research/alipay-texture-20261102/inspect-framework.py",
+      "sha256": "0e65d196d54c1d662f7fcd4fe4cbc57bb4fa9942944e359ae49bfc0822e5b6e1"
+    },
+    {
+      "file": "research/alipay-texture-20261102/inspect-render-entrypoints.py",
+      "sha256": "7a0771f6caae53eb82f303643711ef7e0d54e543500872fcc0a572e7f7a68ffc"
+    },
+    {
+      "file": "research/alipay-texture-20261102/run-buffer-bridge.py",
+      "sha256": "c4c544f8f14aa100e89fa78318040b66a0d3300f7a10250c14fab11ce1bab8ff"
+    },
+    {
+      "file": "research/alipay-texture-20261102/run-composite-test.py",
+      "sha256": "0ae0d2844b90e830e5af5a527d63cb40c2cf8769600d85cd0bd0debabf10a418"
+    },
+    {
+      "file": "research/alipay-texture-20261102/run-dsh-probe.py",
+      "sha256": "071ae34c848f7bea35c2ea56daea6b1d1252dbd0bdc55ddc211a016d645f5483"
+    },
+    {
+      "file": "research/alipay-texture-20261102/run-experiment.py",
+      "sha256": "590ef06040e79bef77e00108bd3438651e226d140fe58c3ad3cf465e5f408d35"
+    },
+    {
+      "file": "research/alipay-texture-20261102/run-graphics-capabilities.py",
+      "sha256": "a5145e38820f1a479c7afd69a17ba05f7486d061e4bee72910b689c01c870cc9"
+    },
+    {
+      "file": "research/alipay-texture-20261102/run-surface-bridge.py",
+      "sha256": "4a039eace0605184d330ba09a618baac22ab727919a73fe57fddef47b11fe0e3"
+    },
+    {
+      "file": "research/alipay-texture-20261102/start-dsh-trial.py",
+      "sha256": "29a6ad5e4fcf5754442b75785e68b69d9e81bc73c7714e7dd9237a6605b8e8f8"
+    },
+    {
+      "file": "research/alipay-texture-20261102/summarize-audit.py",
+      "sha256": "8595f30440c0b1ee20027a4381493a6dad930117773ae5f8e2f0288dae427472"
+    },
+    {
+      "file": "research/alipay-texture-20261102/summarize-buffer-bridge.py",
+      "sha256": "703e4f4f576220a75e335c71016bfbe99eb750c1f4a93d5a08871dcb1bd830aa"
+    },
+    {
+      "file": "research/alipay-texture-20261102/summarize-real-trials.py",
+      "sha256": "68fb37b79afd19087221bdb62da847d96eeba7a50b54297404f5d2468a72dd82"
+    },
+    {
+      "file": "research/general-rgba-20261101/AppNameFilterProbe.java",
+      "sha256": "112cf121c0565ff6b6b97d44237ed1a6b08ccb90fa4704859ce89e075fc733c2"
+    },
+    {
+      "file": "research/general-rgba-20261101/GraphicsCapabilitiesProbe.java",
+      "sha256": "c22ac3da84b5c90da6ad07a0b6cb35b1a7da2d9695c0f3252b686bec9059c6e5"
+    },
+    {
+      "file": "research/general-rgba-20261101/NameFilterLab.java",
+      "sha256": "4950df546484456e5fbce209d8948b36b92ad6afb973f31dbf36023d727b8e42"
+    },
+    {
+      "file": "research/general-rgba-20261101/README.md",
+      "sha256": "1bbb60acbeeb989dfcd5bd0a9aef3525e64b13923b16846d8d3cb9493098a9d0"
+    },
+    {
+      "file": "research/general-rgba-20261101/RESEARCH_MANIFEST.json",
+      "sha256": "a750ddc5575cb7dec612a29d9ba62709b3baa4ac37dc4583ed32c628b32d0357"
+    },
+    {
+      "file": "research/general-rgba-20261101/build-probe.py",
+      "sha256": "dbe9f3c20b74ce6193ece13a82d7158ae1003ef5b1452a8cba39bf2648bd7ada"
+    },
+    {
+      "file": "research/general-rgba-20261101/cleanup-research.py",
+      "sha256": "0924bb4f5ffcfa6bda597dae9793078eafa5c216247b015c6570a6af0993b2c3"
+    },
+    {
+      "file": "research/general-rgba-20261101/device_tools.py",
+      "sha256": "61e7ba4d1a765f2b47c237840cfdefccb3901a6f34ec4d1be7f2d48341098568"
+    },
+    {
+      "file": "research/general-rgba-20261101/fetch-sources.py",
+      "sha256": "b41380bfd3c301121f1536f1dffe52af3a2d982b1cdd441fd9b0e6dc98d80802"
+    },
+    {
+      "file": "research/general-rgba-20261101/finalize-research.py",
+      "sha256": "b7a64ec06610658ae270326b8c2784a8409daa5c4a9ff3617e9b6fb449a67acc"
+    },
+    {
+      "file": "research/general-rgba-20261101/run-probe.py",
+      "sha256": "fd6ee10ae4b53c95dc0edeb587afdf3e8562443a13954b20f42d4a90f9b4e9ac"
+    },
+    {
+      "file": "research/general-rgba-20261101/run-wire-benchmark.py",
+      "sha256": "bd8ed31a6554225c76926a6b6d9730d67727031a16b78cc16ffb1ce8433156e5"
+    },
+    {
+      "file": "research/general-rgba-20261101/sources/fetch-manifest.json",
+      "sha256": "c388b334ed4d69aba3b55d97b17e9aba78ff26ebacc996358e8ddf45250d905b"
+    },
+    {
+      "file": "research/general-rgba-20261101/sources/virtualcamera-directory.json",
+      "sha256": "b0b0646a9e944aa61028a79c2d3c57f8773e9ab5849b645cd10b6cff56310882"
+    },
+    {
+      "file": "research/general-rgba-20261101/verify-lifecycle.py",
+      "sha256": "4c28e68e444b22f739169fc77c82d0d82e35a10e0f93c711bdc4feb6540ce314"
+    },
+    {
+      "file": "research/general-rgba-20261101/verify-negative.py",
+      "sha256": "eaa98cc6bfc884662b41a1f33706eb5e4a16397e8d648745dff6b3b289b1b073"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/COMPLETION.md",
+      "sha256": "695a01f6d4a55891b80c1c461635cb53937aca8c664b1012c48fa89190c9243f"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/CodecProfilingParity.java",
+      "sha256": "e6b95f274d14770fa9f01c3c01c04709f422724b7f6d04f6c7ecf3f81eb4fb14"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/DeviceCapabilitiesProbe.java",
+      "sha256": "4ca6b68aa17a313af41a610f30c1ce6fa6e20a61c8292ecfd82c6f35f73982c9"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/MANIFEST.json",
+      "sha256": "d8d53ef3ec99301690d60613ed1880d6d487844a1256f0afc52483db0c74bd89"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/PipelineProbe.java",
+      "sha256": "fd2573326353f10e9def7c7b8153c36a022d2c6c97fa0d8e44de3e9ff6100e4d"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/README.md",
+      "sha256": "974aadd046fe7d6dcba21705916fe0a642ab48b6e109e358205101d0a7efbd5d"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/REPORT.md",
+      "sha256": "996c0742dec943292885172fa251630bcf5a08da7b87753795700d5de5bbf6e1"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/SceneContext.java",
+      "sha256": "d74ef3d59a6e352fca84878f969231c813412a82f18355d508be6d1ae65d3f7f"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/SceneProbe.java",
+      "sha256": "1303b49bf67b07f6619c68c368e4fddc1732bae3b15877f96f8ac31e5e888b92"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/TASK.md",
+      "sha256": "d5e2be5579939757baaa7266f2238e06d6bb9e5ea61321c1200425c1aa07bf4a"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/WORKLOG.md",
+      "sha256": "00ac2eb662333f6dbc6d6631ec14782a2b32a643951dfa3cbf2ee508569a0c1b"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/baseline-host-source-original.py",
+      "sha256": "bd8ed31a6554225c76926a6b6d9730d67727031a16b78cc16ffb1ce8433156e5"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/baseline-wire.py",
+      "sha256": "68e9aad225f0d0cf218d6088aaf593fa0b113590d95fc66a611069f27dc05196"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/before-product/NativeAlphaFrameCodec.java",
+      "sha256": "006e2f3c9ff29a1b0eb30ee31b441d1ad33b7430da54ef98184cf65dfe02df19"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/before-product/NativeAlphaReadback.java",
+      "sha256": "6a8bbb83c4b09d9080983341ec3f68c8874d0d5376334fa804c60b82f3db1be0"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/build-probes.py",
+      "sha256": "e469d2529cc8986c0bb24bdcf606eb2c51e4d09caabace302676186640d0e672"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/cleanup-scope.py",
+      "sha256": "61dca8949338b4b4c75979a9de0ec7f203dae5c78b0c4fbd05299f8e91cb0c3c"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/collect-framework.py",
+      "sha256": "f10b19df04cc188207b52260a7c2a163d7eecf36edbf2b7769579c5820b0f680"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/disassemble-framework.py",
+      "sha256": "c9b5556888ce873418f54d0e50b5047e2860a5a578bc25fd3b940705308cf5c8"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/finalize-scope.py",
+      "sha256": "a87282e49f280d9042161ab17c0dbd76d763c625844ea30191cfc734100de981"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/make-baseline-runner.py",
+      "sha256": "bfdd0c4f22be61106cd8454c11b07a4a55448d8b6d97128444560eeab9805f5e"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/product-profiling.patch",
+      "sha256": "a7f1f2339db7b89546b1afb7c1193b5392278c41c281a25131511718d3d36e61"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/profile-run.py",
+      "sha256": "d98b873915fc0d43cc07a2544e8ade07610eaced3a35099efc308ec369a87432"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/record-camera-client.py",
+      "sha256": "3919005b38f6a1cbf7cf36aa175706adafb141fe49ba410d52e3574a91826cdf"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/record-flutter.py",
+      "sha256": "db1c79f69b999a63538cb1ac92f07b6d572f82a1560b781015b3367dd43d1eef"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/record-power.py",
+      "sha256": "c72826ea1f1cf01eec8442e88545c6dc3308b584f9cc7292475cbb29cca6066f"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/record-properties.py",
+      "sha256": "a77af34b64fef8c006636b5407717cb6c8f8cf8a328ef62582aad058bb55a533"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/run-probe.py",
+      "sha256": "707c6b9794f9e04c5c1252763d0a201255b19b3f517da7e8dd886d85463fe825"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/start-window.ps1",
+      "sha256": "bd50ccac78fed1fb7e6c753a9059d99732d3674540059290567b9ceea27495de"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/test-codec-profile.py",
+      "sha256": "a4b52ecd61b25b21923c841aaa08fba58db0e16c96ca85d1a2f849c20626ebef"
+    },
+    {
+      "file": "research/layer-filter-generality-20261101/write-report.py",
+      "sha256": "bc2d8b7fd5a09aed830d947e3a8b067fb36391313e3e1313005309cebbe61eb5"
+    },
+    {
+      "file": "research/performance-portability-20261101/COMPLETION.md",
+      "sha256": "700331f1bd4f8f2222c61090b9084886e4c101f5e736d7b8aba685ebb85ff018"
+    },
+    {
+      "file": "research/performance-portability-20261101/CodecBenchmarkProbe.java",
+      "sha256": "a3520a6731a431b51cc39ed1389924c3efbcffaf1da105f5d1b1c51ef9663fb0"
+    },
+    {
+      "file": "research/performance-portability-20261101/CodecProfilingParity.java",
+      "sha256": "53c06af1dabb9dff80ef1a14209c8cf49e8f12f83b1c06aceece2fbd32b3c312"
+    },
+    {
+      "file": "research/performance-portability-20261101/DeviceCapabilitiesProbe.java",
+      "sha256": "4ec0e754b143360af68c5dee9bf4c2c457dd526963a7ea19637068fe86cc2b95"
+    },
+    {
+      "file": "research/performance-portability-20261101/MANIFEST.json",
+      "sha256": "28dd47d201f7c0e58031219919a60265dc26eef8c972c474205bdd14dec5dd77"
+    },
+    {
+      "file": "research/performance-portability-20261101/PipelineProbe.java",
+      "sha256": "6f64ff11fbd45ea51810d0d363720c2caab22a5d80bdf4d3a2023842d3df5105"
+    },
+    {
+      "file": "research/performance-portability-20261101/README.md",
+      "sha256": "889ebc8ade03adfd8a352847d813d26c9b1a6abf5571b0d1267989dc1be0651a"
+    },
+    {
+      "file": "research/performance-portability-20261101/REPORT.md",
+      "sha256": "8932211371e99880d786815edfeb19f4f89890631fe0cc5db6b379a7babcee17"
+    },
+    {
+      "file": "research/performance-portability-20261101/SceneContext.java",
+      "sha256": "0afaf6ad93010b2370797e5098781eaef28762cca4329815e55cac26b647c0a0"
+    },
+    {
+      "file": "research/performance-portability-20261101/SceneProbe.java",
+      "sha256": "1303b49bf67b07f6619c68c368e4fddc1732bae3b15877f96f8ac31e5e888b92"
+    },
+    {
+      "file": "research/performance-portability-20261101/SyntheticReadbackProbe.java",
+      "sha256": "20f621cda0749aea607bd513658767134793b55eecf329926bc32ff33cf079ab"
+    },
+    {
+      "file": "research/performance-portability-20261101/WindowTreeProbe.java",
+      "sha256": "2cefd0b3348b2364a77b530d0810ce29e1d11fe14e64485474990757227bddb5"
+    },
+    {
+      "file": "research/performance-portability-20261101/before-product/NativeAlphaFrameCodec.java",
+      "sha256": "be4425c728cb918179d089ee69ba7bee40278f5d4078a112882b1bca5d0a2abd"
+    },
+    {
+      "file": "research/performance-portability-20261101/before-product/NativeAlphaReadback.java",
+      "sha256": "498dd4e84d225a03506ca6d45a4138f0fe4fd26cdec3df4871db00512e78d2c7"
+    },
+    {
+      "file": "research/performance-portability-20261101/build-probes.py",
+      "sha256": "e469d2529cc8986c0bb24bdcf606eb2c51e4d09caabace302676186640d0e672"
+    },
+    {
+      "file": "research/performance-portability-20261101/cleanup-performance.py",
+      "sha256": "fdad4f302a5e843121e56e58541a3cb254306d5d4358762f148ce4a1e0621ccc"
+    },
+    {
+      "file": "research/performance-portability-20261101/fetch-modern-evidence.py",
+      "sha256": "db13fc3a40b06634ffc88e3e8e8e35607a86883febcacec5944bbe0e8aff6bf7"
+    },
+    {
+      "file": "research/performance-portability-20261101/fetch-raw-modern.py",
+      "sha256": "91c5c83cd7ec96f31d914429bfa4ae0d405f75d83db3d84409bed2bb5b28a2bb"
+    },
+    {
+      "file": "research/performance-portability-20261101/package-performance.py",
+      "sha256": "296bc772de4bb597d44f5e018e1b33280cbce85d117e66b6405d992ece5fdc3b"
+    },
+    {
+      "file": "research/performance-portability-20261101/pin-modern-evidence.py",
+      "sha256": "1f581573677656f9262d234d7781a5a18c16640d66451ff54b3cedd2eb873acd"
+    },
+    {
+      "file": "research/performance-portability-20261101/product-performance.patch",
+      "sha256": "f7112a7b95bb65c6845bc09ed33128526557e91b6a0ee028ba857a7f6c1796b2"
+    },
+    {
+      "file": "research/performance-portability-20261101/profile-run.py",
+      "sha256": "16ed9c791beda8880b246aee6ab2becad18a03a3baa6ecb91de2dceef2af3929"
+    },
+    {
+      "file": "research/performance-portability-20261101/record-camera-client.py",
+      "sha256": "3919005b38f6a1cbf7cf36aa175706adafb141fe49ba410d52e3574a91826cdf"
+    },
+    {
+      "file": "research/performance-portability-20261101/record-exit-cleanup.py",
+      "sha256": "5c01ad0e9bb6dde07ccb2224e4ec257908632b763e9baacf06e83fccfce342fa"
+    },
+    {
+      "file": "research/performance-portability-20261101/record-power.py",
+      "sha256": "c72826ea1f1cf01eec8442e88545c6dc3308b584f9cc7292475cbb29cca6066f"
+    },
+    {
+      "file": "research/performance-portability-20261101/run-owned-ab.py",
+      "sha256": "e60cadb7aeacfaa0c91687ab89ef07f66d4b6566c9296f793069947854ef9ea7"
+    },
+    {
+      "file": "research/performance-portability-20261101/run-probe.py",
+      "sha256": "c32f4d3286e5431d68b65d433aed4d0a34c5e645ca92dac93a8fe081d8aa78d7"
+    },
+    {
+      "file": "research/performance-portability-20261101/run-real-ab.py",
+      "sha256": "f38f63b6b0449e2aa84e440098d0f34abf227fd2591f2f61e0413df56935fa18"
+    },
+    {
+      "file": "research/performance-portability-20261101/start-window.ps1",
+      "sha256": "20a770b55171cc223b1461d218330de27cae28f440273c4442399e5d0d6a3bea"
+    },
+    {
+      "file": "research/performance-portability-20261101/summarize-performance.py",
+      "sha256": "8af5ee506b71a31745c004dabbfa75dce9861364e5b6d2e55483fb7c5477dcc3"
+    },
+    {
+      "file": "research/performance-portability-20261101/test-codec-profile.py",
+      "sha256": "a4b52ecd61b25b21923c841aaa08fba58db0e16c96ca85d1a2f849c20626ebef"
+    },
+    {
+      "file": "research/perspective-camera/README.md",
+      "sha256": "8835fe5d22df53a25eef58f2d2379e53bb9ea3dca051d71df19d2adacfa8f067"
+    },
+    {
+      "file": "research/perspective-camera/check-public-archive.py",
+      "sha256": "8fc17486f1fa9b57fb62203d14a107304bfc10893c27939ee415b4213cf09840"
+    },
+    {
+      "file": "research/perspective-camera/tests/test_archive_tools.py",
+      "sha256": "00d5cba5976b7aee88fafc1379e1eecf11dba63d932d6a58b5d60fad14a29591"
+    },
+    {
+      "file": "research/research_common.py",
+      "sha256": "6939f82d1d0b43b3ec16d04e973cdaaa6e0a2465b8269872db981ea67101856b"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/MANIFEST.json",
+      "sha256": "575fa8b8b68a1fcd0dd25613e0395a8215b91b162c7f23dc640887a62c75a2cd"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/REPORT.md",
+      "sha256": "0269f5af61ebeaf41fca8b2d56e288c455819ba02180e91d2d0bd094a684b9a3"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/after/NativeAlphaFrameCodec.java",
+      "sha256": "ddccab508f59de5b1768e4e41692873c0ede0b0dfc29ef594a3d447bbc0935b4"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/after/app/src/sys/win/process.c",
+      "sha256": "3b9d0bc400bd4237a4f61904b730c080507c724cf921ab023255f4a622e367d6"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/before/app/src/native_source.c",
+      "sha256": "909f03c7a41fc8b65568cfd7b57f76df91c789085dfdca9e7e0d7ec25a5df0ac"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/before/app/src/scrcpy.c",
+      "sha256": "aec6e4c1f1f06aba3e023e9c5a375f059287faa7104308c2befeac764bead69f"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/before/app/src/sys/win/process.c",
+      "sha256": "31c77f9ae693dd6a8637f31ae2f05c2394fa588c3e1ae27e1382d795c3b3bcfc"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/build-process-test.py",
+      "sha256": "aa682236af137ee18d7d5db4e4164ed4e75b34f2176b1a1ed3b2cc7b4c45d333"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/check-cleanup.py",
+      "sha256": "7488408c276eba0b8af254e15f2ead4fba1acf73e5aca517ebdbbe069fd47d42"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/cleanup.py",
+      "sha256": "30952ccdec94e8f863b6227dc7517c5b377b1b5a80e809534951edc225565ed0"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/deploy.py",
+      "sha256": "6265552fe26c6ff64d3591e7a16c8d5d0b4460103ceefa497882dd8431dcbfeb"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/package-evidence.py",
+      "sha256": "b9079cd806c67fb70006a60a2d4b58951477abad5aaff869e2b400d688561df9"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/product-performance.patch",
+      "sha256": "f7112a7b95bb65c6845bc09ed33128526557e91b6a0ee028ba857a7f6c1796b2"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/product-shutdown.patch",
+      "sha256": "06fa483a81d366a15e95a465f4332c2055bf4541509967c15188ca8a05a853e1"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/record-alipay-window.py",
+      "sha256": "4aba1b30379f6d0a35990a7cd5b7eafe3ea18badab0c4817356bb51119928dd3"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/start-test.ps1",
+      "sha256": "28a1ecc6d344e3de9549dd2b22fd58d2bee04ab294032880fb5ea5f5b739da44"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/test_process_inheritance.c",
+      "sha256": "4e5b9afe835da8c6e7ba9b833200c849345d5eb1d98b061664fd61146ffa2a03"
+    },
+    {
+      "file": "research/shutdown-alipay-20261101/wait-log.py",
+      "sha256": "44c656f456d1f1849bfd2c68038b53f8bad259ad2b1195a70e2a50ef7b57fdf7"
+    }
+  ],
+  "historicalSessionScripts": [
+    "research/general-rgba-20261101/finalize-research.py",
+    "research/layer-filter-generality-20261101/cleanup-scope.py",
+    "research/layer-filter-generality-20261101/finalize-scope.py",
+    "research/layer-filter-generality-20261101/make-baseline-runner.py",
+    "research/performance-portability-20261101/cleanup-performance.py",
+    "research/performance-portability-20261101/package-performance.py",
+    "research/shutdown-alipay-20261101/cleanup.py",
+    "research/shutdown-alipay-20261101/deploy.py"
+  ],
+  "hashNormalization": "CRLF to LF; no other byte normalization"
+}

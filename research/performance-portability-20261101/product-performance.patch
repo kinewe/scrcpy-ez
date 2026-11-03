@@ -1,0 +1,23 @@
+--- before/NativeAlphaFrameCodec.java
++++ server/src/main/java/com/genymobile/scrcpy/NativeAlphaFrameCodec.java
+@@ -6,7 +6,10 @@
+ /** V2: full premultiplied RGBA or lossless changed-row patches. CRC covers the full reconstructed frame. */
+ final class NativeAlphaFrameCodec implements AutoCloseable {
+     final ByteArrayOutputStream packed=new ByteArrayOutputStream();
+-    private final ByteArrayOutputStream patch=new ByteArrayOutputStream();
++    private static final class PatchBuffer extends ByteArrayOutputStream {
++        void feed(Deflater target){target.setInput(buf,0,count);}
++    }
++    private final PatchBuffer patch=new PatchBuffer();
+     private final Deflater deflater=new Deflater(1);
+     private final CRC32 crc=new CRC32();
+     private final byte[] buffer=new byte[65536];
+@@ -32,7 +35,7 @@
+         else{
+             flags=3;patch.reset();DataOutputStream data=new DataOutputStream(patch);data.writeInt(changed);
+             for(int i=0;i<count;i++)if(current[i]!=previous[i]){int start=i*stride,length=Math.min(stride,rgba.length-start);data.writeInt(start);data.writeInt(length);data.write(rgba,start,length);changedRows+=length/(w*4);}
+-            inputBytes=patch.size();deflater.setInput(patch.toByteArray());
++            inputBytes=patch.size();patch.feed(deflater);
+         }
+         if(profiling){patchNs=System.nanoTime()-stageAt;stageAt=System.nanoTime();}
+         deflater.finish();while(!deflater.finished()){int n=deflater.deflate(buffer);packed.write(buffer,0,n);}
