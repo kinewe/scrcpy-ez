@@ -135,7 +135,7 @@ While mirroring, a persistent "scrcpy-ez is mirroring" notification appears on t
 |---|---|
 | **Ctrl+F** | Toggle the overlay controls (drag them while holding **Alt**) |
 | **Ctrl+G** | Save the image copied on the PC to the device gallery |
-| **Ctrl+H** | Black out the device screen to save power (the device may enter power-saving mode limiting the refresh rate) |
+| **Ctrl+H** | Toggle screen blackout on the phone or tablet. During blackout, the device screen may occasionally light up briefly before going dark again |
 | **Ctrl+P** | Short press of the phone power button to lock or wake it, in main or app mirroring |
 | **Ctrl+T** | Toggle always-on-top for the mirroring window (or hold **Alt** and click the indicator on the left of the controls, same effect) |
 | **Alt+F** | Fullscreen |
