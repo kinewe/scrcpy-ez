@@ -1,7 +1,9 @@
 #include "controller.h"
 
 #include <assert.h>
+#include <inttypes.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "util/log.h"
 #include "clipboard_sync.h"
@@ -194,6 +196,10 @@ run_controller(void *data) {
     bool error = false;
     sc_tick next_heartbeat = sc_tick_now();
     sc_tick next_feedback = sc_tick_now();
+    const bool diagnostics = strstr(SCRCPY_VERSION, "-resize8") != NULL;
+    uint64_t inputs_sent = 0;
+    uint64_t heartbeats_sent = 0;
+    sc_tick next_diagnostic = 0;
 
     for (;;) {
         sc_mutex_lock(&controller->mutex);
@@ -256,6 +262,20 @@ run_controller(void *data) {
 
         bool eos;
         bool ok = process_msg(controller, &msg, &eos);
+        if (diagnostics && ok) {
+            if (msg.type == SC_CONTROL_MSG_TYPE_KEEP_AWAKE_HEARTBEAT) {
+                ++heartbeats_sent;
+            } else if (msg.type == SC_CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT
+                    || msg.type == SC_CONTROL_MSG_TYPE_INJECT_SCROLL_EVENT) {
+                ++inputs_sent;
+            }
+            sc_tick now = sc_tick_now();
+            if (now >= next_diagnostic) {
+                LOGI("SCRCPY_EZ_CONTROL_TX heartbeats=%" PRIu64 " input_sent=%" PRIu64,
+                     heartbeats_sent, inputs_sent);
+                next_diagnostic = now + SC_TICK_FROM_SEC(5);
+            }
+        }
         sc_control_msg_destroy(&msg);
         if (!ok) {
             if (eos) {

@@ -21,8 +21,14 @@ int main(void) {
     assert(sc_abr_monitor_sample(&m, 5200000).flags & SC_ABR_FEEDBACK_HW);
     sc_abr_monitor_output(&m, false);
     assert(!(sc_abr_monitor_sample(&m, 5200000).flags & SC_ABR_FEEDBACK_HW));
-    assert(!(sc_abr_monitor_sample(&m, 7000000).flags & SC_ABR_FEEDBACK_VALID));
+    assert(!(sc_abr_monitor_sample(&m, 7000000).flags & (SC_ABR_FEEDBACK_VALID | SC_ABR_FEEDBACK_IDLE)));
+    sc_abr_monitor_queue(&m, 0, 0);
+    sc_abr_monitor_decode(&m, epoch, 5100000, false);
+    assert(!(sc_abr_monitor_sample(&m, 7000000).flags & SC_ABR_FEEDBACK_IDLE));
+    sc_abr_monitor_decode(&m, epoch, 0, false);
+    assert(sc_abr_monitor_sample(&m, 7000000).flags & SC_ABR_FEEDBACK_IDLE);
     uint32_t next = sc_abr_monitor_epoch(&m, true);
+    assert(!(sc_abr_monitor_sample(&m, 8000000).flags & SC_ABR_FEEDBACK_IDLE));
     sc_abr_monitor_arrival(&m, 2000000, 9000000, 1000);
     assert(!(sc_abr_monitor_sample(&m, 9000000).flags & SC_ABR_FEEDBACK_VALID));
     sc_abr_monitor_decode(&m, next, 0, false);

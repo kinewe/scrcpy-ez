@@ -125,13 +125,14 @@ body {
 .batch-entry.on { background: #43A884; color: #fff; border-color: #43A884; }
 .device-card {
   background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-  padding: 12px 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px 8px;
   flex-wrap: wrap; /* v2.1.58：应用投屏条换行独占一行（.dev-info flex:1 basis 0 → 常规行不意外换行） */
   position: relative; /* 拖拽 z-index 置顶的定位上下文（gui53） */
   /* v2.1.45：非文本交互区——悬停不出现文本输入光标、不可选中文字（同应用卡片；
      可点形态由 .device-card.casting / #device-list.batch 的 pointer 覆盖）。 */
   user-select: none; cursor: default;
 }
+.device-card > .btn { white-space: nowrap; }
 /* gui53：批量管理模式——选中卡绿框高亮（深一档描边 + 极轻染色，四面均匀：
    不再用偏移投影（0 4px 会造成下厚上薄、左右显细的错觉）；未选灰框；
    整卡点击切换选中态。普通模式不使用 .selected（统一边框）。 */
@@ -270,7 +271,11 @@ body {
 .dev-info { flex: 1; min-width: 0; }
 .dev-name { font-size: 14.5px; font-weight: 600; }
 .dev-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
-.bat { font-size: 11px; color: #666; background: #f5f5f5; border-radius: 6px; padding: 2px 7px; }
+.bat, .tag-tls, .badge-cast {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 20px; line-height: 1; vertical-align: middle; white-space: nowrap;
+}
+.bat { font-size: 11px; color: #666; background: #f5f5f5; border-radius: 6px; padding: 0 7px; }
 .btn {
   border: none; border-radius: 8px; padding: 7px 16px; font-size: 13px;
   font-weight: 600; cursor: pointer; transition: all .15s;
@@ -282,6 +287,25 @@ body {
 .btn.ghost:hover { border-color: #bbb; }
 .btn.ghost:disabled { color: #ccc; cursor: not-allowed; }
 .btn.tiny { padding: 5px 12px; font-size: 12px; }
+/* v2.4.2-rc.29：微信扫一扫专属图标按钮（四角取景框 + 品牌绿扫描线）。
+   与「应用/投屏」同行的方形紧凑按钮；扫动由 app.js 用 JS 相位驱动（快照整体
+   重建设备卡时不中断、离开时等本轮播完再快速回位），这里只放静态与悬停样式。 */
+.btn.scan-btn {
+  width: 28px; height: 28px; padding: 0; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #4B5563;
+}
+.btn.scan-btn:hover { color: var(--green-dark); border-color: var(--green); background: #F4FBF7; }
+.btn.scan-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.scan-btn .scan-ico { width: 18px; height: 18px; display: block; overflow: visible; }
+.scan-btn .scan-ico-frame { transition: stroke .15s; }
+.scan-btn .scan-ico-beam { stroke: var(--green); transform: translateY(0px); opacity: 1; will-change: transform, opacity; }
+/* 快照重建后由 JS 补的指针悬停态：鼠标不动时新节点拿不到 :hover，用 .pt-hover
+   保持与 :hover 相同的视觉，避免悬停态闪断（仅设备卡按钮）。 */
+.device-card .btn.primary.pt-hover { background: var(--green-dark); }
+.device-card .btn.ghost.pt-hover { border-color: #bbb; }
+.device-card .btn.danger.pt-hover { background: #fecaca; }
+.device-card .btn.scan-btn.pt-hover { color: var(--green-dark); border-color: var(--green); background: #F4FBF7; }
 /* 二期 Step 2 注：「应用」入口与「投屏」同色同规格（.btn.primary），仅文字区分——
    主人 0919 审美定则：区分度要么做大要么一样，略小=像褪色。 */
 
@@ -395,6 +419,14 @@ body {
 .logmods > .logmod + .logmod { border-top: 1px solid var(--border); }
 /* v2.1.83：模块裁剪——flex 压缩到极小时内容不再溢出到相邻模块（修复"叠字"） */
 .logmod { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.logmods, .logmod, .appwin-tab-pane { transition: opacity .3s ease; }
+.logmod-fading, .logmods-fading, .appwin-tab-pane.log-pane-fading { opacity: 0; }
+.logmods-fading .logmod-fading,
+.log-pane-fading .logmods-fading,
+.log-pane-fading .logmod-fading { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .logmods, .logmod, .appwin-tab-pane { transition: none; }
+}
 /* 标题行固定：位于滚动区之外，日志行永不会穿越/遮挡标题（修复 sticky 遮挡） */
 .logmod-head {
   flex: none; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none;
@@ -632,9 +664,9 @@ body {
 .np-btns { display: flex; gap: 8px; }
 
 .badge-cast {
-  display: inline-block; background: #e6f7ec; color: #16a34a;
+  background: #e6f7ec; color: #16a34a;
   border: 1px solid #b8e6c8; border-radius: 8px;
-  font-size: 11px; padding: 1px 7px; margin-left: 8px; vertical-align: 2px;
+  font-size: 11px; padding: 0 7px; margin-left: 8px;
 }
 .device-card.casting { cursor: pointer; }
 .dot.casting { animation: breathe 1.6s ease-in-out infinite; }
@@ -676,6 +708,10 @@ body {
 .repo-mark-github { filter:invert(1); }
 .update-result-dismiss { display:block; margin:8px auto 0; padding:0; border:0; background:none; color:var(--green-dark); font-size:12px; cursor:pointer; }
 #update-progress { margin-top: 14px; }
+/* rc23-UI1：下载白光改成独立整轨层，按已下载宽度裁切。
+   原版白光挂在 ::-webkit-progress-value 的 220% 背景上，可见区间只占周期小段，
+   且填充宽度变化会重新映射背景位置；独立层让白光周期固定、完整从左外侧扫到右外侧。 */
+.update-track { position: relative; height: 12px; border-radius: 999px; }
 #update-progress-bar {
   display: block; width: 100%; height: 12px; border: 0; border-radius: 999px;
   appearance: none; -webkit-appearance: none; overflow: hidden;
@@ -694,6 +730,24 @@ body {
   background-size: 32% 100%; animation: update-progress-scan 1.4s ease-in-out infinite;
 }
 #update-progress-bar:indeterminate::-webkit-progress-bar { background: transparent; }
+.update-glint {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 999px;
+  overflow: hidden; pointer-events: none; opacity: 0; z-index: 1;
+  transition: width .25s ease;
+}
+#update-progress-track.is-downloading .update-glint { opacity: 1; }
+.update-glint::before {
+  content:''; position:absolute; top:0; bottom:0; left:0; width:64%;
+  background: linear-gradient(105deg, transparent 5%, rgba(255,255,255,.14) 22%, rgba(255,255,255,.46) 50%, rgba(255,255,255,.14) 78%, transparent 95%);
+  transform: translateX(-110%);
+  animation: update-progress-chase 1.5s linear infinite;
+}
+@keyframes update-progress-chase {
+  0%   { transform: translateX(-110%); opacity: 0; }
+  5%   { transform: translateX(-110%); opacity: 1; }
+  92%  { opacity: 1; }
+  100% { transform: translateX(220%); opacity: 0; }
+}
 #update-progress-text { margin: 8px 0 0; font-variant-numeric: tabular-nums; }
 @keyframes update-progress-scan {
   from { background-position: -48% 0; }
@@ -702,9 +756,14 @@ body {
 @media (prefers-reduced-motion: reduce) {
   #update-progress-bar:indeterminate { animation: none; background-position: 50% 0; }
   #update-progress-bar::-webkit-progress-value { transition: none; }
+  .update-glint { transition: none; }
+  .update-glint::before { animation: none; opacity: 0; }
 }
 .modal-close { cursor: pointer; color: var(--muted); padding: 2px 6px; }
 #app-launch-modal { z-index: 90; }
+#camera-permission-modal { z-index: 91; }
+#app-launch-message { white-space: pre-line; }
+#app-launch-warning { white-space: pre-line; }
 .app-launch-card { padding: 20px; max-width: 390px; }
 .app-launch-card .modal-head { gap: 12px; margin-bottom: 16px; }
 .app-launch-card .modal-close { border: 0; background: transparent; font: inherit; }
@@ -741,6 +800,72 @@ body {
 .smoothing-frames button:focus-visible { outline: 2px solid var(--green-dark); outline-offset: 2px; }
 .smoothing-help { margin-top: 8px; }
 .notification-device-select { max-width: 130px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); }
+
+.perspective-fps-select {
+  flex: none;
+  width: 106px;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid #d6e9e0;
+  border-radius: 9px;
+  background: #f5faf7;
+  color: #245d4b;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.perspective-fps-select:hover { border-color: var(--green); }
+.perspective-fps-select:focus-visible { outline: 2px solid var(--green-dark); outline-offset: 2px; }
+
+@supports (appearance: base-select) and selector(::picker(select)) {
+  .perspective-fps-select,
+  .perspective-fps-select::picker(select) { appearance: base-select; }
+  .perspective-fps-select::picker-icon { color: var(--green-dark); }
+  .perspective-fps-select:open::picker-icon { rotate: 180deg; }
+  .perspective-fps-select::picker(select) {
+    min-width: 172px;
+    position-area: block-end span-inline-start;
+    position-try-fallbacks: flip-block;
+    margin-block: 5px;
+    padding: 5px;
+    border: 1px solid #dce9e3;
+    border-radius: 11px;
+    background: var(--card);
+    color: var(--text);
+    box-shadow: 0 8px 24px #1a473120;
+  }
+  .perspective-fps-select option {
+    min-height: 33px;
+    gap: 7px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .perspective-fps-select option:checked {
+    color: #245d4b;
+    background: #e9f5ef;
+    font-weight: 700;
+  }
+  .perspective-fps-select option:hover,
+  .perspective-fps-select option:focus-visible { background: #f0f6f3; }
+  .perspective-fps-select option[data-detail]::after {
+    content: attr(data-detail);
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: #edf3ef;
+    color: #486759;
+    font-size: 10px;
+    font-weight: 500;
+  }
+  .perspective-fps-select option::checkmark {
+    order: 1;
+    margin-inline-start: auto;
+    color: var(--green-dark);
+  }
+}
 
 /* Device notification controls share the existing app grid and bulk toolbar. */
 .appwin-card .modal-head { gap: 8px; }
@@ -877,6 +1002,10 @@ body {
 /* ===== 参数浮窗（有线/无线两套独立；按当前模式自动定位） ===== */
 .param-card { max-width: 430px; }
 #param-modal .param-card { display: flex; flex-direction: column; max-height: calc(100vh - 32px); }
+#param-card { transition: opacity 140ms ease; }
+#param-card.param-mode-out { opacity: 0; }
+#param-card.param-mode-busy { pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { #param-card { transition: none; } }
 #param-modal .modal-head, #param-modal .param-foot { flex: none; }
 #param-modal .param-foot { padding-top: 12px; }
 .param-body { min-height: 0; overflow-y: auto; padding-right: 4px; margin-right: -4px; }
@@ -976,15 +1105,14 @@ body {
 /* ===== gui12：TLS 形态标注 ===== */
 /* 设备卡灰绿小标签（档案 mode=tls 或 mDNS tls 服务在播） */
 .tag-tls {
-  display: inline-block; background: #eef5f2; color: var(--green-dark);
+  background: #eef5f2; color: var(--green-dark);
   border: 1px solid #cfe3da; border-radius: 6px;
-  font-size: 10.5px; padding: 0 6px; margin-left: 6px; vertical-align: 2px;
-  letter-spacing: .4px;
+  font-size: 11px; padding: 0 6px; margin-left: 6px;
 }
 /* 「投屏中」胶囊旁的 TLS加密 标签（当次连接走 TLS 时显示） */
 .tag-tls.cast {
   background: #dcefe7; color: #1f7a57;
-  font-size: 10.5px; padding: 0 6px; margin-left: 4px; vertical-align: 1px;
+  margin-left: 4px;
 }
 
 /* gui50-fix2：待配对卡样式已随设备列表待配对卡一起移除 */
@@ -1033,6 +1161,7 @@ body {
 }
 .pair-code-input:focus { border-color: var(--green); }
 .pair-code-input::placeholder { color: #b0b0b0; letter-spacing: 3px; }
+.pair-code-input.direct-hint::placeholder { letter-spacing: 1px; font-size: 14px; }
 .pair-code-input:disabled { background: #f7f7f7; color: #aaa; cursor: not-allowed; }
 .pair-code-box.err .pair-code-input { border-color: #f2b8b8; color: #c0504d; }
 
@@ -1041,6 +1170,7 @@ body {
   padding: 6px 14px; font-size: 12px; line-height: 1.5;
   margin: 10px 0 0; text-align: center; word-break: break-word;
 }
+.pair-fail-pill, .toast.pair-error { white-space: pre-line; text-align: center; }
 .pair-go-btn { width: 100%; padding: 10px 0; margin-top: 10px; font-size: 14px; border-radius: 8px; }
 .pair-go-btn.danger { background: #b85450; color: #fff; }
 .pair-go-btn.danger:hover { background: #a04440; }
@@ -1138,17 +1268,79 @@ body {
   animation: viewFadeIn 160ms ease-out;
 }
 
-/* A soft glint stays inside the downloaded portion; no moving fake progress. */
 button.switch { border:0; padding:0; }
 button.switch:focus-visible { outline:2px solid var(--green); outline-offset:3px; }
 button.switch:disabled { opacity:.7; cursor:wait; }
-#update-progress-bar.is-downloading::-webkit-progress-value {
-  background-image: linear-gradient(105deg, transparent 34%, rgba(255,255,255,.38) 48%, transparent 62%), linear-gradient(90deg,#319b7b,#53ba94);
-  background-size: 220% 100%, 100% 100%;
-  animation: update-progress-glint 2.6s ease-in-out infinite;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.28);
+
+/* ===== rc23-UI1：主投屏 / 应用窗口设置「画面 / 声音 / 功能」三页签 ===== */
+/* 固定高度（已定稿）：主投屏 604px、应用窗口 716px；窗口更小时内容区滚动 */
+#param-modal .param-card { display:flex; flex-direction:column; height:604px; max-height:calc(100vh - 32px); overflow:hidden; }
+#appset-modal .param-card { display:flex; flex-direction:column; height:716px; max-height:calc(100vh - 32px); overflow:hidden; }
+#param-modal .modal-head, #appset-modal .modal-head,
+#param-modal .param-foot, #appset-modal .param-foot { flex:none; }
+#param-modal .param-foot, #appset-modal .param-foot { padding-top:12px; }
+#param-modal .param-body, #appset-modal .param-body { min-height:0; overflow-y:auto; padding-right:4px; margin-right:-4px; flex:1 1 auto; }
+
+/* 标题行：设备/应用名 + 模式胶囊 */
+.param-title-wrap { display:flex; align-items:center; gap:10px; min-width:0; flex:1; }
+.param-title-wrap > b {
+  font-size:16px; font-weight:600; min-width:0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
-@keyframes update-progress-glint { from {background-position:150% 0,0 0;} to {background-position:-150% 0,0 0;} }
-@media (prefers-reduced-motion: reduce) {
-  #update-progress-bar.is-downloading::-webkit-progress-value { animation:none; background-image:linear-gradient(90deg,#319b7b,#53ba94); }
+.param-mode-pill {
+  flex:none; font-size:11.5px; color:#16a34a; background:#e6f7ec;
+  border:1px solid #b8e6c8; border-radius:999px; padding:2px 9px; white-space:nowrap;
 }
+
+/* 页签栏：与主窗口「设备 / 窗口总览」同款分段控件 */
+.dialog-tabs { display:flex; gap:6px; background:#f0f0f0; border-radius:10px; padding:4px; margin:10px 0 2px; flex:none; }
+.dtab {
+  flex:1; text-align:center; padding:7px 0; border:0; border-radius:8px;
+  background:transparent; font:inherit; font-size:13.5px; color:var(--muted);
+  cursor:pointer; user-select:none; position:relative;
+}
+.dtab:hover { color:var(--text); }
+.dtab.active { background:var(--card); color:var(--text); font-weight:600; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+.dtab:focus-visible { outline:2px solid var(--green-dark); outline-offset:2px; }
+/* 未保存改动角标：改回原值 / 保存 / 取消后消失（root 自动修复不计入） */
+.dtab.dirty::after {
+  content:''; position:absolute; top:5px; right:10px;
+  width:6px; height:6px; border-radius:50%; background:var(--orange);
+}
+
+/* 页内容 */
+.dpage { display:none; }
+.dpage.active { display:block; }
+.fgroup-title { font-size:11.5px; font-weight:600; color:var(--green-dark); margin:10px 0 2px; }
+.fgroup-title:first-child { margin-top:2px; }
+.param-inline-tag {
+  font-size:10.5px; font-weight:400; padding:1px 6px; border-radius:6px;
+  background:#eef5f2; color:var(--green-dark); border:1px solid #cfe3da; white-space:nowrap;
+  vertical-align:1px;
+}
+.param-pending { padding:28px 4px; text-align:center; color:var(--muted); font-size:13px; }
+
+/* 功能页里的即时生效项（root 自动修复）沿用 param-assist，但放进页内需要轻分隔 */
+.dpage .param-assist { border-top:1px dashed var(--border); padding:10px 0; margin-top:2px; }
+.dpage .param-assist:first-of-type { border-top:0; }
+
+/* 应用窗口功能页的 set-row：去掉首行顶边、统一说明框间距 */
+#appset-page-feature .set-row:first-of-type { border-top:0; padding-top:4px; }
+#appset-page-audio .param-audio-note { font-size:12px; color:var(--muted); text-align:center; margin-top:6px; line-height:1.5; }
+/* 应用窗口「分辨率档」行：档位 + ＋自定义 + 宽×高 必须同排（rc23-UI1 已确认：能一行就一行） */
+#appset-rows .param-row:first-child .chips { gap:4px; flex-wrap:nowrap; }
+#appset-rows .param-row:first-child .chip { min-width:36px; padding:5px 7px; font-size:12.5px; }
+#appset-rows .param-row:first-child .chip.dashed { padding:5px 8px; }
+#appset-rows .param-row:first-child .appset-ratio-pair { gap:2px; }
+#appset-rows .param-row:first-child .appset-ratio-pair .chip-input { width:44px; padding:5px 3px; font-size:12px; }
+#appset-rows .param-row:first-child .appset-ratio-times { font-size:11px; }
+
+/* 应用窗口设置跟随有线/无线切换：与主投屏参数浮窗同款 140ms 淡出/淡入 */
+#appset-card { transition: opacity 140ms ease; }
+#appset-card.param-mode-out { opacity: 0; }
+#appset-card.param-mode-busy { pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { #appset-card { transition: none; } }
+
+/* 页底说明框：每页一条，随本页最近点击项更新 */
+#param-note-display, #param-note-audio, #param-note-feature,
+#appset-note-display, #appset-note-audio, #appset-note-feature { margin:12px 0 2px; }

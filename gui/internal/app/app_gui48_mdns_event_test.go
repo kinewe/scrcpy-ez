@@ -31,10 +31,37 @@ func mdnsTlsAddrStale(a *App, key, addr string) bool {
 	return false
 }
 
+// Presence events are candidates. Positive event tests also provide a reachable,
+// authenticated endpoint and wait for the asynchronous verification result.
+func installMdnsVerificationFakes(t *testing.T, a *App) {
+	t.Helper()
+	a.disc.TcpProbeFn = func(context.Context, string) bool { return true }
+	a.disc.ConnectOutFn = func(_ context.Context, addr string) (string, error) { return "connected to " + addr, nil }
+	a.pairOps.getpropFn = func(context.Context, string, string) (string, error) { return "", nil }
+	t.Cleanup(a.closeChannelChecks)
+}
+
+func waitMdnsVerified(t *testing.T, a *App, key, addr string) {
+	t.Helper()
+	waitForMdns(t, "mDNS candidate must pass authenticated verification", func() bool {
+		e, ok := a.profiles.Entry(key)
+		if !ok {
+			return false
+		}
+		for _, candidate := range e.Addrs {
+			if candidate.Addr == addr && candidate.State == AddrStateActive {
+				return true
+			}
+		}
+		return false
+	})
+}
+
 // TestGui48MdnsAddedBuildsPendingAndTlsMark：广播 added(tls) 且档案无此 identity →
 // 待配对卡；档案有 identity → 入档 active 并点亮 TLS 标。
 func TestGui48MdnsAddedBuildsPendingAndTlsMark(t *testing.T) {
 	a, _ := newTestApp()
+	installMdnsVerificationFakes(t, a)
 	a.applyTrackUpdate(nil)
 
 	// 未知 identity：待配对卡
@@ -57,6 +84,7 @@ func TestGui48MdnsAddedBuildsPendingAndTlsMark(t *testing.T) {
 		Snapshot: []discovery.MdnsService{mdnsTlsSvc("adb-TEST0001-KWqpio", "192.0.2.197", "45005")},
 		First:    false,
 	})
+	waitMdnsVerified(t, a, "REDMI K80", "192.0.2.197:45005")
 	if mdnsTlsAddrStale(a, "REDMI K80", "192.0.2.197:45005") {
 		t.Fatal("广播 added 后地址不应 stale")
 	}
@@ -80,26 +108,30 @@ func TestGui48MdnsAddedBuildsPendingAndTlsMark(t *testing.T) {
 func TestGui48MdnsGoneProbeFailStaleAndReappearActive(t *testing.T) {
 	a, _ := newTestApp()
 	gui31K80Profiles(a)
-	a.disc.TcpProbeFn = func(ctx context.Context, addr string) bool { return false }
+	installMdnsVerificationFakes(t, a)
 
 	svc := mdnsTlsSvc("adb-TEST0001-KWqpio", "192.0.2.197", "45005")
 	a.onMdnsTrackEvents(context.Background(), adb.MdnsTrackEvents{Snapshot: []discovery.MdnsService{svc}, First: true})
+	waitMdnsVerified(t, a, "REDMI K80", svc.Addr)
+	a.disc.TcpProbeFn = func(context.Context, string) bool { return false }
 	a.onMdnsTrackEvents(context.Background(), adb.MdnsTrackEvents{Snapshot: nil, First: false}) // gone
 
 	waitForMdns(t, "gone 探测不通应打 stale", func() bool {
 		return mdnsTlsAddrStale(a, "REDMI K80", svc.Addr)
 	})
 
-	a.onMdnsTrackEvents(context.Background(), adb.MdnsTrackEvents{Snapshot: []discovery.MdnsService{svc}, First: false}) // 再现
+	a.disc.TcpProbeFn = func(context.Context, string) bool { return true }
+	a.onMdnsTrackEvents(context.Background(), adb.MdnsTrackEvents{Snapshot: []discovery.MdnsService{svc}, First: false}) // 再现并验证
+	waitMdnsVerified(t, a, "REDMI K80", svc.Addr)
 	if mdnsTlsAddrStale(a, "REDMI K80", svc.Addr) {
 		t.Fatal("广播再现后地址应翻回 active（不 stale）")
 	}
 }
 
-// TestGui48OfflineJointRequiresMdnsGone：设备流 removed + mdns 仍在 → 乐观在线
-// （不打 stale）；mdns 也消失后才打 stale。
-func TestGui48OfflineJointRequiresMdnsGone(t *testing.T) {
+// A stored mDNS record cannot mask failed endpoint verification after removal.
+func TestGui48DroppedRechecksDespiteMdnsPresence(t *testing.T) {
 	a, _ := newTestApp()
+	installMdnsVerificationFakes(t, a)
 	seedProfiles(a, map[string]*DeviceEntry{
 		"REDMI K80": mkEntry("REDMI K80", "12345TESTA", []string{"TEST0001"}, []string{"192.0.2.197:45005"}),
 	})
@@ -110,13 +142,13 @@ func TestGui48OfflineJointRequiresMdnsGone(t *testing.T) {
 	a.applyTrackUpdate([]adb.Device{wifi})
 	svc := mdnsTlsSvc("adb-TEST0001-KWqpio", "192.0.2.197", "45005")
 	a.onMdnsTrackEvents(context.Background(), adb.MdnsTrackEvents{Snapshot: []discovery.MdnsService{svc}, First: false})
+	waitMdnsVerified(t, a, "REDMI K80", svc.Addr)
 
-	// 设备流 removed，但 mdns 仍在 → 不打 stale
+	// Device disappears; the old announcement remains, but the endpoint fails.
+	a.disc.TcpProbeFn = func(context.Context, string) bool { return false }
 	a.applyTrackUpdate(nil)
 	a.onDropped("REDMI K80")
-	if mdnsTlsAddrStale(a, "REDMI K80", svc.Addr) {
-		t.Fatal("仅设备流 removed 而 mdns 仍有广播 → 不应打 stale（乐观在线）")
-	}
+	waitForMdns(t, "failed endpoint must be stale even with cached mDNS", func() bool { return mdnsTlsAddrStale(a, "REDMI K80", svc.Addr) })
 
 	// mdns 也消失 → 广播 removed → TCP 探测不通 → 该地址打 stale
 	a.disc.TcpProbeFn = func(ctx context.Context, addr string) bool { return false }
@@ -127,9 +159,11 @@ func TestGui48OfflineJointRequiresMdnsGone(t *testing.T) {
 	})
 }
 
-// TestGui48OfflineJointUsbExempt：设备流里有 USB 条目 → 联合判据不生效。
-func TestGui48OfflineJointUsbExempt(t *testing.T) {
+// USB remains usable while an independently failed TLS endpoint becomes stale.
+func TestGui48DroppedTlsDoesNotAffectUSB(t *testing.T) {
 	a, _ := newTestApp()
+	a.disc.TcpProbeFn = func(context.Context, string) bool { return false }
+	t.Cleanup(a.closeChannelChecks)
 	seedProfiles(a, map[string]*DeviceEntry{
 		"REDMI K80": mkEntry("REDMI K80", "12345TESTA", []string{"TEST0001"}, []string{"192.0.2.197:45005"}),
 	})
@@ -138,8 +172,10 @@ func TestGui48OfflineJointUsbExempt(t *testing.T) {
 	a.applyTrackUpdate([]adb.Device{usb}) // 设备流首块即含 USB（在线事实）
 	a.onMdnsTrackEvents(context.Background(), adb.MdnsTrackEvents{Snapshot: nil, First: true})
 	a.onDropped("REDMI K80")
-	if mdnsTlsAddrStale(a, "REDMI K80", "192.0.2.197:45005") {
-		t.Fatal("USB 在线豁免：mdns 无广播也不应打 stale")
+	waitForMdns(t, "USB must not mask a failed TLS endpoint", func() bool { return mdnsTlsAddrStale(a, "REDMI K80", "192.0.2.197:45005") })
+	devs := a.Snapshot().Devices
+	if len(devs) != 1 || devs[0].ConnType != "usb" || devs[0].State != "device" {
+		t.Fatalf("failed TLS affected USB: %+v", devs)
 	}
 }
 

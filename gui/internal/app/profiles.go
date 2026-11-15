@@ -16,6 +16,7 @@ import (
 	"scrcpy-ez/gui/internal/adbparse"
 	"scrcpy-ez/gui/internal/bridge"
 	"scrcpy-ez/gui/internal/discovery"
+	"scrcpy-ez/gui/internal/nativealpha"
 )
 
 // Baseline 是"bat 基准"（该设备该模式 bat 实际检测/使用的规格三元组）：
@@ -52,13 +53,16 @@ type ModeProfile struct {
 // 【零值语义】Size=="" 视为"该模式未设置"（读取回默认档）；保存=全量写（Size 非空）；
 // 恢复默认=清回零值；两套同时为零 → 条目从档案删除（见 ProfileStore.SetAppParams）。
 type AppWinModeParams struct {
-	Size    string `json:"size,omitempty"`    // 长边像素数（v2.1.74 起，如 "2560"；旧档 "WxH" 读取时归一化）；虚拟屏注入按设备宽高比换算 WxH
-	RatioW  int    `json:"ratioW,omitempty"`  // 初始比例宽；0/0=跟随设备比例
-	RatioH  int    `json:"ratioH,omitempty"`  // 初始比例高；0/0=跟随设备比例
-	FPS     int    `json:"fps,omitempty"`     // 刷新率上限
-	Bitrate int    `json:"bitrate,omitempty"` // 码率上限（Mbps）
-	Dpi     int    `json:"dpi,omitempty"`     // 界面密度（0=自动等比；>0=用户选定）
-	Flex    bool   `json:"flex"`              // 窗口跟随（拖动=改虚拟屏分辨率）
+	Size                string  `json:"size,omitempty"`    // 长边像素数（v2.1.74 起，如 "2560"；旧档 "WxH" 读取时归一化）；虚拟屏注入按设备宽高比换算 WxH
+	RatioW              int     `json:"ratioW,omitempty"`  // 初始比例宽；0/0=跟随设备比例
+	RatioH              int     `json:"ratioH,omitempty"`  // 初始比例高；0/0=跟随设备比例
+	FPS                 int     `json:"fps,omitempty"`     // 刷新率上限
+	Bitrate             int     `json:"bitrate,omitempty"` // 码率上限（Mbps）
+	Dpi                 int     `json:"dpi,omitempty"`     // 界面密度（0=自动等比；>0=用户选定）
+	Perspective         bool    `json:"perspective"`
+	PerspectiveInputFPS float64 `json:"perspectiveInputFps,omitempty"`
+	PerspectiveColorKey bool    `json:"perspectiveColorKey,omitempty"`
+	Flex                bool    `json:"flex"` // 窗口跟随（拖动=改虚拟屏分辨率）
 	// Audio 声音档位（v2.1.78 三档滑条）：phone / pc / both；空=按默认（phone——
 	// 应用屏默认「不传输到电脑」，主人 0927 拍板）。旧档 mute:true 语义等价 phone
 	// （字段已移除：JSON 解码忽略未知字段 → Audio 空 → 归一 phone，行为一致）。
@@ -71,6 +75,27 @@ type AppWinModeParams struct {
 	// 继承设备档案「应用级优先，空则设备级」）；非空=固化本应用选择。
 	VCodec string `json:"vcodec,omitempty"`
 	ACodec string `json:"acodec,omitempty"`
+}
+
+// Old profiles did not store a false perspective field. Missing values now
+// follow the enabled default; an explicitly saved false remains an opt-out.
+func (p *AppWinModeParams) UnmarshalJSON(data []byte) error {
+	type plain AppWinModeParams
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var flags struct {
+		Perspective *bool `json:"perspective"`
+	}
+	if err := json.Unmarshal(data, &flags); err != nil {
+		return err
+	}
+	*p = AppWinModeParams(decoded)
+	if p.Size != "" && flags.Perspective == nil {
+		p.Perspective = true
+	}
+	return nil
 }
 
 // NormalizeVCodec 视频编码归一（v2.1.91）：合法值原样；空/非法 → h264（bat 默认）。
@@ -241,15 +266,24 @@ func addrThrottled(lastFail int64, now time.Time) bool {
 // 不落盘，仅供进程内排序、失败节流（60s）与旧测试兼容使用——任何显示、
 // 候选与判据不得再读 Stale/Fail；节流只读内存态 LastFail。
 type AddrEntry struct {
-	Addr  string `json:"addr"`
-	State string `json:"state"` // active / stale（唯一落盘状态，二值互斥）
-	Mode  string `json:"mode,omitempty"`
+	Addr     string `json:"addr"`
+	State    string `json:"state"` // active / stale（唯一落盘状态，二值互斥）
+	Mode     string `json:"mode,omitempty"`
+	evidence uint64 // runtime observation generation; never persisted
 
 	// --- gui52：以下字段均为内存态（json:"-"），永不写入 profiles.json ---
 	Fail     int   `json:"-"`
 	LastOk   int64 `json:"-"` // 最近成功时间（内存态，排序用）
 	LastFail int64 `json:"-"` // 最近失败时间（内存态，60s 节流判据）
 	Stale    bool  `json:"-"` // 兼容旧代码/旧测试的冗余打标；与 State 同步维护
+}
+
+// PerspectiveCalibEntry 是一次成功的透视相机标定结果（几何键 -> 仿射 6 参数）。
+// 键由客户端按「虚拟相机格式+观测帧尺寸+方向」生成；GUI 再按 pkg 前缀隔离，
+// 让同一设备不同应用/不同窗口几何互不覆盖。
+type PerspectiveCalibEntry struct {
+	Map []float64 `json:"map"`
+	At  int64     `json:"at,omitempty"`
 }
 
 // DeviceEntry 是 identity 唯一化后的设备档案。
@@ -280,6 +314,14 @@ type DeviceEntry struct {
 	// AppParams = 应用窗口（虚拟屏）参数（二期 Step 5；pkg → 有线/无线两套）。
 	// 稀疏存储：只存用户保存过的应用（无条目=默认档，读取时现算 DefaultAppWinParams）。
 	AppParams map[string]AppWinParams `json:"appParams,omitempty"`
+	// WeChatScanVerified = 本设备成功实证过「微信扫一扫直达」（扫一扫窗口真的出画面）。
+	// 静态 resolve 探测只能证明"接口存在"；真正可用性用一次成功来证明并入档，
+	// 之后跟随设备 identity（USB/无线切换共用），偶发系统拦截不会再把入口藏掉。
+	WeChatScanVerified bool `json:"weChatScanVerified,omitempty"`
+	// PerspectiveCalib = 透视相机标定缓存（键 = pkg|几何键，值 = 6 参数仿射）。
+	// 热打开时由 GUI 注入客户端（SCEZ_PERSPECTIVE_CALIB），客户端再用一帧验证；
+	// 几何/微信版本变化会导致键失配或验证失败，从而自动回退真实标定。
+	PerspectiveCalib map[string]PerspectiveCalibEntry `json:"perspectiveCalib,omitempty"`
 }
 
 // storeData 是 profiles.json 的新结构：{"devices": {identity: DeviceEntry}}。
@@ -319,6 +361,10 @@ type legacyDeviceEntry struct {
 	IconsFullAt int64         `json:"iconsFullAt,omitempty"`
 	// AppParams（二期 Step 5）：同样必须带中转，否则老档案走 legacy 读路径时丢参数。
 	AppParams map[string]AppWinParams `json:"appParams,omitempty"`
+	// WeChatScanVerified 同样必须走 legacy 中转，否则老档案读路径会丢掉成功实证。
+	WeChatScanVerified bool `json:"weChatScanVerified,omitempty"`
+	// PerspectiveCalib 同样必须走 legacy 中转，否则老档案读路径会丢掉标定缓存。
+	PerspectiveCalib map[string]PerspectiveCalibEntry `json:"perspectiveCalib,omitempty"`
 }
 
 type legacyAddrEntry struct {
@@ -342,6 +388,9 @@ type ProfileStore struct {
 	persistError       error
 	lastPersistAttempt time.Time
 	mdnsAuthority      map[*DeviceEntry]map[string]string
+	version            uint64
+	addressEvidence    uint64
+	alphaExcludedApps  map[string]map[string]bool // explicit catalog removals must not be resurrected by disk merge
 }
 
 func NewProfileStore(path string) *ProfileStore {
@@ -428,7 +477,10 @@ func legacyDeviceToEntry(le *legacyDeviceEntry) *DeviceEntry {
 		Apps:           le.Apps,
 		IconsFullAt:    le.IconsFullAt,
 		AppParams:      le.AppParams,
-		Addrs:          make([]AddrEntry, 0, len(le.Addrs)),
+		// 成功实证也必须搬进新条目（否则每次 Load 都被静默丢弃 = 老 bug 复现）。
+		WeChatScanVerified: le.WeChatScanVerified,
+		PerspectiveCalib:   le.PerspectiveCalib,
+		Addrs:              make([]AddrEntry, 0, len(le.Addrs)),
 	}
 	for _, a := range le.Addrs {
 		ae := AddrEntry{
@@ -825,6 +877,7 @@ func equalStringSlices(a, b []string) bool {
 
 // persistLocked 落盘新结构（原子写：tmp+rename）。调用方必须持锁。
 func (s *ProfileStore) persistLocked() (err error) {
+	s.version++ // Memory is authoritative even when persisting it fails.
 	previous := s.persistError
 	s.lastPersistAttempt = time.Now()
 	defer func() {
@@ -839,6 +892,12 @@ func (s *ProfileStore) persistLocked() (err error) {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
+	unlock, lockErr := nativealpha.Lock(s.path)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer unlock()
+	s.mergeNativeAlphaDiskLocked()
 	b, err := json.MarshalIndent(s.data, "", "  ")
 	if err != nil {
 		return err
@@ -957,6 +1016,26 @@ func (s *ProfileStore) SetApps(key string, apps []AppListItem) error {
 	if !ok {
 		return errors.New("未找到设备档案: " + key)
 	}
+	apps = mergeAppAlphaForCatalog(apps, e.Apps)
+	if s.alphaExcludedApps == nil {
+		s.alphaExcludedApps = map[string]map[string]bool{}
+	}
+	identity := s.keyOfLocked(e)
+	excluded := s.alphaExcludedApps[identity]
+	if excluded == nil {
+		excluded = map[string]bool{}
+		s.alphaExcludedApps[identity] = excluded
+	}
+	installed := map[string]bool{}
+	for _, item := range apps {
+		installed[item.Pkg] = true
+		delete(excluded, item.Pkg)
+	}
+	for _, prior := range e.Apps {
+		if !installed[prior.Pkg] {
+			excluded[prior.Pkg] = true
+		}
+	}
 	if sameAppMetadata(e.Apps, apps) {
 		if s.persistError != nil {
 			return s.persistLocked()
@@ -976,6 +1055,103 @@ func (s *ProfileStore) SetIconsFullAt(key string, t int64) error {
 		return errors.New("未找到设备档案: " + key)
 	}
 	e.IconsFullAt = t
+	return s.persistLocked()
+}
+
+// WeChatScanVerified 返回本设备是否已成功实证「微信扫一扫直达」（档案跟随 identity）。
+func (s *ProfileStore) WeChatScanVerified(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.resolveLocked(key)
+	if !ok {
+		return false
+	}
+	return e.WeChatScanVerified
+}
+
+// MarkWeChatScanVerified 记录一次扫一扫成功实证并入档（只需一次；后续直接命中）。
+// 返回是否为本进程首次新增（已在档=false，不重复写盘）。
+func (s *ProfileStore) MarkWeChatScanVerified(key string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.resolveLocked(key)
+	if !ok {
+		return false, errors.New("未找到设备档案: " + key)
+	}
+	if e.WeChatScanVerified {
+		return false, nil
+	}
+	e.WeChatScanVerified = true
+	return true, s.persistLocked()
+}
+
+// PerspectiveCalibEnv 返回某设备某应用可注入透视相机进程的缓存串：
+//
+//	"<几何键>|m0,m1,m2,m3,m4,m5;<几何键>|..."
+//
+// 几何键由 native client 按虚拟相机格式+观测帧尺寸+方向生成；这里按 pkg 前缀
+// 隔离，避免同一设备不同应用互相覆盖。空=无缓存（冷打开）。
+func (s *ProfileStore) PerspectiveCalibEnv(key, pkg string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.resolveLocked(key)
+	if !ok || len(e.PerspectiveCalib) == 0 {
+		return ""
+	}
+	prefix := pkg + "|"
+	var b strings.Builder
+	for k, v := range e.PerspectiveCalib {
+		if !strings.HasPrefix(k, prefix) || len(v.Map) != 6 {
+			continue
+		}
+		geom := strings.TrimPrefix(k, prefix)
+		if geom == "" || strings.ContainsAny(geom, "|;") {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString(";")
+		}
+		b.WriteString(geom)
+		b.WriteString("|")
+		for i, f := range v.Map {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			b.WriteString(strconv.FormatFloat(f, 'f', 6, 64))
+		}
+	}
+	return b.String()
+}
+
+// SetPerspectiveCalib 记录一次透视相机标定结果（键 = pkg|几何键）。
+// 相同的 map 不重复写盘；返回 error 仅表示档案不存在/落盘失败。
+func (s *ProfileStore) SetPerspectiveCalib(key, pkg, geom string, m []float64) error {
+	if len(m) != 6 {
+		return errors.New("透视标定参数必须是 6 个")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.resolveLocked(key)
+	if !ok {
+		return errors.New("未找到设备档案: " + key)
+	}
+	if e.PerspectiveCalib == nil {
+		e.PerspectiveCalib = map[string]PerspectiveCalibEntry{}
+	}
+	k := pkg + "|" + geom
+	if prev, exists := e.PerspectiveCalib[k]; exists && len(prev.Map) == 6 {
+		same := true
+		for i := range m {
+			if prev.Map[i] != m[i] {
+				same = false
+				break
+			}
+		}
+		if same {
+			return nil
+		}
+	}
+	e.PerspectiveCalib[k] = PerspectiveCalibEntry{Map: append([]float64(nil), m...), At: time.Now().Unix()}
 	return s.persistLocked()
 }
 
@@ -1080,6 +1256,7 @@ func cloneEntry(e *DeviceEntry) DeviceEntry {
 	c := *e
 	c.Serials = append([]string{}, e.Serials...)
 	c.Addrs = append([]AddrEntry{}, e.Addrs...)
+	c.Apps = cloneAppAlpha(e.Apps)
 	return c
 }
 
@@ -1249,6 +1426,7 @@ func (s *ProfileStore) syncDevices(devs []adb.Device, exempt map[string]bool) bo
 			continue
 		}
 		if addr != "" && index.addresses[addr] == e && refreshUnchangedAddress(e, addr, now.Unix()) {
+			s.noteAddressEvidenceLocked(e, addr)
 			continue
 		}
 		if addr != "" && s.addrSuccessLocked(e, addr, now) {
@@ -1460,6 +1638,8 @@ func (s *ProfileStore) addrSuccessModeLocked(e *DeviceEntry, addr, mode string, 
 			continue
 		}
 		a := &e.Addrs[i]
+		s.addressEvidence++
+		a.evidence = s.addressEvidence
 		if a.State != AddrStateActive || a.Fail != 0 || a.LastFail != 0 {
 			a.State = AddrStateActive
 			a.Fail = 0
@@ -1484,7 +1664,8 @@ func (s *ProfileStore) addrSuccessModeLocked(e *DeviceEntry, addr, mode string, 
 		sortAddrs(e)
 		return changed
 	}
-	e.Addrs = append(e.Addrs, AddrEntry{Addr: addr, State: AddrStateActive, LastOk: now.Unix(), Mode: mode})
+	s.addressEvidence++
+	e.Addrs = append(e.Addrs, AddrEntry{Addr: addr, State: AddrStateActive, LastOk: now.Unix(), Mode: mode, evidence: s.addressEvidence})
 	changed = s.retireSameClassLocked(e, addr, class) || changed
 	sortAddrs(e)
 	return true
@@ -1600,6 +1781,7 @@ func (s *ProfileStore) StaleTls(key string) bool {
 		}
 		e.Addrs[i].State = AddrStateStale
 		e.Addrs[i].Stale = true
+		s.noteAddressEvidenceLocked(e, e.Addrs[i].Addr)
 		changed = true
 	}
 	if changed {
@@ -1623,6 +1805,7 @@ func (s *ProfileStore) MarkAddrStale(key, addr string) bool {
 		}
 		e.Addrs[i].State = AddrStateStale
 		e.Addrs[i].Stale = true
+		s.noteAddressEvidenceLocked(e, addr)
 		_ = s.persistLocked()
 		return true
 	}
@@ -1643,6 +1826,7 @@ func (s *ProfileStore) MarkAllAddrsStale(key string) bool {
 		if e.Addrs[i].State == AddrStateActive {
 			e.Addrs[i].State = AddrStateStale
 			e.Addrs[i].Stale = true
+			s.noteAddressEvidenceLocked(e, e.Addrs[i].Addr)
 			changed = true
 		}
 	}
@@ -1746,6 +1930,7 @@ func (s *ProfileStore) addrFailModeLocked(e *DeviceEntry, addr, mode string, now
 		if e.Addrs[i].Addr != addr {
 			continue
 		}
+		s.noteAddressEvidenceLocked(e, addr)
 		e.Addrs[i].Fail++
 		e.Addrs[i].LastFail = now.Unix()
 		e.Addrs[i].State = AddrStateStale
@@ -2034,6 +2219,7 @@ func (s *ProfileStore) MatchMdnsModes(services []MdnsMatch) []MdnsAddr {
 			changed = true
 		}
 		if addrInList(e.Addrs, sv.Addr) {
+			s.noteAddressEvidenceLocked(e, sv.Addr)
 			// A broadcast reports presence, not a successful ADB connection.
 			// Keep accumulated probe failures so stale broadcasts cannot defeat backoff.
 			for i := range e.Addrs {
@@ -2401,6 +2587,15 @@ func stripMdnsServiceSuffix(name string) string {
 // marketname/model 空缺回填。自动落盘。
 // PairArchive receives a serial verified by the existing authenticated pairing flow.
 func (s *ProfileStore) PairArchive(identity, serial, addr, tlsGuid, marketname, model string) error {
+	return s.archiveWireless(identity, serial, addr, tlsGuid, marketname, model, ModeTls)
+}
+
+// TcpipArchive requires a serial read through the authenticated ADB transport.
+func (s *ProfileStore) TcpipArchive(serial, addr, marketname, model string) error {
+	return s.archiveWireless("", serial, addr, "", marketname, model, ModeTcpip)
+}
+
+func (s *ProfileStore) archiveWireless(identity, serial, addr, tlsGuid, marketname, model, mode string) error {
 	serial = adb.StableSerial(serial)
 	if serial == "" {
 		serial = adb.StableSerial(tlsGuid)
@@ -2442,8 +2637,8 @@ func (s *ProfileStore) PairArchive(identity, serial, addr, tlsGuid, marketname, 
 	if tlsGuid != "" {
 		e.TlsGuid = tlsGuid
 	}
-	s.applyWirelessFormLocked(e, ModeTls)
-	s.addrSuccessModeLocked(e, addr, ModeTls, time.Now())
+	s.applyWirelessFormLocked(e, mode)
+	s.addrSuccessModeLocked(e, addr, mode, time.Now())
 	return s.persistLocked()
 }
 

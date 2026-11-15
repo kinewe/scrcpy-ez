@@ -28,6 +28,58 @@ func TestCastEnvExplicitReusePolicy(t *testing.T) {
 	}
 }
 
+func TestCastEnvPerspectiveOptIn(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		values := envMap(castEnv(CastParams{PerspectiveCamera: enabled}, "perspective-test"))
+		want := "0"
+		if enabled {
+			want = "1"
+		}
+		if values["SCEZ_PERSPECTIVE_CAMERA"] != want {
+			t.Fatal(values)
+		}
+	}
+	values := envMap(castEnv(CastParams{VdUsb: VdModeParams{Size: "1080x1920", Perspective: true}, VdWifi: VdModeParams{Size: "720x1280"}}, "mode-test"))
+	if values["SCEZ_PERSPECTIVE_CAMERA_USB"] != "1" || values["SCEZ_PERSPECTIVE_CAMERA_WIFI"] != "0" {
+		t.Fatal(values)
+	}
+}
+
+func TestCastEnvPerspectiveInputFPS(t *testing.T) {
+	values := envMap(castEnv(CastParams{PerspectiveInputFPS: 0.5,
+		VdUsb:  VdModeParams{Size: "1080x1920", PerspectiveInputFPS: 10},
+		VdWifi: VdModeParams{Size: "1080x1920", PerspectiveInputFPS: 6}}, "fps-test"))
+	if values["SCEZ_PERSPECTIVE_INPUT_FPS"] != "0.5" || values["SCEZ_PERSPECTIVE_INPUT_FPS_USB"] != "10" || values["SCEZ_PERSPECTIVE_INPUT_FPS_WIFI"] != "6" {
+		t.Fatal(values)
+	}
+	for _, fps := range []float64{0, -1, 24, 30, 60, 120} {
+		values := envMap(castEnv(CastParams{PerspectiveInputFPS: fps,
+			VdUsb:  VdModeParams{Size: "1080x1920", PerspectiveInputFPS: 1},
+			VdWifi: VdModeParams{Size: "1080x1920"}}, "default-test"))
+		if values["SCEZ_PERSPECTIVE_INPUT_FPS"] != "6" || values["SCEZ_PERSPECTIVE_INPUT_FPS_USB"] != "1" || values["SCEZ_PERSPECTIVE_INPUT_FPS_WIFI"] != "6" {
+			t.Fatal(values)
+		}
+	}
+}
+
+func TestCastEnvPerspectiveColorKey(t *testing.T) {
+	values := envMap(castEnv(CastParams{
+		PerspectiveCamera:   true,
+		PerspectiveColorKey: true,
+		VdUsb:               VdModeParams{Size: "1080x1920", Perspective: true, PerspectiveColorKey: true},
+		VdWifi:              VdModeParams{Size: "1080x1920", PerspectiveColorKey: true},
+	}, "color-key-test"))
+	if values["SCEZ_PERSPECTIVE_COLOR_KEY"] != "1" ||
+		values["SCEZ_PERSPECTIVE_COLOR_KEY_USB"] != "1" ||
+		values["SCEZ_PERSPECTIVE_COLOR_KEY_WIFI"] != "0" {
+		t.Fatal(values)
+	}
+	values = envMap(castEnv(CastParams{PerspectiveCamera: true}, "native-alpha-test"))
+	if values["SCEZ_PERSPECTIVE_COLOR_KEY"] != "0" {
+		t.Fatal(values)
+	}
+}
+
 func TestCastEnvFullSerialPinIndependentOfUSB(t *testing.T) {
 	values := envMap(castEnv(CastParams{ExpectedSerial: "PHONE_A", Addr: "192.0.2.10:5555"}, "identity-test"))
 	if values["SCEZ_EXPECT_SERIAL"] != "PHONE_A" || values["SCEZ_ADDR"] != "192.0.2.10:5555" {
@@ -51,6 +103,19 @@ func TestCastEnvKeepDeviceAwake(t *testing.T) {
 	}
 	if _, ok := envMap(castEnv(CastParams{}, "legacy-test"))["SCEZ_KEEP_ACTIVE"]; ok {
 		t.Fatal("legacy callers must not acquire a sleep policy")
+	}
+}
+
+func TestCastEnvAutoBlackout(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		values := envMap(castEnv(CastParams{AutoBlackoutMainCast: enabled}, "auto-blackout-test"))
+		want := "0"
+		if enabled {
+			want = "1"
+		}
+		if got := values["SCEZ_AUTO_BLACKOUT_MAIN_CAST"]; got != want {
+			t.Fatalf("automatic blackout setting: got %q, want %q", got, want)
+		}
 	}
 }
 
@@ -204,7 +269,7 @@ func TestCastEnvVirtualDisplay(t *testing.T) {
 		"SCEZ_VD_FLEX":   "1",
 		"SCEZ_VD_IME":    "local",
 		"SCEZ_START_APP": "+com.android.browser",
-		"SCEZ_WIN_TITLE": "浏览器",
+		"SCEZ_WIN_TITLE": `"浏览器"`,
 	}
 	for k, w := range want {
 		if got := env[k]; got != w {
@@ -245,9 +310,12 @@ func TestPhoneLayoutAndVideoResolutionAreIndependentForEachTransport(t *testing.
 			t.Fatalf("%s = %q want %q", k, env[k], value)
 		}
 	}
-	env = envMap(castEnv(CastParams{VdSize: "864x1920", VdUsb: VdModeParams{Size: "1152x2560", MatchPhone: true}, VdWifi: VdModeParams{Size: "864x1920"}}, "tag-mixed"))
-	if env["SCEZ_VD_MATCH_PHONE_WIFI"] != "0" || env["SCEZ_VD_MATCH_PHONE"] != "0" {
-		t.Fatal("explicit other-transport configuration inherited phone layout")
+	env = envMap(castEnv(CastParams{VdSize: "1152x2560", VdFlex: true, VdFollowMainOrientation: true,
+		VdUsb:  VdModeParams{Size: "1152x2560", Flex: true, FollowMainOrientation: true},
+		VdWifi: VdModeParams{Size: "1920x1080"}}, "tag-mixed"))
+	if env["SCEZ_VD_FLEX_WIFI"] != "0" || env["SCEZ_VD_FOLLOW_MAIN_ORIENTATION_WIFI"] != "0" ||
+		env["SCEZ_VD_FLEX_USB"] != "1" || env["SCEZ_VD_FOLLOW_MAIN_ORIENTATION_USB"] != "1" {
+		t.Fatal("transport profiles did not keep their own Flex and orientation")
 	}
 }
 
@@ -299,5 +367,14 @@ func TestAudioModeInjection(t *testing.T) {
 	}
 	if env2["SCEZ_WATCH_TAG"] != "tag-b" {
 		t.Fatalf("WATCH_TAG 应恒注入（env=%v）", env2)
+	}
+}
+
+func TestVdFollowMainOrientationTransportSelection(t *testing.T) {
+	e := envMap(castEnv(CastParams{VdSize: "1920x864", VdFollowMainOrientation: true, VdUsb: VdModeParams{Size: "1920x864", FollowMainOrientation: true}, VdWifi: VdModeParams{Size: "1920x1080"}}, "orientation"))
+	for k, v := range map[string]string{"SCEZ_VD_FOLLOW_MAIN_ORIENTATION": "1", "SCEZ_VD_FOLLOW_MAIN_ORIENTATION_USB": "1", "SCEZ_VD_FOLLOW_MAIN_ORIENTATION_WIFI": "0"} {
+		if e[k] != v {
+			t.Fatalf("%s=%s want %s", k, e[k], v)
+		}
 	}
 }

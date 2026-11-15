@@ -5,6 +5,8 @@ import com.genymobile.scrcpy.util.Ln;
 
 import android.os.SystemClock;
 
+import java.util.function.LongSupplier;
+
 public final class DisplayResizeDebouncer {
 
     private static final long DEBOUNCE_DELAY_MS = 300;
@@ -14,24 +16,48 @@ public final class DisplayResizeDebouncer {
     }
 
     private final Callback callback;
+    private final long delayMs;
+    private final boolean leading;
+    private final LongSupplier clock;
     private Size request;
     private long deadline;
+    private long nextAllowed;
+    private boolean stopped;
 
     private Thread thread;
 
     public DisplayResizeDebouncer(Callback callback) {
-        this.callback = callback;
+        this(callback, DEBOUNCE_DELAY_MS, false);
     }
 
-    public void start() {
-        assert thread == null;
+    public DisplayResizeDebouncer(Callback callback, long delayMs, boolean leading) {
+        this(callback, delayMs, leading, SystemClock::uptimeMillis);
+    }
+
+    DisplayResizeDebouncer(Callback callback, long delayMs, boolean leading, LongSupplier clock) {
+        if (delayMs <= 0 || delayMs > 10000) {
+            throw new IllegalArgumentException("Invalid resize interval");
+        }
+        this.callback = callback;
+        this.delayMs = delayMs;
+        this.leading = leading;
+        this.clock = clock;
+    }
+
+    public synchronized void start() {
+        if (thread != null || stopped) {
+            throw new IllegalStateException("Resize worker already started or stopped");
+        }
         thread = new Thread(this::debounce);
         thread.setName("debouncer");
         thread.setDaemon(true);
         thread.start();
     }
 
-    public void stop() {
+    public synchronized void stop() {
+        stopped = true;
+        request = null;
+        notifyAll();
         if (thread != null) {
             thread.interrupt();
             thread = null;
@@ -44,7 +70,10 @@ public final class DisplayResizeDebouncer {
                 Size newSize;
                 synchronized (this) {
                     while (true) {
-                        long now = SystemClock.uptimeMillis();
+                        if (stopped) {
+                            return;
+                        }
+                        long now = clock.getAsLong();
                         if (request != null && now >= deadline) {
                             break;
                         }
@@ -58,6 +87,9 @@ public final class DisplayResizeDebouncer {
                     assert request != null : "An active deadline implies request != null";
                     newSize = request;
                     request = null;
+                    // The worker is serial. Slow callbacks naturally delay the
+                    // next update; requests arriving meanwhile keep only the latest.
+                    nextAllowed = clock.getAsLong() + delayMs;
                 }
                 callback.trigger(newSize);
             }
@@ -70,8 +102,12 @@ public final class DisplayResizeDebouncer {
 
     public synchronized void requestResize(Size size) {
         assert size != null;
+        if (stopped) {
+            return;
+        }
         if (request == null) {
-            deadline = SystemClock.uptimeMillis() + DEBOUNCE_DELAY_MS;
+            long now = clock.getAsLong();
+            deadline = leading ? Math.max(now, nextAllowed) : now + delayMs;
         }
         request = size;
         notify();
@@ -80,6 +116,7 @@ public final class DisplayResizeDebouncer {
     public synchronized void cancelResize() {
         request = null;
         deadline = 0;
+        nextAllowed = 0;
         notify();
     }
 }

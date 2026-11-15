@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"scrcpy-ez/gui/internal/adb"
 	"scrcpy-ez/gui/internal/deviceevents"
@@ -84,6 +85,9 @@ func TestUnplugDuringLearningCancelsUSBWithoutRestart(t *testing.T) {
 		t.Fatal("learning was not started")
 	}
 	wifi := adb.Device{Serial: "192.0.2.20:5555", State: "device", ConnType: "wifi", Identity: usb.Identity}
+	// The ready wireless transport has confirmed ownership. Identity alone is a
+	// display hint and cannot add an unverified IP to a permanent archive.
+	wifi.StableSerial = usb.Serial
 	current := snapshotFor(a, deviceevents.Transport{Serial: wifi.Serial, State: "device", Kind: "wifi", ID: "11"})
 	a.applyDeviceSnapshot(context.Background(), []adb.Device{wifi}, &current, "track")
 	devices := a.Snapshot().Devices
@@ -101,6 +105,7 @@ func TestIssuedAdbdRestartPreservesUSBProtection(t *testing.T) {
 	state := a.usbLearning[usb.Serial]
 	deadline, _ := state.ctx.Deadline()
 	a.teachMu.Unlock()
+	waitFor(t, 2*time.Second, state.restartIssued.Load, "learning must issue tcpip before the simulated restart")
 	if !state.restartIssued.Load() {
 		t.Fatal("test must issue tcpip before the restart gap")
 	}

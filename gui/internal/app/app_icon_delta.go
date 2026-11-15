@@ -31,12 +31,13 @@ type appCatalog struct {
 	Config    string            `json:"config"`
 	Resources []json.RawMessage `json:"resources"`
 	Items     []struct {
-		Pkg     string `json:"pkg"`
-		Name    string `json:"name"`
-		Sys     bool   `json:"sys"`
-		Version int64  `json:"version"`
-		Updated int64  `json:"updated"`
-		Icon    int    `json:"icon"`
+		Pkg         string `json:"pkg"`
+		Name        string `json:"name"`
+		Sys         bool   `json:"sys"`
+		Version     int64  `json:"version"`
+		VersionName string `json:"versionName"`
+		Updated     int64  `json:"updated"`
+		Icon        int    `json:"icon"`
 	} `json:"items"`
 	Failed []string `json:"failed"`
 }
@@ -80,7 +81,7 @@ func parseAppCatalogDetails(out string) (string, []AppListItem, []string, error)
 		seen[item.Pkg] = true
 		// Include label: some launchable names/icons depend on configuration or package data.
 		stamp := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s|%d|%d|%d", config, item.Pkg, item.Name, item.Version, item.Updated, item.Icon)))
-		items = append(items, AppListItem{Pkg: item.Pkg, Name: item.Name, Sys: item.Sys, IconStamp: fmt.Sprintf("%x", stamp)})
+		items = append(items, AppListItem{Pkg: item.Pkg, Name: item.Name, Sys: item.Sys, IconStamp: fmt.Sprintf("%x", stamp), VersionName: item.VersionName, VersionCode: item.Version, LastUpdateTime: item.Updated})
 	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Sys != items[j].Sys {
@@ -370,7 +371,7 @@ func sameAppMetadata(old, current []AppListItem) bool {
 		byPackage[item.Pkg] = item
 	}
 	for _, item := range current {
-		if prior, ok := byPackage[item.Pkg]; !ok || prior != item {
+		if prior, ok := byPackage[item.Pkg]; !ok || !sameAppAlphaMetadata(prior, item) {
 			return false
 		}
 		delete(byPackage, item.Pkg)

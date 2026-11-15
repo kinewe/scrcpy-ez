@@ -197,6 +197,10 @@ func TestPairConnectPairPortMissing(t *testing.T) {
 // 连接端口缺失：手动场景（无卡）只给 ip+配对端口 → conn-port 分类码。
 func TestPairConnectConnPortMissing(t *testing.T) {
 	a, _ := newWirelessApp()
+	a.pairOps.pairFn = func(context.Context, string, string, string) (string, error) {
+		return "Successfully paired to 192.0.2.9:37033", nil
+	}
+	a.pairOps.mdnsScanFn = func(context.Context, time.Duration) ([]discovery.MdnsService, error) { return nil, nil }
 	a.pairOps.mdnsScanFn = func(ctx context.Context, maxWait time.Duration) ([]discovery.MdnsService, error) { return nil, nil }
 	if err := a.PairConnect("", "192.0.2.9", "37033", "", "123456"); err != nil {
 		t.Fatal(err)

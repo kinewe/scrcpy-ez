@@ -1,9 +1,7 @@
 package com.genymobile.scrcpy.device;
 
-import com.genymobile.scrcpy.display.DisplayInfo;
 import com.genymobile.scrcpy.util.Ln;
 import com.genymobile.scrcpy.video.VirtualDisplayTaskRestorer;
-import com.genymobile.scrcpy.wrappers.ServiceManager;
 
 import android.content.ComponentName;
 import android.os.Build;
@@ -20,7 +18,7 @@ public final class AppTaskLauncher {
 
     public enum Result {
         REUSED("reused"), STARTED("started"), REUSE_FAILED("reuse-failed"), LAUNCH_FAILED("launch-failed"),
-        LAYOUT_INCOMPATIBLE("layout-incompatible"), IN_USE("in-use");
+        IN_USE("in-use");
 
         private final String code;
         Result(String code) { this.code = code; }
@@ -85,15 +83,14 @@ public final class AppTaskLauncher {
         long now();
         void pause() throws InterruptedException;
         default void rejected(String reason) { }
-        default boolean layoutCompatible(Root root, int display) throws Exception { return true; }
     }
 
-    public static Result start(String pkg, int display, boolean flex) {
+    public static Result start(String pkg, int display) {
         // Token identity is required to recheck ownership safely. Older systems
         // can still use the explicitly requested fresh-start path.
         if (Build.VERSION.SDK_INT < 31 || display <= 0) { return Result.REUSE_FAILED; }
         try {
-            return start(pkg, display, new AndroidTasks(pkg, display, flex));
+            return start(pkg, display, new AndroidTasks(pkg, display));
         } catch (Exception ignored) {
             Ln.i("SCRCPY_EZ_APP_REUSE=task-query-unavailable");
             return Result.REUSE_FAILED;
@@ -156,10 +153,7 @@ public final class AppTaskLauncher {
             tasks.rejected("app-in-use");
             return Result.IN_USE;
         }
-        if (!tasks.layoutCompatible(current, display)) {
-            tasks.rejected("layout-change");
-            return Result.LAYOUT_INCOMPATIBLE;
-        }
+        // Android reconfigures the task for its destination display.
         try {
             tasks.move(current, display);
             long until = tasks.now() + 1500;
@@ -192,27 +186,16 @@ public final class AppTaskLauncher {
         return null;
     }
 
-    static boolean compatibleLayout(String pkg, boolean flex, DisplayInfo source, DisplayInfo target) {
-        if (!"com.tencent.mm".equals(pkg)) { return true; }
-        // WeChat's retained process does not reliably refresh display metrics.
-        // A resize-capable window can change them again after startup.
-        return !flex && source != null && target != null && source.getDpi() > 0
-                && source.getDpi() == target.getDpi() && source.getRotation() == target.getRotation()
-                && source.getSize().equals(target.getSize());
-    }
-
     private static final class AndroidTasks implements Tasks {
         private final String pkg;
         private final int display;
-        private final boolean flex;
         private final Object service;
         private final Method list;
         private final Method move;
 
-        AndroidTasks(String pkg, int display, boolean flex) throws Exception {
+        AndroidTasks(String pkg, int display) throws Exception {
             this.pkg = pkg;
             this.display = display;
-            this.flex = flex;
             Class<?> type = Class.forName("android.app.ActivityTaskManager");
             Method getter = type.getDeclaredMethod("getService");
             getter.setAccessible(true);
@@ -252,10 +235,5 @@ public final class AppTaskLauncher {
         @Override public long now() { return SystemClock.uptimeMillis(); }
         @Override public void pause() throws InterruptedException { Thread.sleep(50); }
         @Override public void rejected(String reason) { Ln.i("SCRCPY_EZ_APP_REUSE=" + reason); }
-        @Override public boolean layoutCompatible(Root root, int target) {
-            if (!"com.tencent.mm".equals(pkg)) { return true; }
-            return compatibleLayout(pkg, flex, ServiceManager.getDisplayManager().getDisplayInfo(root.display),
-                    ServiceManager.getDisplayManager().getDisplayInfo(target));
-        }
     }
 }

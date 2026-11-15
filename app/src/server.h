@@ -14,6 +14,8 @@
 #include "util/tick.h"
 
 #define SC_DEVICE_NAME_FIELD_LENGTH 64
+#define SC_SERVER_FILENAME "scrcpy-server"
+#define SC_DEVICE_SERVER_PATH "/data/local/tmp/scrcpy-server.jar"
 struct sc_server_info {
     char device_name[SC_DEVICE_NAME_FIELD_LENGTH];
 };
@@ -63,6 +65,7 @@ struct sc_server_params {
     bool force_adb_forward;
     bool power_off_on_close;
     bool clipboard_autosync;
+    unsigned clipboard_image_limit;
     bool downsize_on_error;
     bool tcpip;
     const char *tcpip_dst;
@@ -73,6 +76,8 @@ struct sc_server_params {
     bool kill_adb_on_close;
     bool camera_high_speed;
     bool camera_torch;
+    bool perspective_camera;
+    const char *perspective_package;
     bool vd_destroy_content;
     bool vd_system_decorations;
     bool keep_active;
@@ -104,6 +109,7 @@ struct sc_server {
     sc_socket video_socket;
     sc_socket audio_socket;
     sc_socket control_socket;
+    sc_socket perspective_socket;
 
     const struct sc_server_callbacks *cbs;
     void *cbs_userdata;

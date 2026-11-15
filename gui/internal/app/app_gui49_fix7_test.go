@@ -10,14 +10,15 @@ import (
 
 // --- gui49-fix7：显示提交串行化 + 诊断日志 ---
 
-// track 线程与校准轮并发进入 applyTrackUpdateCtx 时必须串行：
-// A 阻塞在学习步骤内时，B 不得完成提交（不能出现「先有线、遮罩后到」乱序帧）。
-func TestGui49Fix7ApplyTrackUpdateSerialized(t *testing.T) {
+// Device I/O must not occupy the serialized topology commit. A newer offline
+// event is allowed to commit while the old USB query is still blocked.
+func TestGui49Fix7SlowLearningDoesNotBlockNewTopology(t *testing.T) {
 	a, _ := newWirelessApp()
 	teachfix3SeedK80(a)
 
 	started := make(chan struct{})
 	release := make(chan struct{})
+	t.Cleanup(a.Close)
 	a.teachOps.getpropFn = func(ctx context.Context, serial, prop string) (string, error) {
 		close(started)
 		<-release
@@ -47,11 +48,12 @@ func TestGui49Fix7ApplyTrackUpdateSerialized(t *testing.T) {
 		a.applyTrackUpdate([]adb.Device{teachfix3OfflineUSB()}) // 校准轮批次
 	}()
 
-	// B 必须等待 A 完成（串行）；A 仍阻塞，B 不得完成。
+	// Learning runs outside the topology lock; the offline batch must proceed.
 	select {
 	case <-doneB:
-		t.Fatal("并发批次未串行化：B 在 A 阻塞期间完成")
-	case <-time.After(80 * time.Millisecond):
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("slow USB query held the topology commit")
 	}
 
 	close(release)

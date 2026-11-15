@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"scrcpy-ez/gui/internal/adb"
@@ -193,13 +194,18 @@ func TestGui30TeachTcpipGetpropErrorOncePerCycle(t *testing.T) {
 // 已学设备不受其它设备拔插影响。
 func TestGui30TeachTcpipMultiDevice(t *testing.T) {
 	a, _ := newTestApp()
+	var mu sync.Mutex
 	got := map[string]int{} // serial -> getprop 次数
 	taught := map[string]int{}
 	a.teachOps.getpropFn = func(ctx context.Context, serial, prop string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
 		got[serial]++
 		return "", nil
 	}
 	a.teachOps.tcpipFn = func(ctx context.Context, serial, port string) error {
+		mu.Lock()
+		defer mu.Unlock()
 		taught[serial]++
 		return nil
 	}

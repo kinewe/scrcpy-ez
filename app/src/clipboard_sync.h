@@ -30,6 +30,7 @@ bool sc_clipboard_sync_receive_image(const char *mime, const uint8_t *data,
                                      size_t size, uint64_t revision,
                                      uint32_t expected_sequence);
 // Preserve the original compressed image when forwarding a device image.
-bool sc_clipboard_sync_get_image(uint8_t **data, size_t *size, char **mime);
+bool sc_clipboard_sync_get_image(uint8_t **data, size_t *size, char **mime,
+                                 size_t limit, bool *oversized);
 #endif
 #endif

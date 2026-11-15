@@ -25,9 +25,11 @@ type Settings struct {
 	ShowParamOverlay bool `json:"showParamOverlay"`
 	CloseToTray      bool `json:"closeToTray"`
 	// KeepDeviceAwake prevents idle sleep for future main cast sessions only.
-	KeepDeviceAwake      bool `json:"keepDeviceAwake"`
-	VideoSmoothing       bool `json:"videoSmoothing"`
-	VideoSmoothingFrames int  `json:"videoSmoothingFrames"`
+	KeepDeviceAwake          bool `json:"keepDeviceAwake"`
+	AutoBlackoutMainCast     bool `json:"autoBlackoutMainCast"`
+	VideoSmoothing           bool `json:"videoSmoothing"`
+	VideoSmoothingFrames     int  `json:"videoSmoothingFrames"`
+	ForcePerspectiveColorKey bool `json:"forcePerspectiveColorKey,omitempty"`
 	// Xiaomi always disables virtual-display decorations. This compatibility
 	// setting only affects other/unknown manufacturers and future app sessions.
 	OtherAppWinSystemDecorations bool                            `json:"otherAppWinSystemDecorations"`
@@ -40,7 +42,7 @@ type Settings struct {
 
 // DefaultSettings 返回出厂默认：参数控件显示（现状不变）、关闭窗口完整退出（现状不变）。
 func DefaultSettings() Settings {
-	return Settings{ShowParamOverlay: true, CloseToTray: false, KeepDeviceAwake: true, VideoSmoothingFrames: 2, OtherAppWinSystemDecorations: true, NotificationDefault: true, NotificationPreview: true, NotificationCopyMinutes: 1440}
+	return Settings{ShowParamOverlay: true, CloseToTray: false, KeepDeviceAwake: true, AutoBlackoutMainCast: true, VideoSmoothingFrames: 2, OtherAppWinSystemDecorations: true, NotificationDefault: true, NotificationPreview: true, NotificationCopyMinutes: 1440}
 }
 
 // settingsFile 是 settings.json 的落盘形状：指针字段区分"键缺失"（用默认值）
@@ -49,8 +51,10 @@ type settingsFile struct {
 	ShowParamOverlay             *bool                           `json:"showParamOverlay"`
 	CloseToTray                  *bool                           `json:"closeToTray"`
 	KeepDeviceAwake              *bool                           `json:"keepDeviceAwake"`
+	AutoBlackoutMainCast         *bool                           `json:"autoBlackoutMainCast"`
 	VideoSmoothing               *bool                           `json:"videoSmoothing"`
 	VideoSmoothingFrames         *int                            `json:"videoSmoothingFrames"`
+	ForcePerspectiveColorKey     bool                            `json:"forcePerspectiveColorKey"`
 	OtherAppWinSystemDecorations *bool                           `json:"otherAppWinSystemDecorations"`
 	NotificationDefault          *bool                           `json:"notificationDefault"`
 	NotificationPreview          *bool                           `json:"notificationPreview"`
@@ -104,12 +108,16 @@ func (s *SettingsStore) Load() error {
 	if f.KeepDeviceAwake != nil {
 		s.data.KeepDeviceAwake = *f.KeepDeviceAwake
 	}
+	if f.AutoBlackoutMainCast != nil {
+		s.data.AutoBlackoutMainCast = *f.AutoBlackoutMainCast
+	}
 	if f.VideoSmoothing != nil {
 		s.data.VideoSmoothing = *f.VideoSmoothing
 	}
 	if f.VideoSmoothingFrames != nil && *f.VideoSmoothingFrames == 1 {
 		s.data.VideoSmoothingFrames = 1
 	}
+	s.data.ForcePerspectiveColorKey = f.ForcePerspectiveColorKey
 	if f.OtherAppWinSystemDecorations != nil {
 		s.data.OtherAppWinSystemDecorations = *f.OtherAppWinSystemDecorations
 	}
@@ -399,6 +407,18 @@ func (s *SettingsStore) SetVideoSmoothing(enabled bool) error {
 	return nil
 }
 
+func (s *SettingsStore) SetForcePerspectiveColorKey(enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.data.ForcePerspectiveColorKey
+	s.data.ForcePerspectiveColorKey = enabled
+	if err := s.persistLocked(); err != nil {
+		s.data.ForcePerspectiveColorKey = previous
+		return err
+	}
+	return nil
+}
+
 func (s *SettingsStore) SetVideoSmoothingFrames(frames int) error {
 	if frames != 1 && frames != 2 {
 		return errors.New("平滑缓冲仅支持 1 帧或 2 帧")
@@ -409,6 +429,18 @@ func (s *SettingsStore) SetVideoSmoothingFrames(frames int) error {
 	s.data.VideoSmoothingFrames = frames
 	if err := s.persistLocked(); err != nil {
 		s.data.VideoSmoothingFrames = previous
+		return err
+	}
+	return nil
+}
+
+func (s *SettingsStore) SetAutoBlackoutMainCast(enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.data.AutoBlackoutMainCast
+	s.data.AutoBlackoutMainCast = enabled
+	if err := s.persistLocked(); err != nil {
+		s.data.AutoBlackoutMainCast = previous
 		return err
 	}
 	return nil

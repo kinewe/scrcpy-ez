@@ -30,6 +30,18 @@ func waitAuth(t *testing.T, f *fixture) {
 	}
 	t.Fatal("authorization missing: " + f.log("adb.log"))
 }
+
+func waitUploadDenials(t *testing.T, f *fixture, count int) {
+	t.Helper()
+	until := time.Now().Add(8 * time.Second)
+	for time.Now().Before(until) {
+		if strings.Count(f.log("adb.log"), "SERVER_UPLOAD_DENIED\n") >= count {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("upload failure phase not reached: " + f.log("adb.log"))
+}
 func TestNormalWorkerDoesNotProbeEvenWhenRepairEnabled(t *testing.T) {
 	h := deviceevents.NewHub()
 	publish(h, transport("USB_A", "usb", "device"))
@@ -80,6 +92,9 @@ func TestUnconsentedPermissionFailurePausesExistingAlternateRoute(t *testing.T) 
 	h := deviceevents.NewHub()
 	publish(h, transport("USB_A", "usb", "device"), transport("192.0.2.1:5555", "wifi", "device"))
 	f := newFixture(t, h, repairEnv(t, false)...)
+	// Process startup/property reads can take longer than the observation
+	// window on a busy Windows host. First reach the failure being tested.
+	waitUploadDenials(t, f, 1)
 	f.assertStable(0, 1700*time.Millisecond)
 	if strings.Count(f.log("adb.log"), "SERVER_UPLOAD_DENIED\n") != 1 {
 		t.Fatal("failure switched to existing alternate route: " + f.log("adb.log"))
@@ -141,6 +156,7 @@ func TestFailedRealUploadAfterProbeDoesNotLoop(t *testing.T) {
 	publish(h, transport("USB_A", "usb", "device"))
 	f := newFixture(t, h, append(repairEnv(t, true), "SCEZ_TEST_UPLOAD_ALWAYS_DENIED=1")...)
 	waitAuth(t, f)
+	waitUploadDenials(t, f, 2)
 	f.assertStable(0, 1500*time.Millisecond)
 	if strings.Count(f.log("adb.log"), "ROOT_AUTH\n") != 1 || strings.Count(f.log("adb.log"), "SERVER_UPLOAD_DENIED\n") != 2 {
 		t.Fatal(f.log("adb.log"))

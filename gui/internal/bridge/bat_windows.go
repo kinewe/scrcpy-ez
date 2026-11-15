@@ -36,6 +36,7 @@ type BatRunner struct {
 
 	// Unique event namespace; Stop never matches clients by serial or model.
 	watchTag      string
+	perspective   bool
 	CanKillServer func() bool // API compatibility; server ownership is external.
 	skipNotifWait bool        // API compatibility; native cleanup is always awaited.
 
@@ -100,31 +101,44 @@ func (r *BatRunner) Start(serial string, params CastParams) error {
 		DebugLog("[start] StdinPipe 失败: %v", err)
 		return err
 	}
-	stdout, err := cmd.StdoutPipe()
+	// Own the reader ends so cmd.Wait cannot close them before the last lines
+	// are delivered to the session log.
+	stdout, stdoutWriter, err := os.Pipe()
 	if err != nil {
+		_ = stdin.Close()
 		DebugLog("[start] StdoutPipe 失败: %v", err)
 		return err
 	}
-	stderr, err := cmd.StderrPipe()
+	defer stdoutWriter.Close()
+	stderr, stderrWriter, err := os.Pipe()
 	if err != nil {
+		_ = stdin.Close()
+		_ = stdout.Close()
 		DebugLog("[start] StderrPipe 失败: %v", err)
 		return err
 	}
+	defer stderrWriter.Close()
+	cmd.Stdout, cmd.Stderr = stdoutWriter, stderrWriter
 
 	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = stderr.Close()
 		DebugLog("[start] 启动失败: %v", err)
 		return err
 	}
 	DebugLog("[start] 进程已启动 pid=%d", cmd.Process.Pid)
 	r.cmd = cmd
+	r.perspective = params.PerspectiveCamera || params.VdUsb.Perspective || params.VdWifi.Perspective
 	r.stdin = stdin
 	r.code = -1
 	r.exited = false
 	r.waitDone = make(chan struct{})
 
-	go r.readLoop(stdout, "out")
-	go r.readLoop(stderr, "err")
-	go r.waitLoop()
+	drained := make(chan struct{}, 2)
+	go func() { r.readLoop(stdout, "out"); drained <- struct{}{} }()
+	go func() { r.readLoop(stderr, "err"); drained <- struct{}{} }()
+	go r.waitLoop(stdout, stderr, drained)
 	return nil
 }
 
@@ -148,8 +162,17 @@ func (r *BatRunner) readLoop(rc io.ReadCloser, tag string) {
 	}
 }
 
-func (r *BatRunner) waitLoop() {
+func (r *BatRunner) waitLoop(stdout, stderr io.ReadCloser, drained <-chan struct{}) {
 	err := r.cmd.Wait()
+	// A detached child may inherit a writer. Bound its drain time so a stale
+	// handle cannot keep a closed cast alive.
+	timer := time.AfterFunc(500*time.Millisecond, func() {
+		_ = stdout.Close()
+		_ = stderr.Close()
+	})
+	<-drained
+	<-drained
+	timer.Stop()
 	code := -1
 	if err == nil {
 		code = 0
@@ -175,6 +198,10 @@ func (r *BatRunner) waitLoop() {
 func (r *BatRunner) Stop() error {
 	r.mu.Lock()
 	cmd, tag, done := r.cmd, r.watchTag, r.waitDone
+	timeout := 12 * time.Second
+	if r.perspective {
+		timeout = 32 * time.Second
+	}
 	if cmd == nil || cmd.Process == nil {
 		r.mu.Unlock()
 		return errors.New("bat 未在运行")
@@ -190,7 +217,11 @@ func (r *BatRunner) Stop() error {
 	}
 	r.mu.Unlock()
 	_ = sessioncontrol.SignalStop(tag)
-	timer := time.NewTimer(6 * time.Second)
+	// 优雅停止现在包含"等手机侧透视相机真正注销"（supervisor 在 detached 清理里
+	// 轮询 dumpsys media.camera，最多 6s）。总预算要覆盖：客户端优雅断开 +
+	// 服务端 close-camera/close-device/close-association + 相机设备释放确认；
+	// 超时才落到 taskkill 兜底，避免相机还开着就被整树强杀（会留残留）。
+	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case <-done:

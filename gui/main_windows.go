@@ -23,12 +23,13 @@ import (
 	"scrcpy-ez/gui/internal/app"
 	"scrcpy-ez/gui/internal/bridge"
 	"scrcpy-ez/gui/internal/castsupervisor"
+	"scrcpy-ez/gui/internal/nativealpha"
 	"scrcpy-ez/gui/internal/notifications"
 	"scrcpy-ez/gui/internal/ui"
 	"scrcpy-ez/gui/internal/updater"
 )
 
-// gui54 退出体验优化：「假关」+ 并行清理 + 15s 全局兜底。
+// gui54 退出体验优化：「假关」+ 并行清理 + 全局兜底。
 //
 // 现状问题：托盘「退出」/窗口关闭时窗口一直挂到全部会话串行 Stop 跑完（实测双会话 ~9.4s），
 // 用户盯着等。改为：
@@ -36,9 +37,9 @@ import (
 //  2. 后台并行清理——App.BeginClose() 对每个会话一个 goroutine（会话内 ⓪~⑤ 不变），
 //     总耗时≈最慢的那个会话；
 //  3. 全部停完后按原语义执行一次 kill adb server，然后真正退出进程；
-//  4. 全局兜底：自触发起 15s 未清理完 → 记日志强制退出（进程任何情况下不悬挂）。
+//  4. 全局兜底覆盖投屏监督器的相机退出和强制停止预算，超时记录后退出。
 //     无会话时 BeginClose 立即完成 → 立即退出，不等兜底。
-const exitCleanupWatchdog = 15 * time.Second
+const exitCleanupWatchdog = 36 * time.Second
 
 var (
 	shutdownOnce      sync.Once
@@ -57,7 +58,7 @@ func beginShutdown(a *app.App) {
 	})
 }
 
-// waitShutdownAndExit 由 main goroutine 调用：等待并行清理完成（或 15s 兜底），
+// waitShutdownAndExit 由 main goroutine 调用：等待并行清理完成或超时，
 // 再按既有语义 kill adb server，最后真正退出进程。
 func waitShutdownAndExit(a *app.App) {
 	beginShutdown(a) // 幂等；同时保证 shutdownDone/shutdownStartedAt 已建立（sync.Once 同步）
@@ -140,6 +141,9 @@ var appSearchJS string
 //go:embed web/notification_icons.js
 var notificationIconsJS string
 
+//go:embed web/scan_icon.js
+var scanIconJS string
+
 //go:embed web/appwin_text.js
 var appWinTextJS string
 
@@ -162,7 +166,7 @@ var githubMarkPNG []byte
 var giteeMarkSVG []byte
 
 const (
-	version = "v2.4.1"
+	version = "v2.5.0"
 )
 
 // appDir gui53 产品级修复：返回 exe 所在目录（发行包内 bat 与 GUI 同级解压）。
@@ -223,6 +227,9 @@ func migrateLegacyProfile(newPath string) {
 }
 
 func main() {
+	if nativealpha.RunIfRequested(os.Args[1:]) {
+		return
+	}
 	if notifications.RunIfPassiveRequested(os.Args[1:]) {
 		return
 	}
@@ -238,6 +245,11 @@ func main() {
 	if updater.RecoverIfNeeded(appDir()) {
 		return
 	}
+	if err := ui.CheckWebViewRuntime(appDir()); err != nil {
+		ui.ShowStartupError(err)
+		return
+	}
+	bridge.EnableDebugLogFromEnv()
 	log.SetFlags(log.Ltime)
 	notifications.ConfigureOpenTrace(appDir())
 
@@ -289,6 +301,8 @@ func main() {
 	cfg := app.Config{BatPath: batPath, AdbPath: adbPath, ConfigPath: configPath,
 		CrashDir: crashDir, ProfilesPath: profilesPath, SettingsPath: settingsPath,
 		Version: version}
+	_ = os.Setenv("SCEZ_PROFILES_PATH", profilesPath)
+	_ = os.Setenv("SCEZ_NATIVE_ALPHA_PROFILE_OWNER", "gui")
 	a := app.New(cfg)
 	notificationSource := &notifications.ADBSource{ADB: adbPath, Server: filepath.Join(filepath.Dir(batPath), "scrcpy-server")}
 	notificationManager := notifications.NewManager(context.Background(), notificationSource, notifications.NewWindowsSink, a.NotificationArtwork)
@@ -301,14 +315,14 @@ func main() {
 	a.SetRunnerFactory(func(serial string, onLine func(string), onExit func(int)) (app.Runner, error) {
 		return bridge.NewBatRunner(cfg.BatPath, cfg.AdbPath, onLine, onExit), nil
 	})
-	a.StartDevicePolling(context.Background())
-	// v2.1.77：5037 抢庄——启动检测归属，旧版 adb server 坐庄时夺回（异步不阻塞首屏）。
+	// Install the startup check gate before consumers subscribe to ADB events.
 	a.StartServerOwnershipCheck()
+	a.StartDevicePolling(context.Background())
 
 	// v2.1.18：pinyin_pro（拼音库，全局 pinyinPro）+ app_search（搜索过滤模块）
 	// 在业务脚本前内联（app.js 依赖 SCEZAppSearch）。
 	pageTemplate := strings.NewReplacer("/*__GITHUB_ICON__*/", base64.StdEncoding.EncodeToString(githubMarkPNG), "/*__GITEE_ICON__*/", base64.StdEncoding.EncodeToString(giteeMarkSVG)).Replace(indexHTML)
-	html, err := ui.BuildIndex(pageTemplate, styleCSS, updateUIJS+"\n"+appLaunchUIJS+"\n"+pinyinProJS+"\n"+appSearchJS+"\n"+appIconCacheJS+"\n"+appWinTextJS+"\n"+appWinBarJS+"\n"+sessionMapJS+"\n"+paramStateJS+"\n"+appsettingStateJS+"\n"+dragOrderJS+"\n"+pairUIJS+"\n"+notificationIconsJS+"\n"+appJS)
+	html, err := ui.BuildIndex(pageTemplate, styleCSS, updateUIJS+"\n"+appLaunchUIJS+"\n"+pinyinProJS+"\n"+appSearchJS+"\n"+appIconCacheJS+"\n"+appWinTextJS+"\n"+appWinBarJS+"\n"+scanIconJS+"\n"+sessionMapJS+"\n"+paramStateJS+"\n"+appsettingStateJS+"\n"+dragOrderJS+"\n"+pairUIJS+"\n"+notificationIconsJS+"\n"+appJS)
 	if err != nil {
 		log.Fatalf("界面资源组装失败: %v", err)
 	}

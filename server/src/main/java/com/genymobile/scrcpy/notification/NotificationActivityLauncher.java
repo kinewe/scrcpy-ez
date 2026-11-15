@@ -47,6 +47,9 @@ final class NotificationActivityLauncher {
         if (Build.VERSION.SDK_INT < 26) {
             return false;
         }
+        // The notification listener is a short-lived shell process. Power-save
+        // whitelist work here can make HyperOS tear it down before the action
+        // result is written; the target app window owns its own session lease.
         Tasks tasks = new Tasks();
         List<Integer> moved = new ArrayList<>();
         Map<Integer, Integer> before = new HashMap<>();

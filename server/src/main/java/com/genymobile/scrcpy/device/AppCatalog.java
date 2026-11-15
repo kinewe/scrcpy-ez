@@ -144,6 +144,7 @@ public final class AppCatalog {
                 item.put("name", label);
                 item.put("sys", (info.flags & ApplicationInfo.FLAG_SYSTEM) != 0);
                 item.put("version", Math.max(0, version));
+                item.put("versionName", p.versionName == null ? "" : p.versionName);
                 item.put("updated", Math.max(0, p.lastUpdateTime));
                 item.put("icon", info.icon);
                 items.put(item);

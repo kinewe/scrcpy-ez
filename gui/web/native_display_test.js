@@ -59,7 +59,7 @@ assert.equal(wired.fields.fps.val,144);assert.equal(wired.fields.fps.base,144);
 
 // Exercise the main panel's actual initial state and rendered selected chip.
 Object.assign(scope,{SCEZParamState:require('./param_state.js'),PARAM_NOTES:{},
-  updateParamAudioRow(){},updateParamCodecRows(){}});
+  updateParamAudioRow(){},updateParamCodecRows(){},refreshParamNotes(){}});
 scope.PARAM_FIELDS.bit={label:'码率',unit:'',tiers:[120,80,60,40,15]};
 for (const name of ['ladderTiers','baseValOf','initField','makeParamState','curParam','curField','baselineOf','renderParamRows']) {
   const start=source.indexOf('  function '+name+'(');
@@ -72,7 +72,7 @@ const main=scope.makeParamState('device:A','A','wifi',{
 function node(){return {children:[],className:'',appendChild(n){this.children.push(n);},addEventListener(){},
   querySelector(selector){this.parts=this.parts||{};return this.parts[selector]||(this.parts[selector]=node());}};}
 scope.document={createElement:node};
-const box=node();scope.renderParamRows(main,box,{},()=>{});
+const box=node();scope.renderParamRows(main,box,()=>{});
 const fpsChips=box.children[1].querySelector('.chips').children;
 assert.deepEqual(fpsChips.slice(0,4).map(n=>n.textContent),['144','120','90','60']);
 assert.equal(fpsChips[3].className,'chip sel');

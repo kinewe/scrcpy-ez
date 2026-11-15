@@ -333,6 +333,8 @@ func TestPairErrKind(t *testing.T) {
 		{"Failed: Unable to start pairing client.", "port"},
 		{"Failed to parse address for pairing: bad", "addr"},
 		{"Failed: Successfully paired but server returned unknown response=x", "other"},
+		{"* daemon not running; starting now at tcp:5037\n* daemon started successfully\nSuccessfully paired to 192.0.2.99:37033 [guid=adb-TEST0002-Ab12Cd]", ""},
+		{"diagnostic Successfully paired to 192.0.2.99:37033", "other"},
 	}
 	for _, c := range cases {
 		if got := PairErrKind(c.out); got != c.want {
@@ -426,50 +428,11 @@ func TestStableSerialPreservesFullHardwareSerial(t *testing.T) {
 
 // --- v2.1.77：5037 抢庄（检测判据 + 编排） ---
 
-// ServerHealthy 判据：unknown host service → 坏（≤30.x 旧版坐庄）；
-// 37/31–36/空输出 → 好（保守不动——pair/TLS 不依赖 mDNS 功能）。
-func TestServerHealthy(t *testing.T) {
-	cases := []struct {
-		out  string
-		want bool
-	}{
-		{"mdns daemon version [adb discovery 0.0.0]\r\n", true},      // 37.x
-		{"ERROR: mdns daemon unavailable\r\n", true},                 // 31–36
-		{"ERROR: mdns discovery disabled\r\n", true},                 // ADB_MDNS=0
-		{"error: unknown host service\r\n", false},                   // ≤30.x（实测 stderr）
-		{"adb: error: unknown host service 'mdns:check'\r\n", false}, // 带服务名变体
-		{"", true}, // 空输出（命令没跑起来）保守判好
-	}
-	for _, c := range cases {
-		if got := ServerHealthy(c.out); got != c.want {
-			t.Errorf("ServerHealthy(%q) = %v, want %v", c.out, got, c.want)
-		}
-	}
-}
-
-// ServerIs37 判据（抢庄验证的唯一判据）：只有 37 的 mdns daemon 版本串判真。
-func TestServerIs37(t *testing.T) {
-	cases := []struct {
-		out  string
-		want bool
-	}{
-		{"mdns daemon version [adb discovery 0.0.0]\r\n", true}, // 37.x 实测输出
-		{"ERROR: mdns daemon unavailable\r\n", false},           // 31–36
-		{"error: unknown host service\r\n", false},              // ≤30.x
-		{"", false},
-	}
-	for _, c := range cases {
-		if got := ServerIs37(c.out); got != c.want {
-			t.Errorf("ServerIs37(%q) = %v, want %v", c.out, got, c.want)
-		}
-	}
-}
-
 // takeoverScript 以脚本化输出驱动抢庄三件套 fake（测试内同步调用，无需锁）。
 // outs：check 依次返回的输出；超出长度后重复最后一个（模拟持续状态）。
 type takeoverScript struct {
 	calls []string // 调用序列（"kill" / "start" / "check"）
-	outs  []string
+	outs  []ServerCheck
 }
 
 func (s *takeoverScript) bind(m *Manager) {
@@ -481,10 +444,10 @@ func (s *takeoverScript) bind(m *Manager) {
 		s.calls = append(s.calls, "start")
 		return nil
 	}
-	m.srvCheckFn = func(ctx context.Context) string {
+	m.srvCheckFn = func(ctx context.Context) ServerCheck {
 		s.calls = append(s.calls, "check")
 		if len(s.outs) == 0 {
-			return ""
+			return ServerCheck{}
 		}
 		out := s.outs[0]
 		if len(s.outs) > 1 {
@@ -494,22 +457,22 @@ func (s *takeoverScript) bind(m *Manager) {
 	}
 }
 
-const (
-	takeover37Out    = "mdns daemon version [adb discovery 0.0.0]\r\n"
-	takeoverStaleOut = "error: unknown host service\r\n"
+var (
+	takeoverCompatible = ServerCheck{State: ServerCompatible, Detail: "ADB capabilities available"}
+	takeoverStale      = ServerCheck{State: ServerIncompatible, Detail: "unknown host service"}
 )
 
 // 首发成功：kill → start → check(37) → 成功；恰好一次 kill/start。
 func TestTakeoverServerFirstTry(t *testing.T) {
 	m := New("adb-noop", "")
-	sc := &takeoverScript{outs: []string{takeover37Out}}
+	sc := &takeoverScript{outs: []ServerCheck{takeoverCompatible}}
 	sc.bind(m)
 	out, err := m.TakeoverServer(context.Background())
 	if err != nil {
 		t.Fatalf("首发应成功: %v", err)
 	}
-	if !ServerIs37(out) {
-		t.Fatalf("成功输出应为 37 指纹: %q", out)
+	if out != takeoverCompatible.Detail {
+		t.Fatalf("成功输出应确认服务兼容: %q", out)
 	}
 	if want := "kill,start,check"; strings.Join(sc.calls, ",") != want {
 		t.Fatalf("调用序列 %q, want %q", strings.Join(sc.calls, ","), want)
@@ -519,14 +482,14 @@ func TestTakeoverServerFirstTry(t *testing.T) {
 // 被抢后下一轮夺回：轮1 check=unknown（break 本轮），轮2 成功；每轮各一次 kill。
 func TestTakeoverServerRetryNextRound(t *testing.T) {
 	m := New("adb-noop", "")
-	sc := &takeoverScript{outs: []string{takeoverStaleOut, takeover37Out}}
+	sc := &takeoverScript{outs: []ServerCheck{takeoverStale, takeoverCompatible}}
 	sc.bind(m)
 	out, err := m.TakeoverServer(context.Background())
 	if err != nil {
 		t.Fatalf("第二轮应成功: %v", err)
 	}
-	if !ServerIs37(out) {
-		t.Fatalf("成功输出应为 37 指纹: %q", out)
+	if out != takeoverCompatible.Detail {
+		t.Fatalf("成功输出应确认服务兼容: %q", out)
 	}
 	if want := "kill,start,check,kill,start,check"; strings.Join(sc.calls, ",") != want {
 		t.Fatalf("调用序列 %q, want %q", strings.Join(sc.calls, ","), want)
@@ -539,14 +502,14 @@ func TestTakeoverServerRetryWithinRound(t *testing.T) {
 	takeoverRetryGap = time.Millisecond
 	defer func() { takeoverRetryGap = old }()
 	m := New("adb-noop", "")
-	sc := &takeoverScript{outs: []string{"", takeover37Out}}
+	sc := &takeoverScript{outs: []ServerCheck{{}, takeoverCompatible}}
 	sc.bind(m)
 	out, err := m.TakeoverServer(context.Background())
 	if err != nil {
 		t.Fatalf("轮内重试应成功: %v", err)
 	}
-	if !ServerIs37(out) {
-		t.Fatalf("成功输出应为 37 指纹: %q", out)
+	if out != takeoverCompatible.Detail {
+		t.Fatalf("成功输出应确认服务兼容: %q", out)
 	}
 	if want := "kill,start,check,start,check"; strings.Join(sc.calls, ",") != want {
 		t.Fatalf("调用序列 %q, want %q", strings.Join(sc.calls, ","), want)
@@ -556,7 +519,7 @@ func TestTakeoverServerRetryWithinRound(t *testing.T) {
 // 3 轮全败：一直被旧版抢回（unknown）→ 错误非 nil；kill/check 恰好各 3 次（轮数上限）。
 func TestTakeoverServerAllRoundsFail(t *testing.T) {
 	m := New("adb-noop", "")
-	sc := &takeoverScript{outs: []string{takeoverStaleOut}}
+	sc := &takeoverScript{outs: []ServerCheck{takeoverStale}}
 	sc.bind(m)
 	if _, err := m.TakeoverServer(context.Background()); err == nil {
 		t.Fatal("3 轮全败应返回错误")
@@ -578,7 +541,7 @@ func TestTakeoverServerAllRoundsFail(t *testing.T) {
 // ctx 取消：抢庄循环尊重上下文（立即返回错误，不悬挂）。
 func TestTakeoverServerContextCancel(t *testing.T) {
 	m := New("adb-noop", "")
-	sc := &takeoverScript{outs: []string{takeoverStaleOut}}
+	sc := &takeoverScript{outs: []ServerCheck{takeoverStale}}
 	sc.bind(m)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

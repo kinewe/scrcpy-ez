@@ -16,7 +16,8 @@ class Element {
   }; }
   get nextSibling() { if(!this.parentNode)return null; return this.parentNode.children[this.parentNode.children.indexOf(this)+1] || null; }
   contains(el) { return this===el || this.children.some(c=>c.contains(el)); }
-  set innerHTML(v) { this.children.slice().forEach(c=>this.removeChild(c)); }
+  get innerHTML() { return this._innerHTML || ''; }
+  set innerHTML(v) { this._innerHTML = v; this.children.slice().forEach(c=>this.removeChild(c)); }
   appendChild(el) { return this.insertBefore(el,null); }
   insertBefore(el,before) {
     if(el===before)return el;
@@ -33,6 +34,8 @@ class Element {
   focus() { document.activeElement=this; }
   setSelectionRange(start,end,direction) { this.selectionStart=start;this.selectionEnd=end;this.selectionDirection=direction; }
   addEventListener(name,fn) { this.events[name]=fn; }
+  setAttribute(name,value) { (this.attributes=this.attributes||{})[name]=value; }
+  getAttribute(name) { return (this.attributes||{})[name]; }
   closest(selector) { if(this.classList.contains(selector.slice(1))) return this; return this.parentNode ? this.parentNode.closest(selector) : null; }
   querySelectorAll(selector) { const out=[]; for(const c of this.children) {if(c.classList.contains(selector.slice(1)))out.push(c); out.push(...c.querySelectorAll(selector));} return out; }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
@@ -40,8 +43,8 @@ class Element {
 const nodes={};
 const document={activeElement:null,getElementById: id => nodes[id] || (nodes[id]=new Element('div')), createElement: tag => new Element(tag),createTextNode: txt => Object.assign(new Element('text'),{textContent:txt}),querySelectorAll: s => nodes['device-list'].querySelectorAll(s.split(' ').pop())};
 const scope={document,Date,setTimeout:()=>0,clearTimeout:()=>{},batchMode:false,renameMode:false,batchSel:{},renameDraft:{},batchDeviceKeys:{},lastState:null,appBarLeaving:{},renderedBars:{},deletingKeys:{},devOrder:[],appWins:{},openAppCards:{},fieldSticky:{},settingsState:{notificationDefault:false},notificationSaving:false,appWinNotificationView:false,notificationDraft:null,
-  AppWinBar:require('./appwin_bar'),SessionMap:require('./session_map'),DragOrder:require('./drag_order'),
-  sweepDeletingKeys:()=>{},saveOrderBackend:()=>{},scheduleAppBarRefresh:()=>{},profileKeysFor:()=>[],deviceIdentityOf:()=>'',openDeleteBubble:()=>{},startCast:()=>{},switchView:()=>{},openAppWin:()=>{},activateSession:()=>{},switchToDeviceAppWin:()=>{},stopAllAppWins:()=>{},refreshNow:()=>{},StopCast:()=>Promise.resolve(),toast:()=>{},toggleBatchSelect: (key,st)=>{scope.batchSel[key]=!scope.batchSel[key];scope.renderDevices(st);}};
+  AppWinBar:require('./appwin_bar'),SessionMap:require('./session_map'),DragOrder:require('./drag_order'),SCEZScanIcon:require('./scan_icon'),
+  sweepDeletingKeys:()=>{},saveOrderBackend:()=>{},scheduleAppBarRefresh:()=>{},profileKeysFor:()=>[],deviceIdentityOf:()=>'',openDeleteBubble:()=>{},startCast:()=>{},switchView:()=>{},openAppWin:()=>{},activateSession:()=>{},switchToDeviceAppWin:()=>{},stopAllAppWins:()=>{},refreshNow:()=>{},StopCast:()=>Promise.resolve(),toast:()=>{},beginScanButtonRegistration:()=>{},registerScanButton:()=>{},markPointerHover:()=>{},scanAnimationSync:()=>{},toggleBatchSelect: (key,st)=>{scope.batchSel[key]=!scope.batchSel[key];scope.renderDevices(st);}};
 vm.createContext(scope);
 for(const name of ['devKey','devDisplayName','el','vtSafeName','fmtSub','stickyKey','stickyFill','batchSelectedDevices','syncBatchUI','collectRenameObj','reconcileBatchDeviceKeys','collectRenameCards','commitDeviceCards','notificationPolicyFor','notificationDetailFor','renderDevices']) {
   const start=source.indexOf('  function '+name+'('); assert.ok(start>=0,name);
@@ -52,12 +55,20 @@ for(const name of ['devKey','devDisplayName','el','vtSafeName','fmtSub','stickyK
 }
 const addr='192.0.2.11:5555';
 const pending={serial:addr,identity:'pending:'+addr,identityEpoch:1,state:'device',connType:'wifi',name:'Xiaomi Pad 8 Pro',wirelessIP:addr,wirelessRes:'1920x1280',fps:120,battery:83};
-const phone={serial:'192.0.2.12:5555',identity:'device:PHONE',identityEpoch:2,state:'device',connType:'wifi',name:'Xiaomi Pad 8 Pro',stableSerial:'PHONE',wirelessIP:'192.0.2.12:5555',wirelessRes:'1920x864',fps:60};
+const phone={serial:'192.0.2.12:5555',identity:'device:PHONE',identityEpoch:2,state:'device',connType:'wifi',name:'Xiaomi Pad 8 Pro',stableSerial:'PHONE',wirelessIP:'192.0.2.12:5555',wirelessRes:'1920x864',fps:60,wechatScan:true};
 function render(devices) {scope.lastState={adbOK:true,devices,sessions:[],profiles:[],devOrder:[]};scope.renderDevices(scope.lastState);return nodes['device-list'].children;}
 assert.equal(render([pending,phone]).length,2,'ordinary cards');
 assert.equal(nodes['device-list'].querySelectorAll('.dev-notification-detail').length,0,'normal cards must hide notification details');
-assert.ok(!scope.fmtSub(phone).includes('序列号'));
-assert.ok(scope.fmtSub({serial:'USB_A',state:'device',connType:'usb',res:'3200x2136',fps:120}).includes('USB_A'));
+assert.equal(scope.fmtSub({serial:'USB_A',state:'device',connType:'usb',res:'3200x2136',fps:120}), 'USB_A · 3200x2136','wired subtitle keeps short serial + resolution, drops USB label and FPS');
+assert.equal(scope.fmtSub(phone), '192.0.2.12:5555 · 1920x864','wireless subtitle keeps IP + resolution, drops 无线 label and FPS');
+assert.ok(!scope.fmtSub(phone).includes('无线') && !scope.fmtSub(phone).includes('FPS'),'no connection label or frame rate in subtitle');
+assert.equal(scope.fmtSub(Object.assign({},phone,{wirelessRes:'',identity:'pending:phone'})), '192.0.2.12:5555 · 身份待确认');
+assert.equal(scope.fmtSub({serial:'USB_A',connType:'usb',fps:120}), 'USB_A','wired subtitle without resolution still shows serial');
+scope.stickyFill({serial:'USB_A',identity:'device:SWITCH',state:'device',connType:'usb',res:'3200x2136',battery:83});
+const justSwitched={serial:'192.0.2.13:5555',identity:'device:SWITCH',state:'device',connType:'wifi',res:'',wirelessRes:'',battery:0};
+scope.stickyFill(justSwitched);
+assert.equal(justSwitched.res,'','wireless mode must not inherit a USB casting size');
+assert.equal(justSwitched.battery,83,'physical battery remains available across connection modes');
 scope.batchMode=true;
 let cards=render([pending,phone]);
 assert.equal(cards.length,2,'batch mode must render every card without exceptions');
@@ -134,4 +145,40 @@ const firstAppButton=initialCards[0].children.find(c=>c.tagName==='button' && c.
 assert.ok(firstAppButton && firstAppButton.disabled,'only the initial empty-cache app button is disabled');
 const warmAppButton=initialCards[1].children.find(c=>c.tagName==='button' && c.textContent==='应用');
 assert.ok(warmAppButton && !warmAppButton.disabled,'another device with a cache stays accessible');
-console.log('device_cards: normal/batch rendering, rename focus/selection/draft retention, identity promotion, transport switch, device reorder and reused-IP isolation passed');
+const scanButton=initialCards[1].children.find(c=>c.classList.contains('scan-btn'));
+assert.ok(scanButton,'scan icon button exists');
+assert.ok(!scanButton.textContent,'scan entry uses an icon, not text');
+assert.equal(scanButton.title,'微信扫一扫','scan icon keeps the hover title');
+assert.equal(scanButton.getAttribute('aria-label'),'微信扫一扫','scan icon keeps its accessible name');
+assert.equal(scanButton.dataset.role,'scan','scan button carries the pointer-tracked role');
+assert.ok(scanButton.innerHTML.includes('scan-ico'),'scan button carries the scan-frame icon markup');
+const orderedButtons=initialCards[1].children.filter(c=>c.tagName==='button').map(b=>b.classList.contains('scan-btn')?'扫描图标':b.textContent);
+assert.equal(JSON.stringify(orderedButtons),JSON.stringify(['扫描图标','应用','投屏']),'button order: WeChat scanner left of app, app left of cast');
+// 能力门控：后端 wechatScan=false/缺省（未装微信或版本无扫一扫分发接口）时不显示扫一扫按钮。
+const noScanCard=render([Object.assign({},phone,{serial:'192.0.2.14:5555',wechatScan:false})])[0];
+assert.equal(noScanCard.querySelector('.scan-btn'),null,'no WeChat scan capability -> no scan button');
+const noScanButtons=noScanCard.children.filter(c=>c.tagName==='button').map(b=>b.textContent);
+assert.equal(JSON.stringify(noScanButtons),JSON.stringify(['应用','投屏']),'capability gate keeps app/cast order unchanged');
+const legacyCard=render([Object.assign({},phone,{serial:'192.0.2.15:5555',wechatScan:undefined})])[0];
+assert.equal(legacyCard.querySelector('.scan-btn'),null,'missing capability field also hides the scan button');
+// A reboot can invalidate all archive addresses without another transport
+// frame. Once Snapshot publishes offline, the actual renderer must retire its
+// cast/app buttons and TLS tag, then restore them from fresh evidence.
+const tlsPhone=Object.assign({},phone,{serial:'192.0.2.12:43371',wirelessIP:'192.0.2.12:43371',tls:true});
+let stateCard=render([tlsPhone])[0];
+assert.ok(stateCard.querySelector('.tag-tls'),'active archive TLS shows its tag');
+assert.ok(stateCard.children.find(c=>c.textContent==='投屏' && !c.disabled),'active archive enables casting');
+const offlinePhone=Object.assign({},phone,{serial:'PHONE',state:'offline',connType:'usb',wirelessIP:'',tls:false});
+stateCard=render([offlinePhone])[0];
+assert.equal(stateCard.querySelector('.tag-tls'),null,'offline archive clears TLS tag');
+assert.ok(stateCard.children.find(c=>c.textContent==='离线' && c.disabled),'offline archive disables casting');
+assert.ok(!stateCard.children.find(c=>c.textContent==='应用'),'offline archive hides app entry');
+stateCard=render([Object.assign({},phone,{tls:false})])[0];
+assert.equal(stateCard.querySelector('.tag-tls'),null,'tcpip-only recovery keeps TLS tag off');
+assert.ok(stateCard.children.find(c=>c.textContent==='投屏' && !c.disabled),'tcpip recovery enables casting');
+for(const state of ['device','offline','unauthorized']) {
+  stateCard=render([Object.assign({},offlinePhone,{state,connecting:state==='offline'})])[0];
+  const label=state==='device' ? '投屏' : (state==='offline' ? '连接中…' : '离线');
+  assert.ok(stateCard.children.find(c=>c.textContent===label && !!c.disabled===(state!=='device')),'USB '+state+' controls readiness');
+}
+console.log('device_cards: rendering, rename retention, identity/transport changes, reboot offline, cast buttons and TLS tags passed');

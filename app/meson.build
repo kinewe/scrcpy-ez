@@ -37,6 +37,7 @@ src = [
     'src/recorder.c',
     'src/scrcpy.c',
     'src/screen.c',
+    'src/perspective.c',
     'src/sdl_hints.c',
     'src/server.c',
     'src/texture.c',
@@ -157,7 +158,7 @@ dependencies = [
     dependency('libavutil', version: '>= 58.2', static: static),
     dependency('libswresample', static: static),
     dependency('libswscale', static: static),
-    dependency('sdl3', version: '>= 3.2.0', static: static),
+    dependency('sdl3', version: host_machine.system() == 'windows' ? '>= 3.4.0' : '>= 3.2.0', static: static),
 ]
 
 if v4l2_support
@@ -186,12 +187,22 @@ endif
 
 if host_machine.system() == 'windows'
     dependencies += cc.find_library('mingw32')
+    src += ['src/desktop_capture.c', 'src/local_preview.c', 'src/calibration_mask.c', 'src/native_source.c']
+    src += ['src/key_preview.c', 'src/gpu_matte.c']
+    dependencies += cc.find_library('runtimeobject')
+    dependencies += cc.find_library('d3d11')
+    dependencies += dependency('zlib', static: true)
+    dependencies += dependency('libzstd', static: true)
+    dependencies += cc.find_library('d3dcompiler')
+    dependencies += cc.find_library('dxgi')
+    dependencies += cc.find_library('dwmapi')
     dependencies += cc.find_library('ws2_32')
     dependencies += cc.find_library('imm32')
     dependencies += cc.find_library('advapi32')
     dependencies += cc.find_library('ole32')
     dependencies += cc.find_library('windowscodecs')
     dependencies += cc.find_library('uuid')
+    dependencies += cc.find_library('gdi32')
 endif
 
 check_functions = [
@@ -264,6 +275,12 @@ install_data('data/scrcpy.png',
              install_dir: datadir / 'icons/hicolor/256x256/apps')
 install_data('data/disconnected.png',
              install_dir: datadir / 'icons/hicolor/256x256/apps')
+if host_machine.system() == 'windows'
+    install_data('data/calibration/armor.png', 'data/calibration/coarse.png',
+                 'data/calibration/middle.png', 'data/calibration/inner.png',
+                 'data/calibration/central.png', 'data/calibration/caption.png',
+                 install_dir: get_option('bindir') / 'calibration')
+endif
 install_data('data/zsh-completion/_scrcpy',
              install_dir: datadir / 'zsh/site-functions')
 install_data('data/bash-completion/scrcpy',
@@ -353,6 +370,10 @@ if get_option('buildtype') == 'debug'
             'src/util/strbuf.c',
             'src/util/term.c',
         ]],
+        ['test_resize_preview', ['tests/test_resize_preview.c']],
+        ['test_calibration_mask', ['tests/test_calibration_mask.c']],
+        ['test_perspective_color', ['tests/test_perspective_color.c']],
+        ['test_photo_calibration', ['tests/test_photo_calibration.c']],
         ['test_command_windows', [
           'tests/test_command_windows.c',
           'src/util/command.c',
@@ -392,6 +413,9 @@ if get_option('buildtype') == 'debug'
     ]
 
     if host_machine.system() == 'windows'
+        tests += [['test_gpu_preview_bounds', [
+            'tests/test_gpu_preview_bounds.c', 'src/gpu_matte.c',
+        ]]]
         tests += [['test_process_windows', [
             'tests/test_process_windows.c',
             'src/sys/win/process.c',

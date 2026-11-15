@@ -306,6 +306,7 @@ struct scrcpy_options {
     enum sc_orientation record_orientation;
     enum sc_display_ime_policy display_ime_policy;
     enum sc_render_fit render_fit;
+    bool flex_resize_preview;
     int16_t window_x; // SC_WINDOW_POSITION_UNDEFINED for "auto"
     int16_t window_y; // SC_WINDOW_POSITION_UNDEFINED for "auto"
     uint16_t window_width;
@@ -372,6 +373,8 @@ struct scrcpy_options {
     bool audio_dup;
     const char *new_display; // [<width>x<height>][/<dpi>] parsed by the server
     const char *start_app;
+    bool perspective_camera;
+    uint16_t perspective_input_period;
     bool vd_destroy_content;
     bool vd_system_decorations;
     bool camera_torch;

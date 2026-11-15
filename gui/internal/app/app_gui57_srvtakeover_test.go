@@ -1,16 +1,14 @@
 package app
 
-// v2.1.77：5037 抢庄——启动检测 + 配对流程第二道检测（gui57）。
-// 判据：mdns check 含 "unknown host service" = 不完整（≤29 旧版坐庄）→ 抢庄；
-// 其它任何应答（≥30，含空）→ 零动作。覆盖两条触发链路（GUI 启动钩子 / 进配对
-// 流程）与失败静默、未挂载零动作、异步不阻塞。
-
 import (
 	"context"
 	"errors"
 	"sync"
 	"testing"
 	"time"
+
+	"scrcpy-ez/gui/internal/adb"
+	"scrcpy-ez/gui/internal/deviceevents"
 )
 
 const (
@@ -20,27 +18,32 @@ const (
 
 // srvOwnRec 记录 srvOps fake 的调用与完成信号（并发安全——钩子跑在后台 goroutine）。
 type srvOwnRec struct {
-	mu          sync.Mutex
-	checkN      int
-	takeoverN   int
-	checkOut    string
-	takeoverOut string
-	takeoverErr error
-	checked     chan struct{} // checkFn 首次调用时 close（nil=不通知）
-	tookover    chan struct{} // takeoverFn 首次调用时 close（nil=不通知）
-	onceC       sync.Once
-	onceT       sync.Once
+	mu           sync.Mutex
+	checkN       int
+	takeoverN    int
+	checkOut     string
+	deferForward bool
+	takeoverOut  string
+	takeoverErr  error
+	checked      chan struct{} // checkFn 首次调用时 close（nil=不通知）
+	tookover     chan struct{} // takeoverFn 首次调用时 close（nil=不通知）
+	onceC        sync.Once
+	onceT        sync.Once
 }
 
 func (r *srvOwnRec) inject(a *App) {
-	a.srvOps.checkFn = func(ctx context.Context) string {
+	a.srvOps.checkFn = func(ctx context.Context) adb.ServerCheck {
 		r.mu.Lock()
 		r.checkN++
 		r.mu.Unlock()
 		if r.checked != nil {
 			r.onceC.Do(func() { close(r.checked) })
 		}
-		return r.checkOut
+		state := adb.ServerCompatible
+		if r.checkOut == srvOwnStaleOut {
+			state = adb.ServerIncompatible
+		}
+		return adb.ServerCheck{State: state, Detail: r.checkOut, ForwardDeferred: r.deferForward}
 	}
 	a.srvOps.takeoverFn = func(ctx context.Context) (string, error) {
 		r.mu.Lock()
@@ -64,7 +67,7 @@ func TestGui57EnsureServerOwnerTakeoverOnStale(t *testing.T) {
 	a, _ := newTestApp()
 	rec := &srvOwnRec{checkOut: srvOwnStaleOut, takeoverOut: srvOwn37Out}
 	rec.inject(a)
-	a.ensureServerOwner("启动")
+	a.ensureServerOwner(context.Background(), "启动", false)
 	if c, k := rec.counts(); c != 1 || k != 1 {
 		t.Fatalf("坏环境应检测 1 次 + 抢庄 1 次：check=%d takeover=%d", c, k)
 	}
@@ -76,7 +79,7 @@ func TestGui57EnsureServerOwnerHealthyNoAction(t *testing.T) {
 		a, _ := newTestApp()
 		rec := &srvOwnRec{checkOut: out}
 		rec.inject(a)
-		a.ensureServerOwner("启动")
+		a.ensureServerOwner(context.Background(), "启动", false)
 		if c, k := rec.counts(); c != 1 || k != 0 {
 			t.Fatalf("好环境应零动作：out=%q check=%d takeover=%d", out, c, k)
 		}
@@ -88,7 +91,7 @@ func TestGui57EnsureServerOwnerTakeoverFailureSilent(t *testing.T) {
 	a, _ := newTestApp()
 	rec := &srvOwnRec{checkOut: srvOwnStaleOut, takeoverErr: errors.New("抢庄失败：未能在 5037 上取得 37 坐庄")}
 	rec.inject(a)
-	a.ensureServerOwner("配对")
+	a.ensureServerOwner(context.Background(), "配对", false)
 	if c, k := rec.counts(); c != 1 || k != 1 {
 		t.Fatalf("失败路径应检测 1 次 + 抢庄 1 次：check=%d takeover=%d", c, k)
 	}
@@ -97,7 +100,36 @@ func TestGui57EnsureServerOwnerTakeoverFailureSilent(t *testing.T) {
 // 测试 App 未挂 srvOps（旧世界零值）→ 零动作、不 panic。
 func TestGui57EnsureServerOwnerUnmountedNoAction(t *testing.T) {
 	a, _ := newTestApp()
-	a.ensureServerOwner("启动") // srvOps 零值：checkFn==nil 直接返回
+	a.ensureServerOwner(context.Background(), "启动", false) // srvOps 零值：checkFn==nil 直接返回
+}
+
+func TestADBServerOwnershipCheckOnTrackReconnect(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		output        string
+		wantTakeovers int
+	}{
+		{"compatible server", srvOwn37Out, 0},
+		{"old server", srvOwnStaleOut, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _ := newTestApp()
+			rec := &srvOwnRec{checkOut: tc.output, takeoverOut: srvOwn37Out}
+			rec.inject(a)
+			events := make(chan deviceevents.Snapshot, 7)
+			events <- deviceevents.Snapshot{Epoch: 1, Sequence: 1, Available: true}
+			events <- deviceevents.Snapshot{Epoch: 1, Sequence: 2, Available: true, Transports: []deviceevents.Transport{{Serial: "usb", State: "device"}}}
+			events <- deviceevents.Snapshot{Epoch: 1, Error: "EOF"}
+			events <- deviceevents.Snapshot{Epoch: 2, Error: "connection refused"}
+			events <- deviceevents.Snapshot{Epoch: 3, Sequence: 1, Available: true}
+			events <- deviceevents.Snapshot{Epoch: 3, Sequence: 2, Available: true}
+			close(events)
+			a.watchServerReconnects(context.Background(), events)
+			if checks, takeovers := rec.counts(); checks != 1 || takeovers != tc.wantTakeovers {
+				t.Fatalf("after track reconnect: %d checks and %d takeovers, want 1 and %d", checks, takeovers, tc.wantTakeovers)
+			}
+		})
+	}
 }
 
 // GUI 启动钩子：异步执行（调用方立即返回），坏环境触发抢庄。

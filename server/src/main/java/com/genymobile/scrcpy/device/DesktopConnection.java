@@ -25,13 +25,17 @@ public final class DesktopConnection implements Closeable {
     private final LocalSocket audioSocket;
     private final FileDescriptor audioFd;
 
+    private final LocalSocket perspectiveSocket;
+    public LocalSocket getPerspectiveSocket() { return perspectiveSocket; }
+
     private final LocalSocket controlSocket;
     private final ControlChannel controlChannel;
 
-    private DesktopConnection(LocalSocket videoSocket, LocalSocket audioSocket, LocalSocket controlSocket) throws IOException {
+    private DesktopConnection(LocalSocket videoSocket, LocalSocket audioSocket, LocalSocket controlSocket, LocalSocket perspectiveSocket) throws IOException {
         this.videoSocket = videoSocket;
         this.audioSocket = audioSocket;
         this.controlSocket = controlSocket;
+        this.perspectiveSocket = perspectiveSocket;
 
         videoFd = videoSocket != null ? videoSocket.getFileDescriptor() : null;
         audioFd = audioSocket != null ? audioSocket.getFileDescriptor() : null;
@@ -53,13 +57,14 @@ public final class DesktopConnection implements Closeable {
         return SOCKET_NAME_PREFIX + String.format("_%08x", scid);
     }
 
-    public static DesktopConnection open(int scid, boolean tunnelForward, boolean video, boolean audio, boolean control, boolean sendDummyByte)
+    public static DesktopConnection open(int scid, boolean tunnelForward, boolean video, boolean audio, boolean control, boolean sendDummyByte, boolean perspective)
             throws IOException {
         String socketName = getSocketName(scid);
 
         LocalSocket videoSocket = null;
         LocalSocket audioSocket = null;
         LocalSocket controlSocket = null;
+        LocalSocket perspectiveSocket = null;
         try {
             if (tunnelForward) {
                 try (LocalServerSocket localServerSocket = new LocalServerSocket(socketName)) {
@@ -87,6 +92,7 @@ public final class DesktopConnection implements Closeable {
                             sendDummyByte = false;
                         }
                     }
+                    if (perspective) { perspectiveSocket = localServerSocket.accept(); }
                 }
             } else {
                 if (video) {
@@ -98,8 +104,10 @@ public final class DesktopConnection implements Closeable {
                 if (control) {
                     controlSocket = connect(socketName);
                 }
+                if (perspective) { perspectiveSocket = connect(socketName); }
             }
         } catch (IOException | RuntimeException e) {
+            if (perspectiveSocket != null) { perspectiveSocket.close(); }
             if (videoSocket != null) {
                 videoSocket.close();
             }
@@ -112,7 +120,7 @@ public final class DesktopConnection implements Closeable {
             throw e;
         }
 
-        return new DesktopConnection(videoSocket, audioSocket, controlSocket);
+        return new DesktopConnection(videoSocket, audioSocket, controlSocket, perspectiveSocket);
     }
 
     private LocalSocket getFirstSocket() {
@@ -126,6 +134,7 @@ public final class DesktopConnection implements Closeable {
     }
 
     public void shutdown() throws IOException {
+        if (perspectiveSocket != null) { perspectiveSocket.shutdownInput(); perspectiveSocket.shutdownOutput(); }
         if (videoSocket != null) {
             videoSocket.shutdownInput();
             videoSocket.shutdownOutput();
@@ -141,6 +150,7 @@ public final class DesktopConnection implements Closeable {
     }
 
     public void close() throws IOException {
+        if (perspectiveSocket != null) { perspectiveSocket.close(); }
         if (videoSocket != null) {
             videoSocket.close();
         }

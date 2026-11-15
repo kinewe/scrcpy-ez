@@ -44,6 +44,7 @@ public class NewDisplayCapture extends SurfaceCapture {
 
     private final VirtualDisplayListener vdListener;
     private final NewDisplay newDisplay;
+    private final PerspectiveCamera perspective;
 
     private final DisplayMonitor displayMonitor = new DisplayMonitor();
 
@@ -63,12 +64,17 @@ public class NewDisplayCapture extends SurfaceCapture {
     private final boolean vdSystemDecorations;
     private final boolean flexDisplay;
     private final boolean flexDisplayAutoDpi;
+    private final boolean flexDisplayPreserveUi;
+    private final boolean nativeUiPixelMatch;
     private FlexDisplayDensity density;
+    private FlexUiLayout uiLayout;
+    private Size flexViewport;
 
     private VideoConstraints videoConstraints;
 
     private VirtualDisplay virtualDisplay;
     private Size videoSize;
+    private boolean followMainOrientation;
     private Size displaySize; // the logical size of the display (including rotation)
     private Size physicalSize; // the physical size of the display (without rotation)
 
@@ -78,6 +84,11 @@ public class NewDisplayCapture extends SurfaceCapture {
     private int dpi;
 
     public NewDisplayCapture(VirtualDisplayListener vdListener, Options options) {
+        this(vdListener, options, null);
+    }
+
+    public NewDisplayCapture(VirtualDisplayListener vdListener, Options options, PerspectiveCamera perspective) {
+        this.perspective = perspective;
         this.vdListener = vdListener;
         this.newDisplay = options.getNewDisplay();
         assert newDisplay != null;
@@ -92,6 +103,9 @@ public class NewDisplayCapture extends SurfaceCapture {
         this.vdSystemDecorations = options.getVDSystemDecorations();
         this.flexDisplay = options.getFlexDisplay();
         this.flexDisplayAutoDpi = options.getFlexDisplayAutoDpi();
+        this.flexDisplayPreserveUi = options.getFlexDisplayPreserveUi();
+        this.nativeUiPixelMatch = options.getNativeUiPixelMatch();
+        this.followMainOrientation = options.getVDFollowMainOrientation();
     }
 
     @Override
@@ -100,20 +114,43 @@ public class NewDisplayCapture extends SurfaceCapture {
 
         displaySize = newDisplay.getSize();
         dpi = newDisplay.getDpi();
+        DisplayInfo initialMain = followMainOrientation ? ServiceManager.getDisplayManager().getDisplayInfo(0) : null;
+        if (initialMain != null && displaySize != null) {
+            displaySize = InitialDisplayLayout.orientLike(displaySize, initialMain.getSize());
+            Ln.i("SCRCPY_EZ_VD_INITIAL main=" + initialMain.getSize() + " rotation=" + initialMain.getRotation() + " requested=" + newDisplay.getSize() + " initial=" + displaySize);
+        }
         if (flexDisplay) {
             if (crop != null) {
                 throw new IllegalArgumentException("Flex display does not support cropping");
             }
 
             tracker = new DisplayPropertiesTracker();
-            debouncer = new DisplayResizeDebouncer(this::triggerResize);
+            boolean fastResize = flexDisplayPreserveUi && flexDisplayAutoDpi;
+            debouncer = fastResize ? new DisplayResizeDebouncer(this::triggerResize, 100, true)
+                    : new DisplayResizeDebouncer(this::triggerResize);
+            Ln.i("SCRCPY_EZ_FLEX_TIMING interval_ms=" + (fastResize ? 100 : 300) + " leading=" + fastResize);
             debouncer.start();
 
             // Hardcode default values if not defined
             if (displaySize == null) {
                 displaySize = new Size(1280, 960);
+                if (initialMain != null) displaySize = InitialDisplayLayout.orientLike(displaySize, initialMain.getSize());
             }
-            if (dpi == 0) {
+            if (flexDisplayPreserveUi && flexDisplayAutoDpi) {
+                DisplayInfo main = ServiceManager.getDisplayManager().getDisplayInfo(0);
+                if (main != null && main.getSize().getWidth() > 0 && main.getSize().getHeight() > 0 && main.getDpi() > 0) {
+                    uiLayout = new FlexUiLayout(main.getSize(), main.getDpi());
+                    setFlexViewport(displaySize);
+                    FlexUiLayout.CaptureLayout layout = flexUiLayout(displaySize);
+                    displaySize = layout.getSize();
+                    dpi = layout.getDpi();
+                    Ln.i("SCRCPY_EZ_FLEX_UI action=enabled main=" + main.getSize() + " dpi=" + dpi
+                            + " native_ui_pixel_match=" + nativeUiPixelMatch);
+                } else {
+                    Ln.w("SCRCPY_EZ_FLEX_UI action=unavailable reason=main-display-metrics");
+                }
+            }
+            if (uiLayout == null && dpi == 0) {
                 // Cold GUI cache: derive automatic density from the actual main
                 // display rather than accidentally using 160 DPI as the basis.
                 DisplayInfo info = flexDisplayAutoDpi ? ServiceManager.getDisplayManager().getDisplayInfo(0) : null;
@@ -123,14 +160,14 @@ public class NewDisplayCapture extends SurfaceCapture {
                     dpi = 160;
                 }
             }
-            if (flexDisplayAutoDpi) {
+            if (uiLayout == null && flexDisplayAutoDpi) {
                 density = new FlexDisplayDensity(displaySize, dpi);
             }
         } else if (displaySize == null || dpi == 0) {
             DisplayInfo displayInfo = ServiceManager.getDisplayManager().getDisplayInfo(0);
             if (displayInfo != null) {
                 mainDisplaySize = displayInfo.getSize();
-                if ((displayInfo.getRotation() % 2) != 0) {
+                if (!followMainOrientation && (displayInfo.getRotation() % 2) != 0) {
                     mainDisplaySize = mainDisplaySize.rotate(); // Use the natural device orientation (at rotation 0), not the current one
                 }
                 mainDisplayDpi = displayInfo.getDpi();
@@ -146,13 +183,13 @@ public class NewDisplayCapture extends SurfaceCapture {
     public void prepare() {
         int displayRotation;
         if (virtualDisplay == null) {
-            if (flexDisplay) {
+            if (flexDisplay && uiLayout == null) {
                 assert displaySize != null;
                 displaySize = displaySize.constrain(videoConstraints, false);
                 if (density != null) {
                     dpi = density.forSize(displaySize);
                 }
-            } else {
+            } else if (!flexDisplay) {
                 if (displaySize == null) {
                     assert !flexDisplay;
                     displaySize = mainDisplaySize;
@@ -175,9 +212,9 @@ public class NewDisplayCapture extends SurfaceCapture {
             dpi = displayInfo.getDpi();
             displayRotation = displayInfo.getRotation();
             displaySize = displayInfo.getSize();
-            if (flexDisplay) {
+            if (flexDisplay && uiLayout == null) {
                 displaySize = displaySize.constrain(videoConstraints, false);
-            } else {
+            } else if (!flexDisplay) {
                 // Align the physical display size to avoid unnecessary mismatches with the output size
                 displaySize = displaySize.align(videoConstraints.getAlignment());
             }
@@ -193,7 +230,13 @@ public class NewDisplayCapture extends SurfaceCapture {
         filter.addOrientation(displayRotation, captureOrientationLocked, captureOrientation);
         filter.addAngle(angle);
 
-        if (!flexDisplay) {
+        if (uiLayout != null) {
+            Size requested = getFlexViewport();
+            filter.addResize(FlexUiLayout.videoSize(filter.getOutputSize(), requested, videoConstraints));
+            Ln.i("SCRCPY_EZ_FLEX_UI action=prepare viewport=" + requested + " logical=" + displaySize
+                    + " dpi=" + dpi + " output=" + filter.getOutputSize()
+                    + " native_short_edge=" + uiLayout.preservesNativeShortEdge(displaySize));
+        } else if (!flexDisplay) {
             Size outputSize = filter.getOutputSize();
             Size filteredSize = outputSize.constrain(videoConstraints);
             if (!filteredSize.equals(outputSize)) {
@@ -248,8 +291,9 @@ public class NewDisplayCapture extends SurfaceCapture {
                             | VIRTUAL_DISPLAY_FLAG_DEVICE_DISPLAY_GROUP;
                 }
             }
-            VirtualDisplay vd = ServiceManager.getDisplayManager()
-                    .createNewVirtualDisplay("scrcpy", displaySize.getWidth(), displaySize.getHeight(), dpi, surface, flags);
+            VirtualDisplay vd = perspective != null
+                    ? perspective.createDisplay(displaySize.getWidth(), displaySize.getHeight(), dpi, surface, flags)
+                    : ServiceManager.getDisplayManager().createNewVirtualDisplay("scrcpy", displaySize.getWidth(), displaySize.getHeight(), dpi, surface, flags);
             setCurrentVirtualDisplay(vd); // used for client resize
             int virtualDisplayId = vd.getDisplay().getDisplayId();
             Ln.i("New display: " + displaySize.getWidth() + "x" + displaySize.getHeight() + "/" + dpi + " (id=" + virtualDisplayId + ")");
@@ -370,6 +414,20 @@ public class NewDisplayCapture extends SurfaceCapture {
         debouncer.requestResize(newSize);
     }
 
+    private FlexUiLayout.CaptureLayout flexUiLayout(Size viewport) {
+        Size transmitted = nativeUiPixelMatch
+                ? FlexUiLayout.videoSize(uiLayout.forViewport(viewport), viewport, videoConstraints) : null;
+        return uiLayout.forViewport(viewport, transmitted);
+    }
+
+    private synchronized void setFlexViewport(Size size) {
+        flexViewport = size;
+    }
+
+    private synchronized Size getFlexViewport() {
+        return flexViewport;
+    }
+
     private synchronized void setCurrentVirtualDisplay(VirtualDisplay virtualDisplay) {
         this.virtualDisplay = virtualDisplay;
     }
@@ -389,12 +447,27 @@ public class NewDisplayCapture extends SurfaceCapture {
             DisplayInfo displayInfo = ServiceManager.getDisplayManager().getDisplayInfo(displayId);
             @SuppressWarnings("checkstyle:HiddenField") // hides this.dpi on purpose
             int dpi = displayInfo.getDpi();
-            if (density != null) {
+            boolean viewportChanged = false;
+            if (uiLayout != null) {
+                viewportChanged = !size.equals(flexViewport);
+                flexViewport = size;
+                FlexUiLayout.CaptureLayout layout = flexUiLayout(size);
+                size = layout.getSize();
+                dpi = layout.getDpi();
+            } else if (density != null) {
                 dpi = density.forSize(size);
             }
             int displayRotation = displayInfo.getRotation();
             if (captureOrientation.isSwap()) {
                 size = size.rotate();
+            }
+            if (uiLayout != null && size.equals(displayInfo.getSize()) && dpi == displayInfo.getDpi()) {
+                // Scaling a window without changing its ratio may leave the logical
+                // display unchanged. The video still needs its own encoder reset.
+                if (viewportChanged) {
+                    getCaptureControl().reset(CaptureControl.RESET_REASON_CLIENT_RESIZED);
+                }
+                return;
             }
             tracker.pushClientRequest(new DisplayProperties(size, displayRotation));
 

@@ -189,6 +189,8 @@ func TestGui55WirelessGetSerialNoAddressIgnored(t *testing.T) {
 // 收不到组播时，这是"广播认不了亲"的唯一兜底路径。
 func TestGui55ReconcileSnapshotClaimsByIP(t *testing.T) {
 	a, _ := newWirelessApp()
+	a.disc.TcpProbeFn = func(context.Context, string) bool { return true }
+	a.disc.ConnectOutFn = func(_ context.Context, addr string) (string, error) { return "connected to " + addr, nil }
 	gui15Seed(a.profiles, "REDMI K80", &DeviceEntry{
 		Marketname: "REDMI K80",
 		Addrs:      []AddrEntry{{Addr: "192.0.2.159:39377", State: AddrStateStale, Mode: ModeTls}},
@@ -299,6 +301,8 @@ func TestGui55MatchMdnsAddrConflictNotRevived(t *testing.T) {
 // （对账 diff added=0）——对账必须仍按全量快照补写，否则残缺档案永远补不上。
 func TestGui55ReconcileWritesEvenWhenDiffEmpty(t *testing.T) {
 	a, _ := newWirelessApp()
+	a.disc.TcpProbeFn = func(context.Context, string) bool { return true }
+	a.disc.ConnectOutFn = func(_ context.Context, addr string) (string, error) { return "connected to " + addr, nil }
 	gui15Seed(a.profiles, "REDMI K80", &DeviceEntry{
 		Marketname: "REDMI K80",
 		Addrs:      []AddrEntry{{Addr: "192.0.2.159:39377", State: AddrStateStale, Mode: ModeTls}},

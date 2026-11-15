@@ -7,7 +7,7 @@
 > ✨ **Entirely developed by AI** (code and docs written by AI)
 > ⚠️ **Tested on**: Windows 11 only (other versions unverified)
 
-> **Current release: 2.4.1**. Raise the application resource guard from 500 to 10,000; improve large-list search/icon loading, native device presets, main-session wake locks and backlog-based adaptation. Grouped settings now offer one/two-frame adaptive smoothing budgets. See [release notes](docs/release-2.4.1.md).
+> **Current release: 2.5.0**. Adds a virtual camera and direct WeChat Scan, improves mirroring startup and connection recovery, and makes main mirroring screen blackout more resilient. See the [release notes](docs/release-2.5.0.md).
 
 ---
 
@@ -152,6 +152,7 @@ While mirroring, a persistent "scrcpy-ez is mirroring" notification appears on t
 
 | Version | Features |
 |---|---|
+| **[v2.5.0](https://github.com/kinewe/scrcpy-ez/releases/tag/v2.5.0)** | Create the virtual camera on demand, with native RGBA, Zstd-compressed frame deltas and chroma-key fallback. Launch WeChat Scan directly from supported device cards. Improve mirroring startup, ADB connection recovery and automatic screen blackout in main mirroring. See the [release notes](docs/release-2.5.0.md) |
 | **[v2.4.1](https://github.com/kinewe/scrcpy-ez/releases/tag/v2.4.1)** | Raise the application resource guard from **500 to 10,000**. Improve large-list loading and name/package/pinyin search usability with batched rendering, viewport-first icons and preserved search/scroll state; adapt read timeouts to list size and connection conditions, keeping usable lists when some icons fail. Add native device resolution/refresh presets, 60fps wireless defaults and automatic app-window DPI; use backlog-based ABR, correct high-refresh encoder hints and app-window frame limiting; use wake locks for main mirroring only. Group settings and offer one/two-frame smoothing budgets at the bottom (off by default). See [release notes](docs/release-2.4.1.md) |
 | **[v2.4.0](https://github.com/kinewe/scrcpy-ez/releases/tag/v2.4.0)** | Upgrade to **scrcpy 5.0.1**, default hardware decoding and the new video buffer, with updated FFmpeg / SDL. Choose higher resolution, frame-rate and bitrate settings in the Specs panel. Add per-device notification-to-mirroring actions (OTP clicks still copy only), improve notification artwork, orientation and consecutive WeChat banners, and reuse compatible background application pages with confirmation for active or incompatible apps. Remove runtime PowerShell calls in favor of native Windows COM/WMI and event supervision; retain image clipboard, ABR, multiple devices, notifications and main-mirroring keep-awake. See the [release notes](docs/release-2.4.0.md) |
 | **[v2.3.0](https://github.com/kinewe/scrcpy-ez/releases/tag/v2.3.0)** | Phone notification sync with per-device/app rules, code-only mode, previews and copy retention; Xiaomi SMS code metadata on locked phones where available, with no companion app; default global keep-awake for main mirroring only and Ctrl+P power-button shortcut; optional authorized root repair after upload permission failures; background reconnect for paired devices, notification recovery and battery refresh. See [release notes](docs/release-2.3.0.md) and the [Gitee download](https://gitee.com/kinewe/scrcpy-ez/releases/tag/v2.3.0) |

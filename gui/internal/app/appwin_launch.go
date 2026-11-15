@@ -25,7 +25,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -38,10 +40,11 @@ import (
 
 // AppWinItem 是快照里的一条应用窗口（前端卡片数据源）。
 type AppWinItem struct {
-	Serial   string `json:"serial"`
-	Identity string `json:"identity,omitempty"`
-	Pkg      string `json:"pkg"`
-	Name     string `json:"name"`
+	Serial     string `json:"serial"`
+	Identity   string `json:"identity,omitempty"`
+	Pkg        string `json:"pkg"`
+	Name       string `json:"name"`
+	DeviceName string `json:"deviceName,omitempty"`
 	// Mode = 启动时连接形态（usb/wifi）——设置面板标题「有线/无线参数」与档案
 	// 套选择用（v2.1.47）。
 	Mode string `json:"mode"`
@@ -50,12 +53,13 @@ type AppWinItem struct {
 	Closing            bool   `json:"closing"`
 	NotificationWindow bool   `json:"notificationWindow,omitempty"`
 	LaunchFailureID    uint64 `json:"launchFailureID,omitempty"`
+	CameraPermissionID uint64 `json:"cameraPermissionID,omitempty"`
 	// Phase/PhaseText 转换/重连中的动态状态（v2.1.54）：插拔切换、断线重连等
 	// 阶段显示与主投屏同款的阶段文字（如"检测到 USB 插线，切换有线投屏…"）；
 	// 投屏继续类事件清空 → 前端回默认"正在窗口"。
 	Phase     string `json:"phase,omitempty"`
 	PhaseText string `json:"phaseText,omitempty"`
-	// Log 最近 60 行原始输出（v2.1.81 排查用日志区：前端渲染「应用名」输出（虚拟屏））。
+	// Log 最近 160 行原始输出，供前端显示。
 	Log []string `json:"log,omitempty"`
 }
 
@@ -67,6 +71,7 @@ type appWinState struct {
 	identityCheck      *wirelessIdentityCheck
 	pkg                string
 	name               string
+	deviceName         string
 	mode               string // 启动时连接形态（usb/wifi）
 	phase              string // 转换/重连中的动态状态（bridge.Kind 字符串；v2.1.54）
 	phaseText          string // 卡片状态文字（""=默认"正在窗口"）
@@ -77,12 +82,19 @@ type appWinState struct {
 	displayID          int
 	displayReady       bool
 	displayHasVideo    bool
+	scannerReadyFile   string
 	notificationWindow bool
+	wechatScanner      bool
 	launchFailure      string
 	launchFailureID    uint64
+	perspectiveUsb     bool
+	perspectiveWifi    bool
+	pendingParams      *AppWinParams
+	pendingIdentity    string
+	cameraPermissionID uint64
+	cameraActive       bool
 	restarting         bool // 参数重启间隙（v2.1.70）：条目原地保留（卡片不消失），runner 释放后原地替换
-	// log 是最近 60 行原始输出（v2.1.81：排查用日志区——与主投屏 CastState.Log 同模式，
-	// 快照随 AppWinItem.Log 带出；前端渲染「应用名」输出（虚拟屏）模块）。
+	// log 和主投屏 CastState.Log 使用同一个行数上限。
 	log []string
 }
 
@@ -117,11 +129,35 @@ func (a *App) StartAppWin(serial, pkg, name string) error {
 	return a.startAppWin(serial, pkg, name, false)
 }
 
-func (a *App) startAppWin(serial, pkg, name string, notification bool) error {
-	return a.startAppWinWithRestart(serial, pkg, name, notification, false)
+func (a *App) StartWeChatScanner(serial string) error {
+	return a.startAppWinWithRestart(serial, "com.tencent.mm", "微信扫一扫", false, false, true)
 }
 
-func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, restartProcess bool) error {
+// wakeScanDisplay 在扫一扫启动前检查默认屏是否在休眠；只在 Asleep/Dozing 时
+// 发一次 KEYCODE_WAKEUP。虚拟屏本身可独立运行，但原生 Alpha 的窗口选择在
+// 物理屏熄屏后会丢失扫描页（Pad 实测），因此用户主动开扫一扫时唤醒屏幕。
+func (a *App) wakeScanDisplay(serial string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	out, err := a.adb.Shell(ctx, serial, "dumpsys", "power")
+	if err != nil {
+		bridge.DebugLog("[appwin] 扫一扫唤醒检查失败：%s（%v）", serial, err)
+		return
+	}
+	if !strings.Contains(out, "mWakefulness=Asleep") && !strings.Contains(out, "mWakefulness=Dozing") {
+		return
+	}
+	bridge.DebugLog("[appwin] 扫一扫目标熄屏，先唤醒屏幕：%s", serial)
+	if _, err := a.adb.Shell(ctx, serial, "input", "keyevent", "KEYCODE_WAKEUP"); err != nil {
+		bridge.DebugLog("[appwin] 扫一扫唤醒失败：%s（%v）", serial, err)
+	}
+}
+
+func (a *App) startAppWin(serial, pkg, name string, notification bool) error {
+	return a.startAppWinWithRestart(serial, pkg, name, notification, false, false)
+}
+
+func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, restartProcess, wechatScanner bool) error {
 	unlockUpdate, updateErr := a.guardUpdateStart()
 	if updateErr != nil {
 		return updateErr
@@ -139,6 +175,9 @@ func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, res
 	// v2.1.70：restarting 条目（参数重启间隙）放行——下方原地替换（照主投屏重启模式）。
 	if old := a.appWins[key]; old != nil && !old.restarting {
 		a.mu.Unlock()
+		if wechatScanner && !old.wechatScanner {
+			return errors.New("请先关闭已有的微信应用窗口")
+		}
 		bridge.DebugLog("[appwin] 已在运行 serial=%s pkg=%s（幂等）", serial, pkg)
 		return nil
 	}
@@ -197,12 +236,22 @@ func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, res
 	}
 	// v2.1.74：档案 Size=长边 → 按设备宽高比换算 WxH 注入（native=内存读，无慢 IO）。
 	native := a.nativeRes(identity)
-	params.VdUsb = vdParamsToBridge(ap.Usb, phys, native)
-	params.VdWifi = vdParamsToBridge(ap.Wifi, phys, native)
+	if wechatScanner {
+		ap.Usb.Perspective = true
+		ap.Wifi.Perspective = true
+	}
+	params.VdUsb = appWindowVdParamsForPackage(pkg, ap.Usb, phys, native)
+	params.VdWifi = appWindowVdParamsForPackage(pkg, ap.Wifi, phys, native)
 	if notification {
 		params.VdUsb = notificationVdParamsForPackage(pkg, ap.Usb, phys, native)
 		params.VdWifi = notificationVdParamsForPackage(pkg, ap.Wifi, phys, native)
+		// Notification windows deliver an existing PendingIntent rather than
+		// launching a named package, so they cannot create a camera environment.
+		params.VdUsb.Perspective, params.VdWifi.Perspective = false, false
 	}
+	settings := a.settings.Get()
+	params.VdUsb.PerspectiveColorKey = params.VdUsb.Perspective && settings.ForcePerspectiveColorKey
+	params.VdWifi.PerspectiveColorKey = params.VdWifi.Perspective && settings.ForcePerspectiveColorKey
 	// 旧单套字段同步注入（启动形态那套）：新旧 bat 组合兼容（旧 bat 读 SCEZ_VD_SIZE 等）。
 	cur := params.VdUsb
 	if mode == "wifi" {
@@ -213,27 +262,36 @@ func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, res
 	params.VdFlex = cur.Flex
 	params.VdAutoDpi = cur.AutoDpi
 	params.VdMatchPhone = cur.MatchPhone
+	params.VdFollowMainOrientation = cur.FollowMainOrientation
 	params.VdMaxSize = cur.MaxSize
 	params.VdAudio = cur.Audio
 	params.VdIme = "local"
+	params.PerspectiveCamera = cur.Perspective
+	params.PerspectiveInputFPS = cur.PerspectiveInputFPS
+	params.PerspectiveColorKey = cur.PerspectiveColorKey
+	if params.PerspectiveCamera {
+		// 热启动：把本设备该应用的历史标定几何注入客户端；客户端命中后用一帧验证，
+		// 几何/微信版本变化导致失配时自动回退真实标定。
+		params.PerspectiveCalib = a.profiles.PerspectiveCalibEnv(identity, pkg)
+	}
 	params.VdNoDecor = a.appWinNoSystemDecorations(identity)
 	params.StartApp = pkg
+	if wechatScanner {
+		params.StartApp += ":scan"
+	}
 	params.ReuseAppTask = true
 	params.VdKeepContent = true
 	if restartProcess {
-		params.StartApp = "+" + pkg
+		params.StartApp = "+" + params.StartApp
 	}
 	if notification {
 		params.StartApp = ""
 		params.ReuseAppTask = false
 	} // Original PendingIntent supplies the destination; never force-stop.
-	params.WinTitle = sanitizeWinTitle(name)
-
 	// 参数控件启动可见性（v2.1.56）：跟随全局设置（与主投屏 StartCast 同链）。
 	// 此前虚拟屏未注入 SCEZ_PARAM_OVERLAY → scrcpy 客户端回退历史默认=可见，
 	// 表现为"GUI 设置里关了参数控件，主投屏不显示、应用窗口却默认开着"。
 	// 显式注入（Set=true）才能覆盖客户端默认；投屏中 Ctrl+F 手动切换不受影响。
-	settings := a.settings.Get()
 	params.OverlayVisible = settings.ShowParamOverlay
 	params.OverlayVisibleSet = true
 	// App windows work independently of the phone's lock screen.
@@ -247,7 +305,7 @@ func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, res
 	// （陈旧 runner 的迟到回调不污染替换后的新会话）。
 	var r Runner
 	r, err := a.newR(serial,
-		func(line string) { a.onAppWinLine(serial, pkg, line) },
+		func(line string) { a.onAppWinLineFor(serial, pkg, r, line) },
 		func(code int) { a.onAppWinExit(serial, pkg, r, code) })
 	if err != nil {
 		return fmt.Errorf("创建 bat 会话失败：%w", err)
@@ -260,23 +318,84 @@ func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, res
 	params.Serial, params.Addr, params.Addr2 = locked.Serial, locked.Addr, locked.Addr2
 	params.ExpectedSerial = locked.ExpectedSerial
 	params.Market, params.Model = locked.Market, locked.Model
+	appName := name
+	if strings.TrimSpace(appName) == "" {
+		appName = pkg
+	}
+	deviceName := a.windowDeviceName(lookupKey)
+	params.WinTitle = castWindowTitle(deviceName, appName)
+	// WeChat scanner: the GUI watches the virtual display's top activity and
+	// writes this file once BaseScanUI is really foreground. The native client
+	// uses it to retry a markerless calibration at page-ready time instead of
+	// a fixed delay (stale result pages make the first frames unusable).
+	scannerReadyFile := ""
+	if wechatScanner && params.PerspectiveCamera {
+		dir := filepath.Join(os.TempDir(), "scrcpy-ez")
+		if err := os.MkdirAll(dir, 0o700); err == nil {
+			scannerReadyFile = filepath.Join(dir,
+				fmt.Sprintf("scanner-page-%d-%d.ready", os.Getpid(), time.Now().UnixNano()))
+			_ = os.Remove(scannerReadyFile)
+			params.ScannerPageReadyFile = scannerReadyFile
+		}
+	}
 	mode = "wifi"
 	if params.Serial != "" {
 		mode = "usb"
 	}
-	if err := r.Start(serial, params); err != nil {
-		return fmt.Errorf("启动 bat 失败：%w", err)
-	}
-
 	st := &appWinState{serial: serial, identity: identity, pkg: pkg, name: name, mode: mode, runner: r, startedAt: time.Now(), notificationWindow: notification}
+	st.wechatScanner = wechatScanner
+	st.scannerReadyFile = scannerReadyFile
+	st.deviceName = deviceName
+	st.perspectiveUsb, st.perspectiveWifi = params.VdUsb.Perspective, params.VdWifi.Perspective
 	a.mu.Lock()
 	st.identityCheck = a.wirelessIdentityChecks[params.Addr]
-	// v2.1.70：重启间隙原地替换——沿用 startedAt 保持卡片位置/顺序（照主投屏 restarting 模式）。
-	if old := a.appWins[key]; old != nil && old.restarting {
-		st.startedAt = old.startedAt
+	old := a.appWins[key]
+	if old != nil && (!old.restarting || old.runner != nil) {
+		a.mu.Unlock()
+		return nil
 	}
+	logKey := castLogKeyFor(serial, identity, pkg)
+	for _, win := range a.appWins {
+		if win != old && castLogKeyFor(win.serial, win.identity, win.pkg) == logKey {
+			a.mu.Unlock()
+			return nil
+		}
+	}
+	if old != nil {
+		st.startedAt = old.startedAt
+		st.log = appendCastLog(old.log, "[EZ] ── 正在重启投屏 ──")
+	}
+	// Register before Start so startup output and early exits belong to this runner.
 	a.appWins[key] = st
 	a.mu.Unlock()
+	// 扫一扫的原生 Alpha 依赖物理屏窗口信息：手机/平板熄屏后 WindowInfosListener
+	// 不再给出扫描页（实测 Pad 20s 黑屏，唤醒后 2.3s 即 SUPPORTED/PRESENTED）。
+	// 用户主动开扫一扫，先异步唤醒屏幕；只查一次 dumpsys，避免阻塞 GUI 消息循环。
+	if wechatScanner && params.PerspectiveCamera {
+		wakeSerial := params.Serial
+		if wakeSerial == "" {
+			wakeSerial = params.Addr
+		}
+		if wakeSerial != "" {
+			go a.guard("scan-wake", func() { a.wakeScanDisplay(wakeSerial) })
+		}
+	}
+	if err := r.Start(serial, params); err != nil {
+		a.mu.Lock()
+		if a.appWins[key] == st {
+			a.finishAppWinLocked(key, st, "[EZ] 启动失败："+err.Error())
+		}
+		a.mu.Unlock()
+		return fmt.Errorf("启动 bat 失败：%w", err)
+	}
+	if wechatScanner {
+		if st.scannerReadyFile != "" {
+			go a.watchScannerPageReady(key, serial, pkg, st.scannerReadyFile)
+		}
+		// 观察这次扫码窗口的运行结果：出帧 → 成功实证入档；被系统顶替 →
+		// 提示重试并收起占位窗口（不隐藏入口，能力本身存在）。
+		go a.watchWeChatScanOutcome(st)
+	}
 	bridge.DebugLog("[appwin] 启动 serial=%s pkg=%s mode=%s 档案=%v usb=[%s %dfps %dM flex=%v audio=%s dpi=%d %s/%s] wifi=[%s %dfps %dM flex=%v audio=%s dpi=%d %s/%s]（主屏 %dpx@%ddpi，走 bat）",
 		serial, pkg, mode, hasArchive,
 		ap.Usb.Size, ap.Usb.FPS, ap.Usb.Bitrate, ap.Usb.Flex, ap.Usb.EffectiveAppWinAudio(), params.VdUsb.Dpi, params.Usb.VCodec, params.Usb.ACodec,
@@ -314,13 +433,21 @@ var notificationDisplay = regexp.MustCompile(`New display: .*\(id=([0-9]+)\)`)
 
 var appLaunchResult = regexp.MustCompile(`SCRCPY_EZ_APP_LAUNCH=(reused|started|reuse-failed|launch-failed|layout-incompatible|in-use)\b`)
 
+// 透视标定结果入档标记（客户端成功对齐后输出一次）：
+// SCRCPY_EZ_PERSPECTIVE_CALIB key=<几何键> map=m0,...,m5 rms=..
+var perspectiveCalibResult = regexp.MustCompile(`SCRCPY_EZ_PERSPECTIVE_CALIB key=([^ ]+) map=([-0-9eE.,]+)`)
+
 func (a *App) onAppWinLine(serial, pkg, line string) {
+	a.onAppWinLineFor(serial, pkg, nil, line)
+}
+
+func (a *App) onAppWinLineFor(serial, pkg string, r Runner, line string) {
 	bridge.DebugLog("[appwin:%s] %s", pkg, line)
 	ev := bridge.ClassifyLine(line)
 	key := appWinKey(serial, pkg)
 	a.mu.Lock()
 	st := a.appWins[key]
-	if st == nil {
+	if st == nil || (r != nil && st.runner != r) {
 		a.mu.Unlock()
 		return
 	}
@@ -336,10 +463,7 @@ func (a *App) onAppWinLine(serial, pkg, line string) {
 		st.displayHasVideo = true
 	}
 	// v2.1.81：原始输出缓冲（任何行，含未分类行——与主投屏 applyEventLocked 同模式）
-	st.log = append(st.log, ev.Text)
-	if len(st.log) > 60 {
-		st.log = st.log[len(st.log)-60:]
-	}
+	st.log = appendCastLog(st.log, ev.Text)
 	switch ev.Kind {
 	case bridge.KindUserClose:
 		// v2.1.72（照抄主投屏卡片设计）：参数重启间隙的停止输出不算"用户关窗"——
@@ -369,6 +493,7 @@ func (a *App) onAppWinLine(serial, pkg, line string) {
 			}
 		}
 	case bridge.KindSwitchUSB, bridge.KindReconnect, bridge.KindADBReset, bridge.KindDetect:
+		st.cameraActive = false
 		st.launchFailure = ""
 		st.launchFailureID = 0
 		st.displayID = 0
@@ -393,8 +518,40 @@ func (a *App) onAppWinLine(serial, pkg, line string) {
 			st.phase, st.phaseText = "", ""
 		}
 	}
+	if strings.Contains(line, "SCRCPY_EZ_CAMERA_PERMISSION_REQUIRED") && st.cameraPermissionID == 0 {
+		a.appLaunchNoticeSeq++
+		st.cameraPermissionID = a.appLaunchNoticeSeq
+	}
+	if strings.Contains(line, "SCRCPY_EZ_PERSPECTIVE_ACTIVE=1") {
+		st.cameraActive = true
+	}
+	if strings.Contains(line, "SCRCPY_EZ_PERSPECTIVE_ACTIVE=0") {
+		st.cameraActive = false
+	}
+	if match := perspectiveCalibResult.FindStringSubmatch(line); len(match) == 3 && st.identity != "" && !st.notificationWindow {
+		parts := strings.Split(match[2], ",")
+		if len(parts) == 6 {
+			vals := make([]float64, 0, 6)
+			valid := true
+			for _, part := range parts {
+				v, err := strconv.ParseFloat(part, 64)
+				if err != nil {
+					valid = false
+					break
+				}
+				vals = append(vals, v)
+			}
+			if valid {
+				if err := a.profiles.SetPerspectiveCalib(st.identity, pkg, match[1], vals); err != nil {
+					bridge.DebugLog("[appwin] 透视标定缓存入档失败 identity=%s pkg=%s: %v", st.identity, pkg, err)
+				} else {
+					bridge.DebugLog("[appwin] 透视标定缓存入档 identity=%s pkg=%s key=%s", st.identity, pkg, match[1])
+				}
+			}
+		}
+	}
 	if !st.notificationWindow {
-		if match := appLaunchResult.FindStringSubmatch(line); len(match) == 2 {
+		if match := appLaunchResult.FindStringSubmatch(line); len(match) == 2 && st.pendingParams == nil {
 			if match[1] == "reuse-failed" || match[1] == "launch-failed" || match[1] == "layout-incompatible" || match[1] == "in-use" {
 				if st.launchFailure != match[1] || st.launchFailureID == 0 {
 					a.appLaunchNoticeSeq++
@@ -418,7 +575,16 @@ func (a *App) onAppWinLine(serial, pkg, line string) {
 		a.retryWirelessIdentityLocked(st.identityCheck)
 	}
 	identity := st.identity
+	nativeAlphaPresented := !st.closing && !st.restarting && !st.notificationWindow &&
+		strings.HasSuffix(strings.TrimSpace(line), "INFO: SCRCPY_EZ_NATIVE_ALPHA_PRESENTED")
+	name := st.name
 	a.mu.Unlock()
+	if nativeAlphaPresented {
+		if err := a.profiles.recordNativeAlphaPresented(identity, pkg, name); err != nil {
+			bridge.DebugLog("[native-alpha] 无法保存显示成功记录: %v", err)
+		}
+	}
+	a.receiveNativeAlphaProfile(serial, pkg, line)
 	// 规格入档（锁外；updateBaseline 自行取锁）：虚拟屏投屏也算一次"实测"——
 	// 与主屏投屏共享同一 baseline（主人："主屏虚拟屏都行"）。[custom] 回显不更新。
 	// serial 用归一键（无线 IP:port 形态落进设备主档案，不产生孤儿档）。
@@ -511,7 +677,7 @@ func (a *App) onAppWinExit(serial, pkg string, r Runner, code int) {
 			st.phase = "restarting"
 			st.phaseText = "重新连接中…"
 		} else {
-			delete(a.appWins, key)
+			a.finishAppWinLocked(key, st, "[EZ] 投屏已结束（退出码 "+itoa(code)+"）")
 		}
 	}
 	a.mu.Unlock()
@@ -537,6 +703,24 @@ func (a *App) ResolveAppLaunchFailure(serial, pkg string, noticeID uint64, resta
 	if noticeID == 0 {
 		return errors.New("此启动提示已失效，请重新打开应用窗口")
 	}
+	a.mu.Lock()
+	st := a.appWins[appWinKey(serial, pkg)]
+	if appLaunchNoticeMatches(st, noticeID) && st.pendingParams != nil {
+		pending, identity := *st.pendingParams, st.pendingIdentity
+		if !restart {
+			st.pendingParams, st.pendingIdentity = nil, ""
+			st.launchFailure, st.launchFailureID = "", 0
+			st.phase, st.phaseText = "", ""
+			a.mu.Unlock()
+			return nil
+		}
+		a.mu.Unlock()
+		if err := a.profiles.SetAppParams(identity, pkg, pending); err != nil {
+			return err
+		}
+		return a.restartAppWinChecked(serial, pkg, true, noticeID)
+	}
+	a.mu.Unlock()
 	if restart {
 		return a.restartAppWinChecked(serial, pkg, true, noticeID)
 	}
@@ -575,16 +759,16 @@ func (a *App) stopAppWinChecked(serial, pkg string, noticeID uint64) error {
 
 	go a.guard("appwin-stop", func() {
 		// v2.1.70：重启间隙 runner 已释放（条目保留）——无进程可停，直接摘除收尾。
-		if st.runner == nil {
+		if r == nil {
 			a.mu.Lock()
 			if cur := a.appWins[key]; cur == st {
-				delete(a.appWins, key)
+				a.finishAppWinLocked(key, cur, "[EZ] 投屏已结束")
 			}
 			a.mu.Unlock()
 			bridge.DebugLog("[appwin] 停止：重启间隙无 runner，直接摘除 serial=%s pkg=%s", serial, pkg)
 			return
 		}
-		if err := st.runner.Stop(); err != nil {
+		if err := r.Stop(); err != nil {
 			// Stop 失败（如 bat 未在运行）：复位按钮可重试；会话状态不变。
 			a.mu.Lock()
 			if cur := a.appWins[key]; cur == st {
@@ -599,7 +783,7 @@ func (a *App) stopAppWinChecked(serial, pkg string, noticeID uint64) error {
 			time.Sleep(appWinStopFallback)
 			a.mu.Lock()
 			if cur := a.appWins[key]; cur == st {
-				delete(a.appWins, key)
+				a.finishAppWinLocked(key, cur, "[EZ] 投屏已结束（清理超时）")
 				bridge.DebugLog("[appwin] 停止兜底：onExit 未达，强制摘除 serial=%s pkg=%s", serial, pkg)
 			}
 			a.mu.Unlock()
@@ -622,20 +806,27 @@ func (a *App) appWinLockParams(serial string) bridge.CastParams {
 }
 
 // appWinsListLocked 列出全部应用窗口（按启动时间排序；调用方须持 a.mu）。
-func (a *App) appWinsListLocked() []AppWinItem {
+func (a *App) appWinsListLocked(now time.Time, liveLogs map[castLogKey]bool) []AppWinItem {
 	states := make([]*appWinState, 0, len(a.appWins))
 	for _, st := range a.appWins {
 		states = append(states, st)
 	}
-	sort.Slice(states, func(i, j int) bool { return states[i].startedAt.Before(states[j].startedAt) })
+	sort.Slice(states, func(i, j int) bool {
+		if states[i].startedAt.Equal(states[j].startedAt) {
+			return appWinKey(states[i].serial, states[i].pkg) < appWinKey(states[j].serial, states[j].pkg)
+		}
+		return states[i].startedAt.Before(states[j].startedAt)
+	})
 	out := make([]AppWinItem, 0, len(states))
 	for _, st := range states {
 		var noticeID uint64
 		if appLaunchNoticeMatches(st, st.launchFailureID) {
 			noticeID = st.launchFailureID
 		}
+		key := castLogKeyFor(st.serial, st.identity, st.pkg)
+		liveLogs[key] = true
 		out = append(out, AppWinItem{Serial: st.serial, Identity: st.identity, Pkg: st.pkg, Name: st.name, Mode: st.mode, Closing: st.closing, NotificationWindow: st.notificationWindow, Phase: st.phase, PhaseText: st.phaseText,
-			LaunchFailureID: noticeID, Log: append([]string{}, st.log...)})
+			DeviceName: st.deviceName, LaunchFailureID: noticeID, CameraPermissionID: st.cameraPermissionID, Log: a.liveCastLogLocked(key, st.log, now)})
 	}
 	return out
 }
@@ -721,12 +912,7 @@ func (a *App) devicePhys(serial string) devPhys {
 		p.dpi = previous.dpi
 	}
 	if (p.longSide > 0 || p.native.LongEdge > 0) && identity == a.appListKeyFor(transport) {
-		a.physMu.Lock()
-		if a.physCache == nil {
-			a.physCache = map[string]devPhys{}
-		}
-		a.physCache[identity] = p
-		a.physMu.Unlock()
+		a.cacheDevicePhys(identity, p)
 	}
 	bridge.DebugLog("[appwin] 设备物理参数 serial=%s 长边=%d dpi=%d", serial, p.longSide, p.dpi)
 	return p
@@ -771,17 +957,6 @@ func calcVdDpi(p devPhys, w, h int) int {
 	return int(math.Round(float64(p.dpi) * float64(vdLong) / float64(p.longSide)))
 }
 
-// sanitizeWinTitle 窗口标题安全化（总纲 §1.11）：去引号/百分号、空白→下划线。
-func sanitizeWinTitle(s string) string {
-	if s == "" {
-		return "scrcpy-ez"
-	}
-	s = strings.ReplaceAll(s, `"`, "")
-	s = strings.ReplaceAll(s, "%", "")
-	s = strings.ReplaceAll(s, " ", "_")
-	return s
-}
-
 // ---------- 应用窗口参数（二期 Step 4/5：面板保存 + 档案记忆 + 重启生效） ----------
 
 var reVdSize = regexp.MustCompile(`^(\d{2,5})x(\d{2,5})$`)
@@ -801,7 +976,7 @@ func parseVdSize(s string) (int, int) {
 // 长边 1280 / 60fps / 8M / flex 开 / 不静音。正常路径走 appWinDefaults（共享主投屏）。
 // v2.1.74：Size=长边数字（短边由 mdns10ProfileRes 按设备宽高比换算 WxH 注入）。
 func DefaultAppWinParams() AppWinParams {
-	m := AppWinModeParams{Size: strconv.Itoa(appWinVdW), FPS: appWinVdFPS, Bitrate: appWinVdBIT, Flex: true}
+	m := AppWinModeParams{Size: strconv.Itoa(appWinVdW), FPS: appWinVdFPS, Bitrate: appWinVdBIT, Flex: true, Perspective: true, PerspectiveInputFPS: bridge.DefaultPerspectiveInputFPS}
 	return AppWinParams{Usb: m, Wifi: m}
 }
 
@@ -898,7 +1073,7 @@ func vdModeFromBaseline(b Baseline) AppWinModeParams {
 	if bit <= 0 {
 		bit = appWinVdBIT
 	}
-	return AppWinModeParams{Size: strconv.Itoa(le), FPS: fps, Bitrate: bit, Flex: true, Audio: "phone"}
+	return AppWinModeParams{Size: strconv.Itoa(le), FPS: fps, Bitrate: bit, Flex: true, Perspective: true, PerspectiveInputFPS: bridge.DefaultPerspectiveInputFPS, Audio: "phone"}
 }
 
 // normalizeAppWinParams 把档案条目里的"未设置套"（Size 空）填为默认档（def=
@@ -919,6 +1094,7 @@ func normalizeAppWinMode(m, def AppWinModeParams) AppWinModeParams {
 	} else if le := ParseLongEdge(m.Size); le > 0 {
 		m.Size = strconv.Itoa(le)
 	}
+	m.PerspectiveInputFPS = bridge.NormalizePerspectiveInputFPS(m.PerspectiveInputFPS)
 	m.Audio = m.EffectiveAppWinAudio()
 	return m
 }
@@ -931,6 +1107,9 @@ func compactAppWinMode(p AppWinModeParams, def AppWinModeParams) AppWinModeParam
 	}
 	if p == def {
 		return AppWinModeParams{}
+	}
+	if p.PerspectiveInputFPS == def.PerspectiveInputFPS {
+		p.PerspectiveInputFPS = 0
 	}
 	return p
 }
@@ -964,40 +1143,58 @@ func vdParamsToBridge(p AppWinModeParams, phys devPhys, native string) bridge.Vd
 		dpi = calcVdDpi(phys, w, h)
 	}
 	return bridge.VdModeParams{
-		Size:        size,
-		Dpi:         dpi,
-		FPS:         p.FPS,
-		Bitrate:     p.Bitrate,
-		Flex:        p.Flex,
-		AutoDpi:     p.Flex && p.Dpi <= 0,
-		Audio:       p.EffectiveAppWinAudio(),
-		LockFps:     p.LockFps,
-		LockBitrate: p.LockBitrate,
+		Size:                  size,
+		FollowMainOrientation: p.RatioW <= 0 || p.RatioH <= 0,
+		Perspective:           p.Perspective,
+		PerspectiveInputFPS:   p.PerspectiveInputFPS,
+		PerspectiveColorKey:   p.PerspectiveColorKey,
+		Dpi:                   dpi,
+		FPS:                   p.FPS,
+		Bitrate:               p.Bitrate,
+		Flex:                  p.Flex,
+		AutoDpi:               p.Flex && p.Dpi <= 0,
+		Audio:                 p.EffectiveAppWinAudio(),
+		LockFps:               p.LockFps,
+		LockBitrate:           p.LockBitrate,
 	}
 }
 
 // 通知窗口在发送原始动作前是空屏，无法由应用提前选择方向。默认采用主屏自然
 // 方向，避免将手机的竖屏聊天放进横屏虚拟屏。明确设置的 W:H 仍完整保留；物理
 // 参数尚未预热时，沿用设备比例并先用竖屏（不在 GUI 线程增加 adb 查询）。
+func appWindowVdParamsForPackage(pkg string, p AppWinModeParams, phys devPhys, native string) bridge.VdModeParams {
+	result := vdParamsToBridge(p, phys, native)
+	if pkg == "com.tencent.wework" && p.Perspective {
+		// nativeRes is normalized to landscape for transport profiles. Starting
+		// WeWork there and then rotating its scanner can stretch the raw camera
+		// buffer even when the locally aligned preview looks correct. Retain
+		// the device's natural initial direction; explicit ratios still win.
+		result = notificationVdParamsToBridge(p, phys, native)
+	}
+	return preserveAppWindowLayout(pkg, p, result)
+}
+
 func notificationVdParamsForPackage(pkg string, p AppWinModeParams, phys devPhys, native string) bridge.VdModeParams {
-	result := notificationVdParamsToBridge(p, phys, native)
+	return preserveAppWindowLayout(pkg, p, notificationVdParamsToBridge(p, phys, native))
+}
+
+func preserveAppWindowLayout(pkg string, p AppWinModeParams, result bridge.VdModeParams) bridge.VdModeParams {
 	// Observed task reuse can leave WeChat resource metrics from the old display. Matching
 	// the phone avoids changing those metrics while preserving the original chat.
 	// The video resolution still follows the selected transport's saved long edge.
-	if pkg == "com.tencent.mm" && p.Dpi <= 0 && p.RatioW == 0 && p.RatioH == 0 {
+	if pkg == "com.tencent.mm" && !p.Flex && p.Dpi <= 0 && p.RatioW == 0 && p.RatioH == 0 {
 		result.MatchPhone = true
 		result.MaxSize = ParseLongEdge(p.Size)
 		if result.MaxSize <= 0 {
 			result.MaxSize = appWinVdW
 		}
 		result.Dpi = 0
-		result.Flex = false
-		result.AutoDpi = false
 	}
 	return result
 }
 
 func notificationVdParamsToBridge(p AppWinModeParams, phys devPhys, native string) bridge.VdModeParams {
+	followMain := p.RatioW <= 0 || p.RatioH <= 0
 	if p.RatioW == 0 && p.RatioH == 0 {
 		w, h := phys.width, phys.height
 		if w <= 0 || h <= 0 {
@@ -1011,7 +1208,9 @@ func notificationVdParamsToBridge(p AppWinModeParams, phys devPhys, native strin
 		}
 		p.RatioW, p.RatioH = w, h
 	}
-	return vdParamsToBridge(p, phys, native)
+	result := vdParamsToBridge(p, phys, native)
+	result.FollowMainOrientation = followMain
+	return result
 }
 
 // appWinInitialSize 以现有长边像素数为基准生成虚拟屏尺寸。比例未设置时走原有
@@ -1034,9 +1233,10 @@ func appWinInitialSize(native string, longEdge, ratioW, ratioH int) string {
 
 // AppWinParamsView 是 GetAppWinParams 返回（前端面板初始化：两套 + 当前形态）。
 type AppWinParamsView struct {
-	Identity string           `json:"identity"`
-	Usb      AppWinModeParams `json:"usb"`
-	Wifi     AppWinModeParams `json:"wifi"`
+	Identity             string           `json:"identity"`
+	Usb                  AppWinModeParams `json:"usb"`
+	Wifi                 AppWinModeParams `json:"wifi"`
+	NativeAlphaPresented bool             `json:"nativeAlphaPresented,omitempty"`
 	// UsbDef/WifiDef = 设备默认档（v2.1.48 共享主投屏 baseline 换算）——前端
 	// 「重置/恢复默认」目标值 + 档位序列构建（buildTiers）用。
 	UsbDef  AppWinModeParams `json:"usbDef"`
@@ -1067,9 +1267,16 @@ func (a *App) GetAppWinParams(serial, pkg string) (AppWinParamsView, error) {
 	identity := a.appWinProfileKey(serial, pkg)
 	a.GetNativeDisplay(identity)
 	var raw AppWinParams
+	var nativeAlphaPresented bool
 	if e, ok := a.profiles.Entry(identity); ok {
 		if pr, ok2 := e.AppParams[pkg]; ok2 {
 			raw = pr
+		}
+		for _, app := range e.Apps {
+			if app.Pkg == pkg && app.NativeAlpha != nil {
+				nativeAlphaPresented = app.NativeAlpha.LastPresentedAt > 0
+				break
+			}
 		}
 	}
 	def := a.appWinDefaults(identity)
@@ -1095,8 +1302,9 @@ func (a *App) GetAppWinParams(serial, pkg string) (AppWinParamsView, error) {
 		return NormalizeACodec(devV)
 	}
 	v := AppWinParamsView{
-		Identity: identity,
-		Usb:      ap.Usb, Wifi: ap.Wifi,
+		Identity:             identity,
+		NativeAlphaPresented: nativeAlphaPresented,
+		Usb:                  ap.Usb, Wifi: ap.Wifi,
 		UsbDef: def.Usb, WifiDef: def.Wifi,
 		UsbSet: !raw.Usb.Empty(), WifiSet: !raw.Wifi.Empty(),
 		Mode:       "usb",
@@ -1124,15 +1332,18 @@ func (a *App) SaveAppWinParams(serial, pkg, payload string) error {
 		return errors.New("参数不完整（serial/pkg 为空）")
 	}
 	var in struct {
-		Mode    string `json:"mode"`
-		Size    string `json:"size"`
-		RatioW  int    `json:"ratioW"`
-		RatioH  int    `json:"ratioH"`
-		FPS     int    `json:"fps"`
-		Bitrate int    `json:"bitrate"`
-		Dpi     int    `json:"dpi"`
-		Flex    bool   `json:"flex"`
-		Audio   string `json:"audio"`
+		Mode                string  `json:"mode"`
+		Size                string  `json:"size"`
+		RatioW              int     `json:"ratioW"`
+		RatioH              int     `json:"ratioH"`
+		FPS                 int     `json:"fps"`
+		Bitrate             int     `json:"bitrate"`
+		Dpi                 int     `json:"dpi"`
+		Flex                bool    `json:"flex"`
+		Perspective         *bool   `json:"perspective"`
+		PerspectiveInputFPS float64 `json:"perspectiveInputFps"`
+		PerspectiveColorKey *bool   `json:"perspectiveColorKey"`
+		Audio               string  `json:"audio"`
 		// v2.1.80：ABR 锁定（窗口设置「锁定」按钮）
 		LockFps     bool `json:"lockFps"`
 		LockBitrate bool `json:"lockBitrate"`
@@ -1142,6 +1353,10 @@ func (a *App) SaveAppWinParams(serial, pkg, payload string) error {
 	}
 	if err := json.Unmarshal([]byte(payload), &in); err != nil {
 		return fmt.Errorf("参数解析失败：%w", err)
+	}
+	perspective := true
+	if in.Perspective != nil {
+		perspective = *in.Perspective
 	}
 	if in.Mode != "usb" && in.Mode != "wifi" {
 		return fmt.Errorf("模式无效：%q", in.Mode)
@@ -1174,12 +1389,27 @@ func (a *App) SaveAppWinParams(serial, pkg, payload string) error {
 		if ac != "" {
 			ac = NormalizeACodec(ac)
 		}
-		np = AppWinModeParams{Size: strconv.Itoa(le), RatioW: in.RatioW, RatioH: in.RatioH, FPS: in.FPS, Bitrate: in.Bitrate, Dpi: in.Dpi, Flex: in.Flex, Audio: NormalizeAudioMode(in.Audio, "phone"),
+		inputFPS := bridge.NormalizePerspectiveInputFPS(in.PerspectiveInputFPS)
+		if in.PerspectiveInputFPS != 0 && in.PerspectiveInputFPS != inputFPS {
+			return fmt.Errorf("桌面送帧须为 0.5、1、6 或 10 FPS")
+		}
+		np = AppWinModeParams{Size: strconv.Itoa(le), RatioW: in.RatioW, RatioH: in.RatioH, FPS: in.FPS, Bitrate: in.Bitrate, Dpi: in.Dpi, Flex: in.Flex, Perspective: perspective, PerspectiveInputFPS: inputFPS, Audio: NormalizeAudioMode(in.Audio, "phone"),
 			LockFps: in.LockFps, LockBitrate: in.LockBitrate, VCodec: vc, ACodec: ac}
 	}
 	identity := a.appWinProfileKey(serial, pkg)
 	def := a.appWinDefaults(identity)
 	ap, _ := a.appWinParamsFor(identity, pkg)
+	if np.Size != "" {
+		// Retain the former per-app value for older versions reading the same profile.
+		previous := ap.Usb
+		if in.Mode == "wifi" {
+			previous = ap.Wifi
+		}
+		np.PerspectiveColorKey = previous.PerspectiveColorKey
+		if in.PerspectiveColorKey != nil {
+			np.PerspectiveColorKey = *in.PerspectiveColorKey
+		}
+	}
 	if in.Mode == "usb" {
 		ap.Usb = np
 	} else {
@@ -1191,6 +1421,25 @@ func (a *App) SaveAppWinParams(serial, pkg, payload string) error {
 	// 之后保存即删条目。
 	ap.Usb = compactAppWinMode(ap.Usb, def.Usb)
 	ap.Wifi = compactAppWinMode(ap.Wifi, def.Wifi)
+	// Camera policy belongs to the Android virtual device. Replacing it while
+	// retaining an open CameraManager may leave the app bound to the old device.
+	// Stage this change until the user chooses the existing process-restart path.
+	a.mu.Lock()
+	if st := a.appWins[appWinKey(serial, pkg)]; st != nil && !st.notificationWindow && !st.closing && !st.restarting && st.mode == in.Mode {
+		running, next := st.perspectiveUsb, normalizeAppWinParams(ap, def).Usb.Perspective
+		if st.mode == "wifi" {
+			running, next = st.perspectiveWifi, normalizeAppWinParams(ap, def).Wifi.Perspective
+		}
+		if running != next || (running && st.cameraActive) {
+			st.pendingParams, st.pendingIdentity = &ap, identity
+			a.appLaunchNoticeSeq++
+			st.launchFailure, st.launchFailureID = "camera-mode-change", a.appLaunchNoticeSeq
+			st.phase, st.phaseText = "app-camera-mode-change", "切换相机需要重新启动应用"
+			a.mu.Unlock()
+			return nil
+		}
+	}
+	a.mu.Unlock()
 	if err := a.profiles.SetAppParams(identity, pkg, ap); err != nil {
 		return err
 	}
@@ -1240,6 +1489,7 @@ func (a *App) restartAppWinChecked(serial, pkg string, restartProcess bool, noti
 	st.phaseText = "重新连接中…"
 	name := st.name
 	notification := st.notificationWindow
+	wechatScanner := st.wechatScanner
 	runner := st.runner
 	// v2.1.75：重启同样按"是否本设备最后一个会话"设置跳过等待。
 	others := a.otherSessionIDsLocked("", key)
@@ -1274,7 +1524,7 @@ func (a *App) restartAppWinChecked(serial, pkg string, restartProcess bool, noti
 		// 兜底强摘（onExit 极端丢失：本 st 仍在且 runner 未释放）。
 		a.mu.Lock()
 		if cur := a.appWins[key]; cur == st && cur.runner != nil {
-			delete(a.appWins, key)
+			a.finishAppWinLocked(key, cur, "[EZ] 重启失败：原投屏未及时退出")
 			bridge.DebugLog("[appwin] 重启兜底：bat 15s 未退出，强制摘除 serial=%s pkg=%s", serial, pkg)
 		}
 		a.mu.Unlock() // ★ v2.1.73 修复：此处曾丢 Unlock（v2.1.72 手误）→ 下方与后续所有 Lock 自锁死锁
@@ -1289,14 +1539,96 @@ func (a *App) restartAppWinChecked(serial, pkg string, restartProcess bool, noti
 			return
 		}
 		// 新参数重开（StartAppWin 内部读档案 → 两套注入；检测 restarting 条目 → 原地替换）。
-		if err := a.startAppWinWithRestart(serial, pkg, name, notification, restartProcess); err != nil {
+		if err := a.startAppWinWithRestart(serial, pkg, name, notification, restartProcess, wechatScanner); err != nil {
 			a.mu.Lock()
 			if cur := a.appWins[key]; cur == st {
-				delete(a.appWins, key)
+				a.finishAppWinLocked(key, cur, "[EZ] 重启失败："+err.Error())
 			}
 			a.mu.Unlock()
 			bridge.DebugLog("[appwin] 重启失败（Start）serial=%s pkg=%s: %v（条目摘除）", serial, pkg, err)
 		}
 	})
 	return nil
+}
+
+// scannerDumpDisplay / scannerDumpTop parse `dumpsys activity activities`
+// per-display sections; MIUI prints the virtual display exactly this way.
+var scannerDumpDisplay = regexp.MustCompile(`(?m)^\s*Display #(\d+)`)
+var scannerDumpTop = regexp.MustCompile(`topResumedActivity=ActivityRecord\{\S+ u\d+ ([^ }]+)`)
+
+// scannerTopActivity returns the top resumed activity component of one
+// display, or "" when the display/section was not found.
+func scannerTopActivity(dump string, display int) string {
+	inDisplay := false
+	for _, line := range strings.Split(dump, "\n") {
+		if m := scannerDumpDisplay.FindStringSubmatch(line); len(m) == 2 {
+			id, _ := strconv.Atoi(m[1])
+			inDisplay = id == display
+			continue
+		}
+		if !inDisplay {
+			continue
+		}
+		if m := scannerDumpTop.FindStringSubmatch(line); len(m) == 2 {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+// watchScannerPageReady polls the virtual display's top activity and drops a
+// ready file when WeChat's BaseScanUI is really foreground. It only reads ADB
+// state; it never sends BACK/force-stop or touches WeChat data. The native
+// client uses the file to time its markerless-calibration retry.
+func (a *App) watchScannerPageReady(key, serial, pkg, readyFile string) {
+	started := time.Now()
+	overallDeadline := started.Add(30 * time.Second)
+	var displayDeadline time.Time
+	last := ""
+	for time.Now().Before(overallDeadline) {
+		a.mu.Lock()
+		st := a.appWins[key]
+		stopped := st == nil || st.closing
+		display := 0
+		if st != nil {
+			display = st.displayID
+		}
+		a.mu.Unlock()
+		if stopped {
+			return
+		}
+		if display <= 0 {
+			time.Sleep(150 * time.Millisecond)
+			continue
+		}
+		if displayDeadline.IsZero() {
+			displayDeadline = time.Now().Add(10 * time.Second)
+		} else if time.Now().After(displayDeadline) {
+			bridge.DebugLog("[appwin] scanner page ready timeout display=%d activity=%s pkg=%s",
+				display, last, pkg)
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		out, err := a.adb.Shell(ctx, serial, "dumpsys", "activity", "activities")
+		cancel()
+		if err != nil {
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+		activity := scannerTopActivity(out, display)
+		if activity != "" && activity != last {
+			bridge.DebugLog("[appwin] scanner page display=%d +%dms activity=%s",
+				display, time.Since(started).Milliseconds(), activity)
+			last = activity
+		}
+		if strings.HasSuffix(activity, "/.plugin.scanner.ui.BaseScanUI") {
+			if err := os.WriteFile(readyFile, []byte("1"), 0o600); err == nil {
+				bridge.DebugLog("[appwin] scanner page ready display=%d +%dms signal=%s",
+					display, time.Since(started).Milliseconds(), readyFile)
+			}
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	bridge.DebugLog("[appwin] scanner page ready timeout activity=%s pkg=%s", last, pkg)
 }

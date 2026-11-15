@@ -13,7 +13,7 @@ enum sc_overlay_mode {
 
 struct sc_fps_overlay {
     SDL_Renderer *renderer;
-    SDL_Texture *texture;      // current text texture (e.g. "60fps 15M USB")
+    SDL_Texture *texture;      // current text texture (e.g. "60 FPS 15M USB")
     int tex_w;                 // texture logical width
     int tex_h;                 // texture logical height
     struct sc_fps_sample sample; // successful new-frame texture submissions

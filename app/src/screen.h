@@ -11,6 +11,7 @@
 #include <libavutil/pixfmt.h>
 
 #include "controller.h"
+#include "calibration_mask.h"
 #include "coords.h"
 #include "disconnect.h"
 #include "fps_counter.h"
@@ -19,6 +20,7 @@
 #include "input_manager.h"
 #include "mouse_capture.h"
 #include "options.h"
+#include "perspective.h"
 #include "texture.h"
 #include "trait/key_processor.h"
 #include "trait/frame_sink.h"
@@ -38,6 +40,9 @@ struct sc_screen {
 
     bool video;
     bool camera;
+    struct sc_perspective perspective;
+    struct sc_calibration_mask calibration_mask;
+    SDL_TimerID calibration_timer;
     bool window_aspect_ratio_lock;
     bool flex_display;
 
@@ -90,6 +95,11 @@ struct sc_screen {
 #endif
 
     enum sc_render_fit render_fit;
+    bool flex_resize_preview;
+    bool modal_redraw_in_progress;
+    uint64_t modal_redraw_paints;
+    uint64_t modal_redraw_frames;
+    sc_tick modal_redraw_log_deadline;
 
     struct sc_size frame_size;
     struct sc_size content_size; // rotated frame_size
@@ -168,6 +178,11 @@ struct sc_screen {
 struct sc_screen_params {
     bool video;
     bool camera;
+    bool main_display;
+    bool auto_blackout;
+    sc_socket perspective_socket;
+    unsigned perspective_input_period;
+    bool perspective_scanner_alignment;
     bool flex_display;
 
     struct sc_controller *controller;
@@ -207,6 +222,7 @@ struct sc_screen_params {
     bool window_borderless;
 
     enum sc_render_fit render_fit;
+    bool flex_resize_preview;
     enum sc_orientation orientation;
     bool mipmaps;
 

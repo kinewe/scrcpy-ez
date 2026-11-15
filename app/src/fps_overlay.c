@@ -6,6 +6,9 @@
 
 #include "util/log.h"
 #include "util/tick.h"
+#ifdef _WIN32
+#include "native_source.h"
+#endif
 
 // 5x7 dot-matrix font: one uint8_t per row, 5 bits per row, least
 // significant bit on the right. Index: 0-9 are the digits, then
@@ -24,8 +27,8 @@ static const uint8_t FONT[25][7] = {
     {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}, // 8
     {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}, // 9
     {0x06, 0x09, 0x08, 0x1E, 0x08, 0x08, 0x08}, // f
-    {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10}, // p
-    {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}, // s
+    {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10}, // P
+    {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}, // S
     {0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11}, // M
     {0x08, 0x08, 0x08, 0x08, 0x08, 0x0A, 0x04}, // k
     {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}, // U
@@ -70,9 +73,10 @@ glyph_of(char c) {
         case 'f':
             return 10;
         case 'p':
+        case 'P':
             return 11;
         case 's':
-        case 'S': // same 5x7 glyph as 's', no dedicated capital bitmap
+        case 'S':
             return 12;
         case 'M':
             return 13;
@@ -103,7 +107,7 @@ glyph_of(char c) {
     }
 }
 
-// render "text" (e.g. "60fps") into a texture, replacing the previous one
+// render "text" (e.g. "60 FPS") into a texture, replacing the previous one
 static bool
 render_text(struct sc_fps_overlay *overlay, const char *text) {
     size_t len = strlen(text);
@@ -213,7 +217,7 @@ sc_fps_overlay_init(struct sc_fps_overlay *overlay, SDL_Renderer *renderer) {
     overlay->pos_x = -1;
     overlay->pos_y = -1;
 
-    return render_text(overlay, "0fps");
+    return render_text(overlay, "0 FPS");
 }
 
 void
@@ -413,32 +417,43 @@ sc_fps_overlay_refresh(struct sc_fps_overlay *overlay) {
     }
     sc_fps_sample_update(&overlay->sample, sc_tick_now());
     int fps = overlay->sample.fps;
-    if (fps == overlay->fps && !overlay->abr_dirty) {
+    int native_fps=-1;
+#ifdef _WIN32
+    native_fps=sc_native_source_fps();
+#endif
+    static int last_native_fps=-2;
+    if (fps == overlay->fps && !overlay->abr_dirty && native_fps==last_native_fps) {
         return false;
     }
     overlay->fps = fps;
+    last_native_fps=native_fps;
     overlay->abr_dirty = false;
 
     // "<fps>fps[/<abr_fps>] <bitrate><unit> <mode>"
-    // e.g. "60/60fps 15M USB", "60fps 15M USB" (before ABR state)
+    // e.g. "60/60 FPS 15M USB", "60 FPS 15M USB" (before ABR state)
     const char *mode = overlay->mode == SC_OVERLAY_MODE_WIFI ? "LAN" : "USB";
     char text[48];
+    if(native_fps>=0){
+        if(overlay->bitrate>=1000000)snprintf(text,sizeof(text),"UI %d FPS %dM %s",native_fps,overlay->bitrate/1000000,mode);
+        else snprintf(text,sizeof(text),"UI %d FPS %dk %s",native_fps,overlay->bitrate/1000,mode);
+        return render_text(overlay,text);
+    }
     if (overlay->bitrate >= 1000000) {
         if (overlay->abr_fps > 0) {
-            snprintf(text, sizeof(text), "%d/%dfps %dM %s", fps,
+            snprintf(text, sizeof(text), "%d/%d FPS %dM %s", fps,
                      overlay->abr_fps, overlay->bitrate / 1000000, mode);
         } else {
             // ABR state not received yet: show client submission rate only
-            snprintf(text, sizeof(text), "%dfps %dM %s", fps,
+            snprintf(text, sizeof(text), "%d FPS %dM %s", fps,
                      overlay->bitrate / 1000000, mode);
         }
     } else {
         if (overlay->abr_fps > 0) {
-            snprintf(text, sizeof(text), "%d/%dfps %dk %s", fps,
+            snprintf(text, sizeof(text), "%d/%d FPS %dk %s", fps,
                      overlay->abr_fps, overlay->bitrate / 1000, mode);
         } else {
             // ABR state not received yet: show client submission rate only
-            snprintf(text, sizeof(text), "%dfps %dk %s", fps,
+            snprintf(text, sizeof(text), "%d FPS %dk %s", fps,
                      overlay->bitrate / 1000, mode);
         }
     }

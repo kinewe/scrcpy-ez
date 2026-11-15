@@ -43,6 +43,8 @@ public final class ControlMessage {
     public static final int TYPE_SET_IMAGE_CLIPBOARD_VERSIONED = 26;
     public static final int TYPE_KEEP_AWAKE_HEARTBEAT = 27;
     public static final int TYPE_ABR_FEEDBACK = 28;
+    public static final int TYPE_TOGGLE_DISPLAY_BACKLIGHT = 29;
+    public static final int TYPE_AUTO_BLACKOUT = 30;
     private int[] abrFeedback;
     public static ControlMessage createAbrFeedback(int epoch, int sequence, int queueMs, int deliveryMs, int flags, int queueCount, int workUs, int receiveBps) {
         ControlMessage msg = new ControlMessage();

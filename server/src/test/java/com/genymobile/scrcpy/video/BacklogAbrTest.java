@@ -24,6 +24,49 @@ public class BacklogAbrTest {
         assertNotNull(d); assertEquals("source-backlog", d.reason);
         assertEquals(60000000, d.bitrate); assertTrue(d.fps < 100);
     }
+
+    private BacklogAbr reducedFrameRate() {
+        BacklogAbr p = new BacklogAbr(15000000, 60, false, false);
+        warm(p);
+        for (int t = 1200; t <= 1550; t += 10) {
+            p.observe(t, 900090, t * 1000L, 0, null);
+        }
+        assertEquals(45, p.fps(), .01);
+        return p;
+    }
+
+    @Test public void drainedStaticClientRecoversWithoutEncodedFrames() {
+        BacklogAbr p = reducedFrameRate();
+        ClientBacklog client = new ClientBacklog();
+        for (int t = 2800; t <= 4800; t += 200) {
+            client.update(1, t, 0, 80, ClientBacklog.IDLE, t);
+            BacklogAbr.Decision decision = p.observeIdle(t, client.get());
+            if (t < 4800) {
+                assertNull(decision);
+            } else {
+                assertNotNull(decision);
+                assertEquals("idle-recovery", decision.reason);
+                assertEquals(15000000, decision.bitrate);
+                assertEquals(60, decision.fps, .01);
+            }
+        }
+        assertFalse(p.canRecoverFps());
+    }
+
+    @Test public void idleRecoveryRequiresFreshFeedbackFromOneEpoch() {
+        BacklogAbr p = reducedFrameRate();
+        ClientBacklog client = new ClientBacklog();
+        client.update(1, 1, 0, 0, ClientBacklog.IDLE, 2800);
+        assertNull(p.observeIdle(2800, client.get()));
+        assertNull(p.observeIdle(4800, client.get()));
+        for (int t = 5000; t <= 7000; t += 200) {
+            int epoch = t < 6800 ? 1 : 2;
+            int queueCount = t == 6400 ? 1 : 0;
+            client.update(epoch, t, 0, 0, ClientBacklog.IDLE, queueCount, 0, t);
+            assertNull(p.observeIdle(t, client.get()));
+        }
+        assertEquals(45, p.fps(), .01);
+    }
     @Test public void oneCachedReportNeverCountsAsSustained() {
         BacklogAbr p = policy(); warm(p);
         ClientBacklog b = new ClientBacklog(); b.update(1, 1, 300, 0, 1, 1200);

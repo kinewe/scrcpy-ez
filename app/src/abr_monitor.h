@@ -8,6 +8,7 @@
 #define SC_ABR_FEEDBACK_VALID 1
 #define SC_ABR_FEEDBACK_HW 2
 #define SC_ABR_FEEDBACK_BLOCKED 4
+#define SC_ABR_FEEDBACK_IDLE 8
 
 struct sc_abr_sample {
     uint32_t epoch, sequence, queue_ms, delivery_ms, flags, queue_count, work_us, receive_bps;

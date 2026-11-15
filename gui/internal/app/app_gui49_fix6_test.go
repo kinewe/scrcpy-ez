@@ -176,7 +176,7 @@ func TestGui49Fix6UnlearnedTcpipStillLearns(t *testing.T) {
 	gui49fix6FastStable(t)
 
 	a.applyTrackUpdate([]adb.Device{teachfix3OfflineUSB()})
-	a.applyTrackUpdate([]adb.Device{teachfix3DeviceUSB()})
+	rc10TrackAndWait(t, a, []adb.Device{teachfix3DeviceUSB()})
 	if tcpips != 1 {
 		t.Fatalf("端口非 5555 应执行一次 tcpip: %d", tcpips)
 	}

@@ -10,12 +10,14 @@ import (
 	"io"
 	"net"
 	"time"
+
+	"scrcpy-ez/gui/internal/loopback"
 )
 
 // Serve is a separate authenticated, loopback-only RPC. Background discovery
 // has no callers here. The caller's connection controls its waiter lifetime.
 func Serve(ctx context.Context, c *Coordinator, valid func(Request) bool) (string, string, error) {
-	l, e := net.Listen("tcp", "127.0.0.1:0")
+	l, e := loopback.Listen()
 	if e != nil {
 		return "", "", e
 	}

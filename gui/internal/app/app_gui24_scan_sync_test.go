@@ -43,12 +43,15 @@ func gui24FindAddr(e DeviceEntry, addr string) *AddrEntry {
 // （mode=tls active fail=0）+ 162（mode=tcpip）+ wirelessForm=tls + tlsGuid。
 func TestMdnsEventsSyncTlsToArchive(t *testing.T) {
 	a, _ := newWirelessApp()
+	installMdnsVerificationFakes(t, a)
 	seedGui24TabletArchive(a)
 
 	a.onMdnsTrackEvents(context.Background(), adb.MdnsTrackEvents{
 		Snapshot: gui24TabletMdns(),
 		First:    true,
 	})
+	waitMdnsVerified(t, a, fixtureArchiveKey(a.profiles, "Xiaomi Pad 8 Pro"), "192.0.2.183:37201")
+	waitMdnsVerified(t, a, fixtureArchiveKey(a.profiles, "Xiaomi Pad 8 Pro"), "192.0.2.162:5555")
 
 	e, ok := a.profiles.Entry(fixtureArchiveKey(a.profiles, "Xiaomi Pad 8 Pro"))
 	if !ok {
@@ -95,10 +98,13 @@ func TestMdnsEventsNoSyncOnEmptySnapshot(t *testing.T) {
 // TestMdnsEventsIdempotent：连续两轮同快照 → 不重复入档、不破坏已有状态。
 func TestMdnsEventsIdempotent(t *testing.T) {
 	a, _ := newWirelessApp()
+	installMdnsVerificationFakes(t, a)
 	seedGui24TabletArchive(a)
 
 	snap := gui24TabletMdns()
 	a.onMdnsTrackEvents(context.Background(), adb.MdnsTrackEvents{Snapshot: snap, First: true})
+	waitMdnsVerified(t, a, fixtureArchiveKey(a.profiles, "Xiaomi Pad 8 Pro"), "192.0.2.183:37201")
+	waitMdnsVerified(t, a, fixtureArchiveKey(a.profiles, "Xiaomi Pad 8 Pro"), "192.0.2.162:5555")
 	first, _ := a.profiles.Entry(fixtureArchiveKey(a.profiles, "Xiaomi Pad 8 Pro"))
 	first37201 := gui24FindAddr(first, "192.0.2.183:37201")
 	if first37201 == nil {

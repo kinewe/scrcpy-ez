@@ -8,7 +8,7 @@ function el(id) {
   if (!elements.has(id)) elements.set(id, {textContent:'', style:{}, disabled:false, classList:{add(){},remove(){}}});
   return elements.get(id);
 }
-const ctx = vm.createContext({el, pairBusy:false, pairCtx:{manual:false,key:'192.0.2.1:45001',name:'old',pairPort:'37000'}});
+const ctx = vm.createContext({el, pairDirectAction:()=>false, pairBusy:false, pairCtx:{manual:false,key:'192.0.2.1:45001',name:'old',pairPort:'37000'}});
 function loadFunction(name, nextName) {
   const start = source.indexOf('  function ' + name + '(');
   const end = source.indexOf('  function ' + nextName + '(', start);
@@ -39,4 +39,28 @@ ctx.pairSyncFromState({pending:[],pairStatus:{phase:'idle'}});
 ctx.pairRenderFound({phase:'idle'});
 assert(el('pair-found-name').textContent.includes('未发现'));
 assert.strictEqual(el('pair-go').disabled,true);
+ctx.pairSyncFromState({pending:[],pendingSearching:true,pairStatus:{phase:'idle'}});
+ctx.pairRenderFound({phase:'idle'});
+assert(el('pair-found-name').textContent.includes('正在搜索'),'empty LAN search must show progress, not require TLS');
+const lanOnly={key:'192.0.2.159:5555',ip:'192.0.2.159',addr:'192.0.2.159:5555',name:'TCP/IP 设备',directAddr:'192.0.2.159:5555',pairPort:''};
+ctx.pairDirectAction=()=>true;
+ctx.pairSyncFromState({pending:[lanOnly],pendingSearching:false,pairStatus:{phase:'idle'}});
+ctx.pairRenderFound({phase:'idle'});
+assert(el('pair-found-addr').textContent.startsWith('192.0.2.159:5555'),'5555 must follow the IP colon');
+assert(!el('pair-found-addr').textContent.includes(' · 5555'),'IP and port must not use a prose separator');
+ctx.pairDirectAction=()=>false;
+ctx.pairRenderFound({phase:'idle'});
+assert(el('pair-found-addr').textContent.startsWith('192.0.2.159 · '),'normal TLS/code pairing retains the dot');
+const laterTls={...lanOnly,key:'192.0.2.159:41000',addr:'192.0.2.159:41000',pairPort:'42000'};
+ctx.pairSyncFromState({pending:[pending[0],laterTls],pairStatus:{phase:'idle'}});
+assert.strictEqual(ctx.pairCtx.ip,'192.0.2.159','a later TLS service must preserve selection of the same LAN host');
+ctx.pairCtx.key=lanOnly.key;
+el('pair-code').value='123456';
+ctx.pairSyncFromState({pending:[pending[0],{...laterTls,name:'PHONE'}],pairStatus:{phase:'failed'}});
+assert.strictEqual(ctx.pairCtx.name,'PHONE','late mDNS must enrich the selected host after a failed attempt');
+assert.strictEqual(ctx.pairCtx.key,laterTls.key,'retry must use the refreshed target');
+assert.strictEqual(ctx.pairCtx.pending[ctx.pairCtx.idx].key,laterTls.key,'switch-device navigation must track the refreshed list');
+assert.strictEqual(el('pair-code').value,'123456','metadata refresh must preserve the entered code');
+ctx.pairSyncFromState({pending:[pending[0]],pairStatus:{phase:'failed'}});
+assert.strictEqual(ctx.pairCtx.ip,'192.0.2.159','failed retry must not switch to a different host');
 console.log('pairing discovery context and port availability passed');

@@ -219,7 +219,7 @@ func (a *App) commitWirelessIdentity(check *wirelessIdentityCheck, serial string
 	}
 	a.mu.Unlock()
 	bridge.DebugLog("[app] 无线身份补学完成：%s -> %s", check.addr, key)
-	a.commitDisplay(base, "无线身份补学")
+	a.rebuildCurrentDisplay("无线身份补学")
 }
 
 // A rename submitted during learning belongs to that online epoch only. Never

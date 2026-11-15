@@ -207,6 +207,37 @@ static void test_auto_video_buffer(void) {
     assert(!scrcpy_parse_args(&args, ARRAY_LEN(invalid_frames), invalid_frames));
 }
 
+static void test_flex_preview_render_modes(void) {
+    struct scrcpy_cli_args args = {.opts = scrcpy_options_default};
+    char *automatic[] = {"scrcpy", "--new-display", "--flex-display"};
+    assert(scrcpy_parse_args(&args, ARRAY_LEN(automatic), automatic));
+    assert(args.opts.flex_resize_preview);
+    assert(args.opts.render_fit == SC_RENDER_FIT_UNSCALED);
+
+    args.opts = scrcpy_options_default;
+    char *explicit_unscaled[] = {"scrcpy", "--new-display", "--flex-display", "--render-fit=unscaled"};
+    assert(scrcpy_parse_args(&args, ARRAY_LEN(explicit_unscaled), explicit_unscaled));
+    assert(!args.opts.flex_resize_preview);
+    assert(args.opts.render_fit == SC_RENDER_FIT_UNSCALED);
+
+    args.opts = scrcpy_options_default;
+    char *explicit_stretched[] = {"scrcpy", "--new-display", "--flex-display", "--render-fit=stretched"};
+    assert(scrcpy_parse_args(&args, ARRAY_LEN(explicit_stretched), explicit_stretched));
+    assert(!args.opts.flex_resize_preview);
+    assert(args.opts.render_fit == SC_RENDER_FIT_STRETCHED);
+
+    args.opts = scrcpy_options_default;
+    char *main_display[] = {"scrcpy"};
+    assert(scrcpy_parse_args(&args, ARRAY_LEN(main_display), main_display));
+    assert(!args.opts.flex_resize_preview);
+#ifdef _WIN32
+    args.opts = scrcpy_options_default;
+    char *perspective[] = {"scrcpy", "--new-display", "--flex-display", "--start-app=com.android.browser", "--perspective-camera"};
+    assert(scrcpy_parse_args(&args, ARRAY_LEN(perspective), perspective));
+    assert(!args.opts.flex_resize_preview);
+#endif
+}
+
 int main(int argc, char *argv[]) {
     (void) argc;
     (void) argv;
@@ -218,5 +249,6 @@ int main(int argc, char *argv[]) {
     test_parse_shortcut_mods();
     test_hwdec_with_ez_options();
     test_auto_video_buffer();
+    test_flex_preview_render_modes();
     return 0;
 }

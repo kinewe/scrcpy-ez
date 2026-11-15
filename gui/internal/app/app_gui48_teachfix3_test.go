@@ -108,16 +108,16 @@ func TestTeachfix3RestartWindowNoFlicker(t *testing.T) {
 	logPath := mdns8StartLogCapture(t)
 
 	// 插线：offline added → 起遮罩（端口丢失 → tcpip，遮罩持续）。
-	a.applyTrackUpdate([]adb.Device{teachfix3OfflineUSB()})
+	rc10TrackAndWait(t, a, []adb.Device{teachfix3OfflineUSB()})
 	// adbd 重启窗口：USB 短暂消失 + 无线卡在线（假拔线，不清）。
-	a.applyTrackUpdate(nil)
-	a.applyTrackUpdate([]adb.Device{teachfix3Wifi()})
+	rc10TrackAndWait(t, a, nil)
+	rc10TrackAndWait(t, a, []adb.Device{teachfix3Wifi()})
 	if !teachfix3PlugActive(a) {
 		t.Fatal("重启窗口遮罩必须保持")
 	}
 	// USB 重新枚举（added）→ plugStart 幂等，不产生第二次起。
 	// gui49-fix6：USB 连续 device 满稳定窗口 → 清遮罩（getprop 不再清）。
-	a.applyTrackUpdate([]adb.Device{teachfix3DeviceUSB()})
+	rc10TrackAndWait(t, a, []adb.Device{teachfix3DeviceUSB()})
 	gui49fix6WaitPlugClear(t, a)
 
 	mdns8LogContains(t, logPath, "[app] 插线遮罩结束：REDMI K80")

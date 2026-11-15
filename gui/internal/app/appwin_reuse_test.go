@@ -73,7 +73,7 @@ func TestNotificationWindowNeverAcquiresOrdinaryRestartPolicy(t *testing.T) {
 	if err := e.a.startAppWin("12345TESTA", "com.tencent.mm", "Test", true); err != nil {
 		t.Fatal(err)
 	}
-	if p := e.f.waitParams(t, 1); p.ReuseAppTask || p.StartApp != "" || !p.VdKeepContent {
+	if p := e.f.waitParams(t, 1); p.ReuseAppTask || p.StartApp != "" || !p.VdKeepContent || p.PerspectiveCamera || p.VdUsb.Perspective || p.VdWifi.Perspective {
 		t.Fatal(p)
 	}
 	if !e.a.Snapshot().AppWins[0].NotificationWindow {

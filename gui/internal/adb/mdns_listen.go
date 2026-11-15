@@ -2,10 +2,10 @@ package adb
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,11 +19,11 @@ import (
 
 // 自建 mDNS 监听层（gui48-mdns6）：SO_REUSEADDR + JoinGroup(224.0.0.251:5353) +
 // 物理网卡绑定（gui48-mdns3 selectLanInterfaces 逻辑并入）。事件驱动为主：
-// 监听注册通告/Goodbye/周期通告；TTL=0（Goodbye）立即 stale。
+// 监听注册通告/Goodbye/周期通告；Goodbye 移除候选，上层核验实际通道。
 //
 // Windows 组播监听长时间运行可能「掉组」（socket 仍在但收不到组播包）——低频
 // 兜底用 QU（unicast response）查询：查询 QCLASS 带 0x8000 位，设备单播应答，
-// 不依赖组播组；60s 周期查询 < 90s 无信号窗口，掉组时也不会误 stale。
+// 不依赖组播组；5s 查询补偿设备回网通告丢失，在线状态仍由上层验身决定。
 const (
 	mdnsColdStartQueryOnce = true
 	// mdnsSelfCheckTimeout 是启动自检等待应答窗口。
@@ -32,8 +32,8 @@ const (
 
 var (
 	mdnsIdleProbeAfter = 90 * time.Second
-	// mdnsQueryInterval 是周期 QU 查询间隔（< 90s 无信号窗口）。
-	mdnsQueryInterval = 60 * time.Second
+	// mdnsQueryInterval 是周期 QU 查询间隔（补偿通告丢失）。
+	mdnsQueryInterval = 5 * time.Second
 	// mdnsRebuildInterval 是主组播 socket 周期重建间隔（Windows 掉组自愈）。
 	mdnsRebuildInterval = 60 * time.Second
 )
@@ -47,7 +47,7 @@ var mdnsListenServiceTypes = []string{
 	"_adb-tls-pairing._tcp",
 }
 
-// mdnsPeriodicQueryTypes 是 60s 周期 QU 查询的服务类型（只查连接类服务）。
+// mdnsPeriodicQueryTypes 是周期 QU 查询的服务类型（只查连接类服务）。
 var mdnsPeriodicQueryTypes = []string{
 	"_adb-tls-connect._tcp",
 	"_adb._tcp",
@@ -72,22 +72,69 @@ var mdnsVirtualMacPrefixes = []string{
 	"02:00:00", // Tailscale
 }
 
-// selectLanInterfaces 筛出物理局域网接口；候选为空返回空（上层回退全接口）。
-func selectLanInterfaces() []net.Interface {
+// collectLanIfaceAddrs 收集本机接口及其地址（selectLanInterfaces / QU 绑定共用）。
+func collectLanIfaceAddrs() []mdnsIface {
+	all, _ := collectMdnsIfaceAddrs()
+	return all
+}
+
+func collectMdnsIfaceAddrs() ([]mdnsIface, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	all := make([]mdnsIface, 0, len(ifaces))
 	for _, ifi := range ifaces {
-		addrs, _ := ifi.Addrs()
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagMulticast == 0 || isMdnsVirtualIface(ifi.Name, ifi.HardwareAddr) {
+			continue
+		}
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			return nil, err
+		}
 		all = append(all, mdnsIface{iface: ifi, addrs: addrs})
 	}
-	return filterLanInterfaces(all)
+	return all, nil
 }
 
-func filterLanInterfaces(all []mdnsIface) []net.Interface {
-	var out []net.Interface
+// selectLanInterfaces 筛出物理局域网接口；候选为空返回空（上层回退全接口）。
+func selectLanInterfaces() []net.Interface {
+	return filterLanInterfaces(collectLanIfaceAddrs())
+}
+
+// lanQueryBindAddrsFrom 返回 QU 查询/接收应绑定的 LAN IPv4 地址（纯函数，便于单测）：
+// 每个物理 LAN 网卡取可用 IPv4（排除 loopback/链路本地），去重保序。
+//
+// 为什么必须绑定具体地址：QU 查询是从本机发往 224.0.0.251:5353 的组播包。socket 若绑
+// 0.0.0.0，Windows 会按组播路由 metric 选出口——多网卡（VPN/ZeroTier 等）主机上可能从
+// 错误网卡发出，设备根本收不到查询（实测 ZeroTier metric 291 < WLAN 296 时查询全从
+// ZeroTier 出去 → mDNS 自检 2s limited、无线地址学不到）。
+func lanQueryBindAddrsFrom(all []mdnsIface) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, mi := range filterLanIfaceAddrs(all) {
+		for _, a := range mi.addrs {
+			ipn, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			if !usableMdnsIPv4(ipn.IP) {
+				continue
+			}
+			s := ipn.IP.To4().String()
+			if seen[s] {
+				continue
+			}
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// filterLanIfaceAddrs 与 filterLanInterfaces 同判据，但保留接口地址（QU 绑定需要）。
+func filterLanIfaceAddrs(all []mdnsIface) []mdnsIface {
+	var out []mdnsIface
 	for _, mi := range all {
 		ifi := mi.iface
 		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagMulticast == 0 {
@@ -99,7 +146,16 @@ func filterLanInterfaces(all []mdnsIface) []net.Interface {
 		if !hasUsableIPv4(mi.addrs) {
 			continue
 		}
-		out = append(out, ifi)
+		out = append(out, mi)
+	}
+	return out
+}
+
+func filterLanInterfaces(all []mdnsIface) []net.Interface {
+	kept := filterLanIfaceAddrs(all)
+	out := make([]net.Interface, 0, len(kept))
+	for _, mi := range kept {
+		out = append(out, mi.iface)
 	}
 	return out
 }
@@ -137,13 +193,16 @@ func hasUsableIPv4(addrs []net.Addr) bool {
 		if !ok {
 			continue
 		}
-		ip := ipn.IP.To4()
-		if ip == nil || ip.IsLoopback() || (ip[0] == 169 && ip[1] == 254) {
-			continue
+		if usableMdnsIPv4(ipn.IP) {
+			return true
 		}
-		return true
 	}
 	return false
+}
+
+func usableMdnsIPv4(ip net.IP) bool {
+	ip = ip.To4()
+	return ip != nil && ip.IsGlobalUnicast() && !ip.IsLinkLocalUnicast()
 }
 
 func listMulticastInterfaces() []net.Interface {
@@ -182,13 +241,30 @@ func listenMdnsSocket() (*ipv4.PacketConn, []net.Interface, error) {
 	// 读包路径不使用 ControlMessage（ReadFrom 的 OOB 返回值未被消费）；
 	// 旧版 x/net 在 Windows 上 SetControlMessage 是 stub（not implemented），
 	// 因此不调用——JoinGroup/ReadFrom 在 Windows 实测正常。
-	ifaces := selectLanInterfaces()
+	all, err := collectMdnsIfaceAddrs()
+	if err != nil {
+		_ = p4.Close()
+		return nil, nil, err
+	}
+	ifaces := filterLanInterfaces(all)
 	if len(ifaces) == 0 {
 		ifaces = listMulticastInterfaces()
 	}
+	names := make([]string, 0, len(ifaces))
+	joined := 0
 	for i := range ifaces {
-		_ = p4.JoinGroup(&ifaces[i], mdnsUDPAddr)
+		names = append(names, ifaces[i].Name)
+		if err := p4.JoinGroup(&ifaces[i], mdnsUDPAddr); err != nil {
+			bridge.DebugLog("[app] mdns 组播加入失败：iface=%s err=%v", ifaces[i].Name, err)
+		} else {
+			joined++
+		}
 	}
+	if joined == 0 {
+		_ = p4.Close()
+		return nil, nil, fmt.Errorf("mDNS could not join any multicast interface (%d candidates)", len(ifaces))
+	}
+	bridge.DebugLog("[app] mdns 主 socket 就绪：ifaces=%v", names)
 	return p4, ifaces, nil
 }
 
@@ -230,7 +306,10 @@ func mdnsServiceTypeForName(name string) (string, bool) {
 
 // mdnsInstanceForName 从实例 FQN 剥离服务类型后缀得到实例名。
 func mdnsInstanceForName(name, serviceType string) string {
-	fq := strings.TrimSuffix(strings.TrimSuffix(name, "."), ".local")
+	fq := strings.TrimSuffix(name, ".")
+	if strings.HasSuffix(strings.ToLower(fq), ".local") {
+		fq = fq[:len(fq)-len(".local")]
+	}
 	suffix := "." + serviceType
 	if strings.HasSuffix(strings.ToLower(fq), strings.ToLower(suffix)) {
 		return fq[:len(fq)-len(suffix)]
@@ -240,17 +319,22 @@ func mdnsInstanceForName(name, serviceType string) string {
 
 // mdnsRecordKey 是条目活性 key：type|instance。
 func mdnsRecordKey(s MdnsService) string {
-	return s.Type + "|" + s.Name
+	return strings.ToLower(s.Type + "|" + s.Name)
 }
 
 // --- 事件状态机 ---
 
 type mdnsListenEntry struct {
-	svc       MdnsService
-	idleTimer *time.Timer // 90s 无信号 → onIdleProbe；upsert 重置
+	svc             MdnsService
+	idleTimer       *time.Timer // 90s 无信号 → onIdleProbe；upsert 重置
+	generation      uint64
+	lastEmitted     time.Time
+	pendingPresence bool
 }
 
 type mdnsListenState struct {
+	recordsMu   sync.Mutex // serialize split-packet assembly and candidate publication
+	records     mdnsRecordCache
 	mu          sync.Mutex
 	entries     map[string]*mdnsListenEntry
 	last        []MdnsService
@@ -260,6 +344,8 @@ type mdnsListenState struct {
 	onEvents    func(MdnsTrackEvents)
 	onIdleProbe func(addr string)
 	queryFn     func(serviceType string)
+	closed      bool
+	callbacks   sync.WaitGroup
 }
 
 func newMdnsListenState(onEvents func(MdnsTrackEvents), onIdleProbe func(string), queryFn func(string)) *mdnsListenState {
@@ -287,7 +373,7 @@ func (s *mdnsListenState) coldStartQuery() {
 	}
 }
 
-// periodicQuery 每 60s 对连接类服务发 QU 查询（掉组兜底；单播应答不依赖组播组）。
+// periodicQuery 每 5s 对连接类服务发 QU 查询（掉组兜底；单播应答不依赖组播组）。
 func (s *mdnsListenState) periodicQuery() {
 	if s.queryFn == nil {
 		return
@@ -305,8 +391,14 @@ func (s *mdnsListenState) sawAnySignal() bool {
 
 // selfCheck 启动自检（异步，2s 窗口）：QU 有应答或组播有事件 → ok；
 // 无任何信号 → limited（防火墙/网段限制可能）。
-func (s *mdnsListenState) selfCheck() {
-	time.Sleep(mdnsSelfCheckTimeout)
+func (s *mdnsListenState) selfCheck(ctx context.Context) {
+	timer := time.NewTimer(mdnsSelfCheckTimeout)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+	}
 	if s.sawAnySignal() {
 		bridge.DebugLog("[app] mDNS 自检：ok")
 		return
@@ -317,7 +409,7 @@ func (s *mdnsListenState) selfCheck() {
 func (s *mdnsListenState) initial() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.firstSent {
+	if s.firstSent || s.closed {
 		return
 	}
 	s.firstSent = true
@@ -328,29 +420,58 @@ func (s *mdnsListenState) initial() {
 }
 
 func (s *mdnsListenState) upsert(svc MdnsService, now time.Time, force bool) {
-	_ = now
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
 	key := mdnsRecordKey(svc)
 	e := s.entries[key]
+	changed := e == nil || e.svc != svc
 	if e == nil {
 		e = &mdnsListenEntry{}
 		s.entries[key] = e
 	}
-	if e.idleTimer != nil {
-		e.idleTimer.Stop()
-	}
 	e.svc = svc
 	// 每次收到该服务信号 → 重置 90s timer（重新计数）
-	e.idleTimer = time.AfterFunc(mdnsIdleProbeAfter, func() { s.idleProbe(key) })
-	s.emitLocked(force)
+	s.resetIdleTimerLocked(key, e)
+	// Presence and topology are different evidence: a phone returning with the
+	// same endpoint must wake authentication, even though the snapshot is equal.
+	// Coalesce bursts, retaining a trailing wakeup instead of dropping it.
+	if changed || force || now.Sub(e.lastEmitted) >= mdnsPresenceInterval {
+		e.lastEmitted, e.pendingPresence = now, false
+		s.emitLocked(true, svc)
+	} else {
+		e.pendingPresence = true
+	}
 	s.mu.Unlock()
+}
+
+const mdnsPresenceInterval = 2 * time.Second
+
+func (s *mdnsListenState) flushPresence(now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	var confirmed []MdnsService
+	for _, e := range s.entries {
+		if e.pendingPresence && now.Sub(e.lastEmitted) >= mdnsPresenceInterval {
+			e.pendingPresence, e.lastEmitted = false, now
+			confirmed = append(confirmed, e.svc)
+		}
+	}
+	if len(confirmed) != 0 {
+		s.emitLocked(true, confirmed...)
+	}
 }
 
 func (s *mdnsListenState) gone(svc MdnsService) {
 	s.mu.Lock()
 	key := mdnsRecordKey(svc)
 	e := s.entries[key]
-	if e == nil {
+	if e == nil || s.closed {
 		s.mu.Unlock()
 		return
 	}
@@ -364,10 +485,21 @@ func (s *mdnsListenState) gone(svc MdnsService) {
 
 // idleProbe 是 90s 无信号事件：触发 onIdleProbe 后立即重置 timer 重新计数。
 // 结果回来前档案状态保持不变（上层 connect 成功→active / 失败→stale）。
-func (s *mdnsListenState) idleProbe(key string) {
+func (s *mdnsListenState) resetIdleTimerLocked(key string, e *mdnsListenEntry) {
+	if e.idleTimer != nil {
+		e.idleTimer.Stop()
+	}
+	e.generation++
+	generation := e.generation
+	e.idleTimer = time.AfterFunc(mdnsIdleProbeAfter, func() { s.idleProbe(key, e, generation) })
+}
+
+func (s *mdnsListenState) idleProbe(key string, expected *mdnsListenEntry, generation uint64) {
 	s.mu.Lock()
 	e := s.entries[key]
-	if e == nil {
+	// Stop cannot retract a timer callback that is already queued. Reject old
+	// generations, including a removed and re-added entry with the same key.
+	if s.closed || e == nil || e != expected || e.generation != generation {
 		s.mu.Unlock()
 		return
 	}
@@ -376,15 +508,26 @@ func (s *mdnsListenState) idleProbe(key string) {
 		addr = e.svc.Name
 	}
 	// 触发后立即重计数；即使 connect 探测还未返回也不额外推断。
-	if e.idleTimer != nil {
-		e.idleTimer.Stop()
-	}
-	e.idleTimer = time.AfterFunc(mdnsIdleProbeAfter, func() { s.idleProbe(key) })
+	s.resetIdleTimerLocked(key, e)
+	s.callbacks.Add(1)
 	s.mu.Unlock()
+	defer s.callbacks.Done()
 
 	if s.onIdleProbe != nil {
 		s.onIdleProbe(addr)
 	}
+}
+
+func (s *mdnsListenState) stop() {
+	s.mu.Lock()
+	s.closed = true
+	for _, e := range s.entries {
+		if e.idleTimer != nil {
+			e.idleTimer.Stop()
+		}
+	}
+	s.mu.Unlock()
+	s.callbacks.Wait()
 }
 
 func (s *mdnsListenState) snapshotLocked() []MdnsService {
@@ -404,16 +547,16 @@ func (s *mdnsListenState) snapshotLocked() []MdnsService {
 	return out
 }
 
-func (s *mdnsListenState) emitLocked(force bool) {
+func (s *mdnsListenState) emitLocked(force bool, confirmed ...MdnsService) {
 	snap := s.snapshotLocked()
 	if !force && reflect.DeepEqual(s.last, snap) {
 		return
 	}
 	added, removed := DiffMdnsServices(s.last, snap)
 	if force {
-		// QU 应答=「服务确认在」：内容未变也必须通知 app 层翻 active。
-		added = snap
-		removed = nil
+		// Only this response's service is fresh evidence. Replaying the whole
+		// cache would revive a dead TLS entry whenever 5555/another host replies.
+		added = append([]MdnsService(nil), confirmed...)
 	}
 	s.last = snap
 	if s.onEvents != nil {
@@ -432,7 +575,7 @@ func mdnsCollectRecords(msg *dns.Msg) (ptrs map[string]*dns.PTR, srvs map[string
 		for _, rr := range sec {
 			switch v := rr.(type) {
 			case *dns.PTR:
-				ptrs[strings.ToLower(v.Hdr.Name)] = v
+				ptrs[strings.ToLower(v.Hdr.Name+"|"+v.Ptr)] = v
 			case *dns.SRV:
 				srvs[strings.ToLower(v.Hdr.Name)] = v
 			case *dns.A:
@@ -443,163 +586,6 @@ func mdnsCollectRecords(msg *dns.Msg) (ptrs map[string]*dns.PTR, srvs map[string
 	return
 }
 
-func (s *mdnsListenState) processMessage(msg *dns.Msg, fromQuery bool) {
-	ptrs, srvs, as := mdnsCollectRecords(msg)
-	if len(ptrs) > 0 || len(srvs) > 0 {
-		s.mu.Lock()
-		s.sawSignal = true
-		s.mu.Unlock()
-	}
-	now := time.Now()
-
-	seen := map[string]bool{}
-	for _, ptr := range ptrs {
-		svcType, ok := mdnsServiceTypeForName(ptr.Hdr.Name)
-		if !ok {
-			continue
-		}
-		instance := mdnsInstanceForName(ptr.Ptr, svcType)
-		if instance == "" {
-			continue
-		}
-		key := svcType + "|" + instance
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		if ptr.Hdr.Ttl == 0 {
-			s.gone(MdnsService{Type: svcType, Name: instance, Mode: MdnsModeOf(svcType)})
-			continue
-		}
-		srv, ok := srvs[strings.ToLower(ptr.Ptr)]
-		if !ok {
-			continue
-		}
-		s.upsert(mdnsServiceFromRecords(svcType, instance, srv, as), now, fromQuery)
-	}
-	// SRV 直接兜底（无 PTR 的周期通告/应答）
-	for _, srv := range srvs {
-		svcType, ok := mdnsServiceTypeForName(srv.Hdr.Name)
-		if !ok {
-			continue
-		}
-		instance := mdnsInstanceForName(srv.Hdr.Name, svcType)
-		if instance == "" {
-			continue
-		}
-		key := svcType + "|" + instance
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		if srv.Hdr.Ttl == 0 {
-			s.gone(MdnsService{Type: svcType, Name: instance, Mode: MdnsModeOf(svcType)})
-			continue
-		}
-		s.upsert(mdnsServiceFromRecords(svcType, instance, srv, as), now, fromQuery)
-	}
-}
-
-func mdnsServiceFromRecords(svcType, instance string, srv *dns.SRV, as map[string]net.IP) MdnsService {
-	s := MdnsService{Type: svcType, Name: instance, Mode: MdnsModeOf(svcType)}
-	if ip, ok := as[strings.ToLower(srv.Target)]; ok && ip.To4() != nil {
-		s.Addr = net.JoinHostPort(ip.To4().String(), strconv.Itoa(int(srv.Port)))
-	}
-	return s
-}
-
-// --- 主循环 ---
-
-// BrowseMdns 监听 mDNS 组播（自建监听），阻塞直到 ctx 取消。
-// 冷启动发一轮 PTR 查询（一次）后旁听；对外仍发 MdnsTrackEvents 全量快照。
-// onIdleProbe：条目 90s 无新信号时回调（地址或实例名；由上层 connect 硬判定）。
-func (m *Manager) BrowseMdns(ctx context.Context, onEvents func(MdnsTrackEvents), onIdleProbe func(string)) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	p4, _, err := listenMdnsSocket()
-	if err != nil {
-		return err
-	}
-
-	// QU 查询走专用高位 socket（0.0.0.0:0 独占端口）：Windows 上多个进程绑定
-	// 5353 时单播应答只投递给其中一个——从 5353 发 QU 会收不到应答。专用
-	// socket 的单播应答独占接收，不依赖组播组。
-	queryConn, err := listenMdnsQuerySocket()
-	if err != nil {
-		_ = p4.Close()
-		return err
-	}
-	defer queryConn.Close()
-
-	queryFn := mdnsQueryFnFor(queryConn)
-	state := newMdnsListenState(onEvents, onIdleProbe, queryFn)
-	state.coldStartQuery()
-	state.initial()
-	go state.selfCheck() // 异步自检，不阻塞启动
-
-	owner := newMdnsLoopOwner(p4)
-	errCh := make(chan error, 1)
-	startMdnsReadLoop(owner, p4, owner.currentGen(), state, errCh)
-	go func() {
-		if err := readMdnsUDPLoop(queryConn, state); err != nil {
-			bridge.DebugLog("[app] mDNS queryConn 读取退出: %v", err)
-		}
-	}()
-	queryTick := time.NewTicker(mdnsQueryInterval)
-	defer queryTick.Stop()
-	rebuildTick := time.NewTicker(mdnsRebuildInterval)
-	defer rebuildTick.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			owner.closeCurrent()
-			_ = queryConn.Close()
-			return ctx.Err()
-		case err := <-errCh:
-			owner.closeCurrent() // 当前活跃 socket 已异常退出；保留 defer 语义清理。
-			return err
-		case <-queryTick.C:
-			state.periodicQuery()
-		case <-rebuildTick.C:
-			mdnsRebuildMainSocket(owner, state, errCh, listenMdnsMainSocketForRebuild)
-		}
-	}
-}
-
-// listenMdnsQuerySocket 创建 QU 查询专用 UDP socket（内核分配高位端口，独占）。
-func listenMdnsQuerySocket() (net.PacketConn, error) {
-	lc := net.ListenConfig{Control: reuseAddrControl}
-	return lc.ListenPacket(context.Background(), "udp4", "0.0.0.0:0")
-}
-
-// mdnsQueryFnFor 构造查询发送函数：QU 包固定从 queryConn（高位独占 socket）发出。
-func mdnsQueryFnFor(queryConn net.PacketConn) func(serviceType string) {
-	return func(serviceType string) {
-		msg := mdnsPtrQuery(serviceType)
-		b, err := msg.Pack()
-		if err != nil {
-			return
-		}
-		_, _ = queryConn.WriteTo(b, mdnsUDPAddr)
-	}
-}
-
-func readMdnsUDPLoop(pc net.PacketConn, state *mdnsListenState) error {
-	buf := make([]byte, 1500)
-	for {
-		n, _, err := pc.ReadFrom(buf)
-		if err != nil {
-			return err
-		}
-		msg := new(dns.Msg)
-		if err := msg.Unpack(buf[:n]); err != nil {
-			continue
-		}
-		state.processMessage(msg, true) // QU 单播应答 → forced emit
-	}
-}
-
 // mdnsReadConn 是主组播 socket 的读/关接口；*ipv4.PacketConn 天然满足，
 // 测试可用 fake 实现（重建交接语义单测）。
 type mdnsReadConn interface {
@@ -607,13 +593,14 @@ type mdnsReadConn interface {
 	Close() error
 }
 
-// mdnsLoopOwner 跟踪「当前活跃主 socket」的代数：重建成功时先 adopt 新 socket
-// 再关旧 socket；旧 loop 退出时因代数不匹配被忽略，只有当前活跃 loop 意外退出
-// 才会上报（保持 A 层意外退出语义）。
+// mdnsLoopOwner 跟踪当前主 socket 的代数和读取健康状态。旧代退出不能污染
+// 新代；当前代失败既保存在 owner 中，也发出唤醒通知，供浏览循环退避重建。
 type mdnsLoopOwner struct {
 	mu      sync.Mutex
 	current mdnsReadConn
 	gen     int64
+	readErr error
+	readers sync.WaitGroup
 }
 
 func newMdnsLoopOwner(c mdnsReadConn) *mdnsLoopOwner {
@@ -626,7 +613,14 @@ func (o *mdnsLoopOwner) adopt(c mdnsReadConn) (old mdnsReadConn, gen int64) {
 	o.gen++
 	old = o.current
 	o.current = c
+	o.readErr = nil
 	return old, o.gen
+}
+
+func (o *mdnsLoopOwner) failure() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.readErr
 }
 
 func (o *mdnsLoopOwner) isCurrent(gen int64) bool {
@@ -652,10 +646,23 @@ func (o *mdnsLoopOwner) closeCurrent() {
 
 // startMdnsReadLoop 启动主 socket 读循环；当前活跃代退出才写 errCh。
 func startMdnsReadLoop(owner *mdnsLoopOwner, conn mdnsReadConn, gen int64, state *mdnsListenState, errCh chan<- error) {
+	owner.readers.Add(1)
 	go func() {
+		defer owner.readers.Done()
 		err := readMdnsLoop(conn, state)
-		if err != nil && owner.isCurrent(gen) {
-			errCh <- err
+		owner.mu.Lock()
+		current := owner.gen == gen
+		if err != nil && current {
+			owner.readErr = err
+		}
+		owner.mu.Unlock()
+		if err != nil && current {
+			// The owner retains the failure even if an older notification fills
+			// the channel; a retired reader must never block shutdown.
+			select {
+			case errCh <- err:
+			default:
+			}
 		}
 	}()
 }
@@ -681,7 +688,7 @@ func mdnsRebuildMainSocket(owner *mdnsLoopOwner, state *mdnsListenState, errCh c
 }
 
 func readMdnsLoop(conn mdnsReadConn, state *mdnsListenState) error {
-	buf := make([]byte, 1500)
+	buf := make([]byte, 65535)
 	for {
 		n, _, _, err := conn.ReadFrom(buf)
 		if err != nil {
@@ -691,6 +698,6 @@ func readMdnsLoop(conn mdnsReadConn, state *mdnsListenState) error {
 		if err := msg.Unpack(buf[:n]); err != nil {
 			continue
 		}
-		state.processMessage(msg, false) // 组播事件 → DeepEqual 短路保持
+		state.processMessage(msg, false)
 	}
 }

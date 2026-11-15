@@ -29,6 +29,9 @@
 #include "frame_trace.h"
 #include "sdl_hints.h"
 #include "server.h"
+#include "native_source.h"
+#include "perspective_key.h"
+#include "util/env.h"
 #include "uhid/gamepad_uhid.h"
 #include "uhid/keyboard_uhid.h"
 #include "uhid/mouse_uhid.h"
@@ -118,6 +121,29 @@ session_monitor_finish(struct session_monitor *m) {
 #include "video_regulator.h"
 
 #define SC_BACKPRESSURE_THRESHOLD 8 // in-flight frames in video regulator
+
+/* RC.21: target package from --start-app (accepts "+pkg", "pkg/activity" and
+ * "pkg:..." forms). The key colour and the native probe are both chosen from
+ * it: WeCom's scan light is blue (green key), WeChat's scan line is green
+ * (production blue key). */
+static const char *
+scrcpy_target_package(const char *start_app) {
+    static char package[128];
+    if (!start_app || !*start_app) {
+        return NULL;
+    }
+    const char *p = start_app;
+    if (*p == '+') {
+        ++p;
+    }
+    size_t n = 0;
+    while (p[n] && p[n] != '/' && p[n] != ':' && n < sizeof(package) - 1) {
+        package[n] = p[n];
+        ++n;
+    }
+    package[n] = '\0';
+    return n ? package : NULL;
+}
 
 struct scrcpy {
     struct sc_server server;
@@ -232,6 +258,9 @@ event_loop(struct scrcpy *s, bool has_screen) {
                 LOGD("User requested to quit");
                 fprintf(stdout, "SCRCPY_EZ_USER_CLOSE\n");
                 fflush(stdout);
+                if (has_screen) {
+                    sc_screen_hide_window(&s->screen);
+                }
                 restore_device_screen(s, has_screen);
                 return SCRCPY_EXIT_SUCCESS;
             case SC_EVENT_ROUTE_SWITCH:
@@ -247,6 +276,9 @@ event_loop(struct scrcpy *s, bool has_screen) {
                 LOGI("Stop mirroring requested from device notification");
                 fprintf(stdout, "SCRCPY_EZ_USER_CLOSE\n");
                 fflush(stdout);
+                if (has_screen) {
+                    sc_screen_hide_window(&s->screen);
+                }
                 restore_device_screen(s, has_screen);
                 return SCRCPY_EXIT_SUCCESS;
             default:
@@ -611,6 +643,8 @@ scrcpy(struct scrcpy_options *options) {
         .force_adb_forward = options->force_adb_forward,
         .power_off_on_close = options->power_off_on_close,
         .clipboard_autosync = options->clipboard_autosync,
+        .clipboard_image_limit = options->start_app
+            && !strcmp(options->start_app, "com.tencent.mm:scan") ? SC_SCAN_CLIPBOARD_IMAGE_LIMIT : 0,
         .downsize_on_error = options->downsize_on_error,
         .tcpip = options->tcpip,
         .tcpip_dst = options->tcpip_dst,
@@ -620,6 +654,8 @@ scrcpy(struct scrcpy_options *options) {
         .camera_high_speed = options->camera_high_speed,
         .camera_torch = options->camera_torch,
         .camera_zoom = options->camera_zoom,
+        .perspective_camera = options->perspective_camera,
+        .perspective_package = options->start_app,
         .vd_destroy_content = options->vd_destroy_content,
         .vd_system_decorations = options->vd_system_decorations,
         .keep_active = options->keep_active,
@@ -634,6 +670,8 @@ scrcpy(struct scrcpy_options *options) {
         .on_connected = sc_server_on_connected,
         .on_disconnected = sc_server_on_disconnected,
     };
+    const char *target_package = scrcpy_target_package(options->start_app);
+
     if (!sc_server_init(&s->server, &params, &cbs, NULL)) {
         return SCRCPY_EXIT_FAILURE;
     }
@@ -657,6 +695,20 @@ scrcpy(struct scrcpy_options *options) {
     }
 
     server_started = true;
+
+#ifdef _WIN32
+    if (options->perspective_camera && !sc_perspective_color_key_enabled()) {
+        /* RC.20: start the automatic native-UI capture as soon as the device
+         * server is running; the probe waits for the scanner window itself.
+         * The serial may still be resolved asynchronously by the server thread,
+         * so prefer the explicitly requested serial from the command line. */
+        const char *native_source_serial =
+            s->server.serial ? s->server.serial : options->serial;
+        if (!sc_native_source_start(native_source_serial, target_package)) {
+            LOGW("Native alpha unavailable; will use perspective color key");
+        }
+    }
+#endif
 
     if (options->list) {
         int ok = await_for_server(NULL);
@@ -813,7 +865,7 @@ scrcpy(struct scrcpy_options *options) {
         };
 
         if (!sc_controller_init(&s->controller, s->server.control_socket,
-            options->keep_active && !options->new_display && !options->display_id
+            (options->new_display || (options->keep_active && !options->display_id))
                 && options->video_source == SC_VIDEO_SOURCE_DISPLAY,
             &controller_cbs, NULL)) {
             goto end;
@@ -972,9 +1024,21 @@ aoa_complete:
     assert(options->control == !!controller);
 
     if (options->window) {
+        bool main_display = !options->new_display && !options->display_id;
+        char *auto_blackout = sc_get_env("SCEZ_AUTO_BLACKOUT_MAIN_CAST");
+        bool enable_auto_blackout = auto_blackout && !strcmp(auto_blackout, "1");
+        free(auto_blackout);
         struct sc_screen_params screen_params = {
             .video = options->video_playback,
             .camera = options->video_source == SC_VIDEO_SOURCE_CAMERA,
+            .main_display = main_display,
+            .auto_blackout = enable_auto_blackout && main_display && controller
+                          && options->video_playback && options->cleanup && !options->turn_screen_off
+                          && options->video_source == SC_VIDEO_SOURCE_DISPLAY,
+            .perspective_socket = s->server.perspective_socket,
+            .perspective_input_period = options->perspective_input_period,
+            .perspective_scanner_alignment = options->start_app
+                && !strcmp(options->start_app, "com.tencent.mm:scan"),
             .flex_display = options->flex_display,
             .controller = controller,
             .fp = fp,
@@ -990,7 +1054,7 @@ aoa_complete:
             .legacy_paste = options->legacy_paste,
             .clipboard_autosync = options->clipboard_autosync,
             .clipboard_sync = options->clipboard_sync,
-            .clipboard_push_on_start = options->clipboard_push_on_start,
+            .clipboard_push_on_start = options->clipboard_push_on_start && !params.clipboard_image_limit,
             .shortcut_mods = options->shortcut_mods,
             .window_title = window_title,
             .always_on_top = options->always_on_top,
@@ -1002,9 +1066,10 @@ aoa_complete:
             .window_aspect_ratio_lock = options->window_aspect_ratio_lock,
             .window_borderless = options->window_borderless,
             .render_fit = options->render_fit,
+            .flex_resize_preview = options->flex_resize_preview,
             .orientation = options->display_orientation,
             .mipmaps = options->mipmaps,
-            .hwdec_mode = options->hwdec_mode,
+            .hwdec_mode = options->perspective_camera ? SC_HWDEC_MODE_DISABLED : options->hwdec_mode,
             .fullscreen = options->fullscreen,
             .start_fps_counter = options->start_fps_counter,
         };
@@ -1033,7 +1098,7 @@ aoa_complete:
         struct sc_screen *screen = options->video_playback ? &s->screen : NULL;
         assert(!screen || screen_initialized);
 
-        if (!sc_init_video_hwdec(&s->hwdec, options->hwdec_mode, screen)) {
+        if (!sc_init_video_hwdec(&s->hwdec, options->perspective_camera ? SC_HWDEC_MODE_DISABLED : options->hwdec_mode, screen)) {
             goto end;
         }
         hwdec_initialized = true;
@@ -1229,6 +1294,13 @@ aoa_complete:
     disconnected = ret == SCRCPY_EXIT_DISCONNECTED;
 
 end:
+    // Stop showing the projection before waiting for device-side restoration.
+    if (screen_initialized && !disconnected) {
+        sc_screen_hide_window(&s->screen);
+    }
+#ifdef _WIN32
+    sc_native_source_stop();
+#endif
     if (timeout_started) {
         sc_timeout_stop(&s->timeout);
     }
@@ -1281,12 +1353,9 @@ end:
     if (screen_initialized) {
         if (disconnected) {
             sc_screen_handle_disconnection(&s->screen);
+            sc_screen_hide_window(&s->screen);
         }
         LOGD("Quit...");
-
-        // Close the window immediately, because sc_screen_destroy() may only be
-        // called once the video decoder thread is joined (it may take time)
-        sc_screen_hide_window(&s->screen);
     }
 
     if (video_decoder_started) {

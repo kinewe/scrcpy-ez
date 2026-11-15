@@ -26,19 +26,36 @@ import (
 // 任务栏 / Alt+Tab 即显示它（WebView2 默认不设窗口图标，任务栏显示通用蓝窗）。
 // 说明：x/sys/windows 未导出 LoadIcon/SendMessage，用 LazyDLL 直调 user32。
 func setWindowIcon(hwnd uintptr) {
+	var module windows.Handle
+	if err := windows.GetModuleHandleEx(windows.GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, nil, &module); err != nil {
+		log.Printf("[ui] 获取图标资源模块失败: %v", err)
+		return
+	}
+	if !setWindowIconFromModule(hwnd, uintptr(module)) {
+		log.Printf("[ui] 加载 EZ 窗口图标失败")
+	}
+}
+
+func setWindowIconFromModule(hwnd, module uintptr) bool {
+	if hwnd == 0 || module == 0 {
+		return false
+	}
 	user32 := windows.NewLazySystemDLL("user32.dll")
 	procLoadIcon := user32.NewProc("LoadIconW")
 	procSendMessage := user32.NewProc("SendMessageW")
 
 	// MAKEINTRESOURCEW(1)：资源名=ID 1（go-winres 生成的 ICON 资源 id=1）
-	hIcon, _, _ := procLoadIcon.Call(0, 1)
+	// NULL means system resources, not this executable's icon resource.
+	// LoadIcon returns a shared resource handle; do not DestroyIcon it.
+	hIcon, _, _ := procLoadIcon.Call(module, 1)
 	if hIcon == 0 {
-		return
+		return false
 	}
 	// WM_SETICON == 0x0080；ICON_BIG=1（Alt+Tab/窗口大图标）、ICON_SMALL=0（标题栏/任务栏小图标）
 	const wmSetIcon, iconBig, iconSmall = 0x0080, 1, 0
 	procSendMessage.Call(hwnd, wmSetIcon, iconBig, hIcon)
 	procSendMessage.Call(hwnd, wmSetIcon, iconSmall, hIcon)
+	return true
 }
 
 // --- 关窗拦截（设置开关 B：关闭窗口时最小化到托盘） ---
@@ -258,6 +275,7 @@ func Run(a *app.App, html string) error {
 			bridge.DebugLog("[js] StartAppWin serial=%q pkg=%q", serial, pkg)
 			return a.StartAppWin(serial, pkg, name)
 		}},
+		{"StartWeChatScanner", a.StartWeChatScanner},
 		{"StopAppWin", func(serial, pkg string) error {
 			bridge.DebugLog("[js] StopAppWin serial=%q pkg=%q", serial, pkg)
 			return a.StopAppWin(serial, pkg)
@@ -352,6 +370,8 @@ func Run(a *app.App, html string) error {
 			return a.SetOtherAppWinSystemDecorations(enabled)
 		}},
 		{"SetKeepDeviceAwake", func(enabled bool) error { return a.SetKeepDeviceAwake(enabled) }},
+		{"SetAutoBlackoutMainCast", func(enabled bool) error { return a.SetAutoBlackoutMainCast(enabled) }},
+		{"SetForcePerspectiveColorKey", func(enabled bool) error { return a.SetForcePerspectiveColorKey(enabled) }},
 		{"SetVideoSmoothing", func(enabled bool) error { return a.SetVideoSmoothing(enabled) }},
 		{"SetVideoSmoothingFrames", func(frames int) error { return a.SetVideoSmoothingFrames(frames) }},
 		{"SetNotificationSettings", func(enabled, preview bool) error {

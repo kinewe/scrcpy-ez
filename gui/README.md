@@ -30,5 +30,6 @@ go build -mod=readonly -trimpath -ldflags="-s -w -H windowsgui" -o dist/scrcpy-e
 
 - `SCEZ_BAT_PATH`：覆盖支持脚本路径；默认取 EXE 所在目录的 `投屏支持.bat`。
 - `SCEZ_ADB_PATH`：覆盖 adb 路径；默认取支持脚本所在目录的 `adb.exe`。
+- `SCEZ_BRIDGE_LOG` 可指定桥接日志路径，设为 `1` 时写入软件目录下的 `bridge.log`。新日志按 8 MiB 轮转，保留当前文件和最近三份历史。开启日志时及轮转后清理超过七天的历史，默认路径在开启时也清理过期的旧版日期日志。逐帧追踪文件单独保存。
 
 设备档案和设置保存到软件目录。发布包只携带空档案，更新保留用户已有档案和设置。更新流程见 [应用内更新](docs/in-app-update.md) 和 [双源选择](docs/dual-source-update.md)。

@@ -1,0 +1,14 @@
+{
+  "approvedOriginalSHA256": "3cef41e7e620ef5b2084b2fd935b49e99e28b7b07cb636c6a4fc203ff3c05588",
+  "layersPixelIdenticalToApprovedCutouts": true,
+  "targetFPS": 60,
+  "fadeMilliseconds": 180,
+  "filesSHA256": {
+    "armor.png": "e38f33679374d04a81e700c8dba5fa607a329101398aade5732fcc94f66bca89",
+    "caption.png": "64f4badf3c91c54fd8e14530f2ffc8e470b43d94ae0016de255b887b1cdb7afc",
+    "central.png": "b396b44153aff31ae343c4e495c56014a6b4fc37974683196a19137f9478a33a",
+    "coarse.png": "0b4fde045a29c23899122af2c3c0f7f1980b2dcd1926a2ac133e77c6e41badf5",
+    "inner.png": "abcad74673c709c70eaa89a83f0e621f6e5c66baac6d0c7e5a06aa510a064207",
+    "middle.png": "c17277df5e041134879a23a41cb01573b09af07ee380d50ca9b1434094011eb5"
+  }
+}

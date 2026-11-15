@@ -1,4 +1,7 @@
 #include "screen.h"
+#include "local_preview.h"
+#include "native_source.h"
+#include "resize_preview.h"
 #include "frame_trace.h"
 
 #include <assert.h>
@@ -24,6 +27,55 @@
 #include "util/sdl.h"
 
 #define DISPLAY_MARGINS 96
+
+#ifdef _WIN32
+static WNDPROC screen_original_wndproc;
+
+static LRESULT CALLBACK
+screen_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    if (msg == WM_CLOSE) {
+        // Hide before SDL processes the close and tears down the renderer.
+        ShowWindow(hwnd, SW_HIDE);
+    } else if (msg == WM_ERASEBKGND) {
+        return 1;
+    }
+    return CallWindowProcW(screen_original_wndproc, hwnd, msg, wparam,
+                           lparam);
+}
+
+static void
+install_close_hide(SDL_Window *window) {
+    SDL_PropertiesID props = SDL_GetWindowProperties(window);
+    HWND hwnd = (HWND) SDL_GetPointerProperty(
+        props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+    if (!hwnd) {
+        return;
+    }
+    SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND,
+                     (LONG_PTR) GetStockObject(BLACK_BRUSH));
+
+    typedef HRESULT (WINAPI *dwm_set_attribute_fn)(HWND, DWORD,
+                                                   LPCVOID, DWORD);
+    HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
+    if (dwm) {
+        dwm_set_attribute_fn set_attribute = (dwm_set_attribute_fn)
+            GetProcAddress(dwm, "DwmSetWindowAttribute");
+        if (set_attribute) {
+            BOOL disabled = TRUE;
+            // DWMWA_TRANSITIONS_FORCEDISABLED
+            set_attribute(hwnd, 3, &disabled, sizeof(disabled));
+        }
+        FreeLibrary(dwm);
+    }
+
+    WNDPROC previous = (WNDPROC) SetWindowLongPtrW(
+        hwnd, GWLP_WNDPROC, (LONG_PTR) screen_window_proc);
+    if (previous) {
+        screen_original_wndproc = previous;
+    }
+}
+#endif
+
 
 #define DOWNCAST(SINK) container_of(SINK, struct sc_screen, frame_sink)
 
@@ -260,6 +312,11 @@ compute_content_rect(struct sc_size window_size, struct sc_size content_size,
 static void
 sc_screen_update_content_rect(struct sc_screen *screen) {
     struct sc_size window_size = sc_sdl_get_window_size(screen->window);
+    if (screen->flex_resize_preview && !screen->is_icon_active
+            && sc_resize_preview_rect(window_size, screen->content_size,
+                                      &screen->rect)) {
+        return;
+    }
     compute_content_rect(window_size, screen->content_size,
                          screen->is_icon_active, screen->render_fit,
                          &screen->rect);
@@ -287,6 +344,11 @@ sc_screen_trace_display(struct sc_screen *screen) {
 //
 // Set the update_content_rect flag if the window or content size may have
 // changed, so that the content rectangle is recomputed
+#ifdef _WIN32
+static void sc_screen_arm_calibration_timer(struct sc_screen *screen);
+
+#endif
+
 static void
 sc_screen_render(struct sc_screen *screen, bool update_content_rect) {
     assert(screen->window_shown);
@@ -295,17 +357,24 @@ sc_screen_render(struct sc_screen *screen, bool update_content_rect) {
         sc_screen_update_content_rect(screen);
     }
 
+    if (screen->perspective.started) {
+        double density = SDL_GetWindowPixelDensity(screen->window);
+        sc_perspective_update(&screen->perspective, screen->rect.x * density, screen->rect.y * density,
+                              screen->rect.w * density, screen->rect.h * density, screen->orientation);
+    }
+
     SDL_Renderer *renderer = screen->renderer;
-    struct sc_screen_bg_color bg = screen->bg;
-    SDL_SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, 0);
-    sc_sdl_render_clear(renderer);
 
     SDL_Texture *texture = screen->is_icon_active
                          ? screen->icon_tex
                          : sc_texture_get(&screen->tex);
-    if (!texture) {
-        goto end;
+    if (!screen->is_icon_active && !screen->disconnected) {
+        texture = local_preview_texture(renderer, &screen->perspective,
+                                        screen->frame, texture);
     }
+    struct sc_screen_bg_color bg = screen->bg;
+    SDL_SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, 0);
+    sc_sdl_render_clear(renderer);
 
     float scale = SDL_GetWindowPixelDensity(screen->window);
     if (scale == 0) {
@@ -321,6 +390,11 @@ sc_screen_render(struct sc_screen *screen, bool update_content_rect) {
         .w = screen->rect.w * scale,
         .h = screen->rect.h * scale,
     };
+    bool ok = false;
+    if (!texture) {
+        goto end;
+    }
+
     enum sc_orientation orientation = screen->orientation;
 
     const SDL_FRect *srcrect = NULL;
@@ -332,9 +406,9 @@ sc_screen_render(struct sc_screen *screen, bool update_content_rect) {
         frame_rect.w = frame_size.width;
         frame_rect.h = frame_size.height;
         srcrect = &frame_rect;
+        if (local_preview_is_composited(texture)) SDL_GetTextureSize(texture, &frame_rect.w, &frame_rect.h);
     }
 
-    bool ok = false;
     if (orientation == SC_ORIENTATION_0) {
         // always align to a physical pixel
         geometry.x = (int32_t) geometry.x;
@@ -369,8 +443,50 @@ sc_screen_render(struct sc_screen *screen, bool update_content_rect) {
     if (!ok) {
         LOGE("Could not render texture: %s", SDL_GetError());
     }
-
-end:
+end:;
+#ifdef _WIN32
+    struct sc_perspective *p = &screen->perspective;
+    bool stopped = !p->started || screen->is_icon_active || screen->disconnected
+                || atomic_load(&p->stopped) || atomic_load(&p->evicted);
+    bool active = !stopped && atomic_load(&p->active);
+    uint32_t scene_epoch = stopped ? 0 : sc_native_source_scene_epoch();
+    bool handoff = !stopped && (scene_epoch || sc_native_source_release_pending());
+    bool calibrating = false;
+    bool preparing = false;
+    if (active) {
+        sc_mutex_lock(&p->mutex);
+        preparing = p->calibrating || atomic_load(&p->photo_phase)
+                 || p->key_probe == SC_KEY_PROBE_REQUESTED
+                 || p->key_probe == SC_KEY_PROBE_ACTIVE
+                 || p->key_probe == SC_KEY_PROBE_VERIFY;
+        calibrating = preparing || atomic_load(&p->calibration_requested);
+        sc_mutex_unlock(&p->mutex);
+    }
+    bool ready = active && !handoff && !calibrating && ok
+              && local_preview_is_composited(texture);
+    sc_tick mask_now = sc_tick_now();
+    struct sc_calibration_mask *mask = &screen->calibration_mask;
+    int previous_phase = mask->state.phase;
+    bool previous_timeout = mask->state.timed_out;
+    sc_calibration_mask_step(&mask->state, active, handoff, preparing, ready,
+                             stopped, mask_now);
+    if (!previous_timeout && mask->state.timed_out) {
+        LOGW("Perspective preparation timed out; releasing calibration cover");
+        local_preview_abort_preparation(p);
+    }
+    if (previous_phase != (int) mask->state.phase) {
+        LOGD("Calibration mask: phase=%u active=%d handoff=%d ready=%d",
+             (unsigned) mask->state.phase, active, handoff, ready);
+    }
+    bool covered = false;
+    if (sc_calibration_mask_visible(&mask->state)) {
+        // A native rule may replace the whole app page during a system scene.
+        SDL_FRect bounds = {screen->rect.x * scale, screen->rect.y * scale,
+                            screen->rect.w * scale, screen->rect.h * scale};
+        covered = sc_calibration_mask_draw(mask, renderer, &bounds, mask_now);
+        sc_screen_arm_calibration_timer(screen);
+    }
+#endif
     // a hidden overlay (Ctrl+F toggle) must not be rendered at all
     if (sc_fps_overlay_is_visible(&screen->fps_overlay)) {
         sc_fps_overlay_draw(&screen->fps_overlay, renderer);
@@ -380,7 +496,29 @@ end:
     SC_TRACE(SC_TRACE_PRESENT_BEGIN, frame ? frame->opaque_ref : NULL,
              frame ? frame->pts : AV_NOPTS_VALUE, 0, present_id,
              screen->trace_new_frame ? 1 : 0);
-    sc_sdl_render_present(renderer);
+    bool presented = sc_sdl_render_present(renderer);
+    if (screen->im.auto_blackout_pending && screen->trace_new_frame
+            && presented && ok && !screen->is_icon_active && !screen->disconnected
+            && !(SDL_GetWindowFlags(screen->window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED))) {
+        sc_input_manager_request_auto_blackout(&screen->im);
+    }
+#ifdef _WIN32
+    if (presented && ok && !covered
+            && !(SDL_GetWindowFlags(screen->window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED))) {
+        local_preview_on_presented(texture);
+    }
+    if (presented && covered && scene_epoch && mask->state.phase == SC_MASK_COVERING
+            && !(SDL_GetWindowFlags(screen->window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED))) {
+        sc_perspective_begin_handoff(p, scene_epoch);
+        sc_native_source_scene_covered(scene_epoch);
+    }
+    if (!presented && ready && previous_phase == SC_MASK_COVERING
+            && mask->state.phase == SC_MASK_FADING) {
+        mask->state.phase = SC_MASK_COVERING;
+    }
+#else
+    (void) presented;
+#endif
     SC_TRACE(SC_TRACE_PRESENT_END, frame ? frame->opaque_ref : NULL,
              frame ? frame->pts : AV_NOPTS_VALUE, 0, present_id,
              screen->trace_new_frame ? 1 : 0);
@@ -395,6 +533,28 @@ end:
 // above the registered events avoids intercepting real events.
 #define SC_LAMP_ANIM_TICK_EVENT (SDL_EVENT_USER + 0x100)
 #define SC_FPS_SAMPLE_EVENT (SDL_EVENT_USER + 0x101)
+#define SC_CALIBRATION_TICK_EVENT (SDL_EVENT_USER + 0x102)
+
+#ifdef _WIN32
+static Uint64 SDLCALL
+sc_screen_calibration_timer_cb(void *userdata, SDL_TimerID timer_id,
+                               Uint64 interval) {
+    (void) userdata;
+    (void) timer_id;
+    (void) interval;
+    sc_push_event(SC_CALIBRATION_TICK_EVENT);
+    return 0;
+}
+
+static void
+sc_screen_arm_calibration_timer(struct sc_screen *screen) {
+    if (!screen->calibration_timer
+            && !(SDL_GetWindowFlags(screen->window) & SDL_WINDOW_MINIMIZED)) {
+        screen->calibration_timer = SDL_AddTimerNS(1000000000 / 60,
+                                      sc_screen_calibration_timer_cb, NULL);
+    }
+}
+#endif
 
 static Uint32 SDLCALL
 sc_screen_fps_sample_timer_cb(void *userdata, SDL_TimerID timer_id,
@@ -495,6 +655,7 @@ sc_screen_on_resize(struct sc_screen *screen, const SDL_WindowEvent *event) {
 #endif
 
 #ifdef CONTINUOUS_RESIZING_WORKAROUND
+static bool sc_screen_update_frame(struct sc_screen *screen, bool *rendered);
 // On Windows and MacOS, resizing blocks the event loop, so resizing events are
 // not triggered. As a workaround, handle them in an event handler.
 //
@@ -505,13 +666,53 @@ event_watcher(void *data, SDL_Event *event) {
     struct sc_screen *screen = data;
     assert(screen->video);
 
-    if (event->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED
-            || event->type == SDL_EVENT_WINDOW_RESIZED) {
-        // In practice, it seems to always be called from the same thread in
-        // that specific case. Anyway, it's just a workaround.
+    if (!SDL_IsMainThread()) {
+        return true;
+    }
+    if (!sc_resize_preview_redraw_event(event, SDL_GetWindowID(screen->window),
+                                       true, screen->window_shown,
+                                       screen->modal_redraw_in_progress)) {
+        return true;
+    }
+
+    screen->modal_redraw_in_progress = true;
+    bool redraw = screen->flex_display || screen->perspective.started;
+    if (event->type == SDL_EVENT_WINDOW_RESIZED
+            || (event->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED && !redraw)) {
         sc_screen_on_resize(screen, &event->window);
     }
 
+    if (redraw) {
+        // SDL exposes the window from inside the OS modal drag loop. Consume
+        // new frames there instead of waiting for SDL_WaitEvent to return.
+        // Drop old wakeups BEFORE consuming: dropping them afterwards could
+        // discard the only wakeup for a concurrently arriving new frame.
+        SDL_FlushEvent(SC_EVENT_NEW_FRAME);
+        sc_screen_update_content_rect(screen);
+        bool rendered = false;
+        if (!sc_screen_update_frame(screen, &rendered)) {
+            LOGE("Frame update during window resize failed");
+        }
+        if (!rendered) {
+            // New frames already present in sc_screen_apply_frame(). Redraw
+            // the old texture only when there was no new unpaused frame.
+            sc_screen_render(screen, false);
+        }
+        ++screen->modal_redraw_paints;
+        sc_tick now = sc_tick_now();
+        if (screen->flex_display && now >= screen->modal_redraw_log_deadline) {
+            screen->modal_redraw_log_deadline = now + SC_TICK_FROM_SEC(1);
+            struct sc_size window = sc_sdl_get_window_size(screen->window);
+            LOGI("SCRCPY_EZ_FLEX_PREVIEW paints=%" PRIu64
+                 " consumed=%" PRIu64 " window=%ux%u video=%ux%u auto_fit=%d",
+                 screen->modal_redraw_paints, screen->modal_redraw_frames,
+                 (unsigned) window.width, (unsigned) window.height,
+                 (unsigned) screen->content_size.width,
+                 (unsigned) screen->content_size.height,
+                 screen->flex_resize_preview);
+        }
+    }
+    screen->modal_redraw_in_progress = false;
     return true;
 }
 #endif
@@ -577,6 +778,8 @@ sc_screen_frame_sink_push(struct sc_frame_sink *sink, const AVFrame *frame) {
     struct sc_screen *screen = DOWNCAST(sink);
     assert(screen->video);
 
+    sc_perspective_observe(&screen->perspective, frame);
+
     sc_mutex_lock(&screen->mutex);
     bool previous_skipped = sc_frame_buffer_has_frame(&screen->fb);
     bool ok = sc_frame_buffer_push(&screen->fb, frame);
@@ -613,6 +816,9 @@ bool
 sc_screen_init(struct sc_screen *screen,
                const struct sc_screen_params *params) {
     screen->controller = params->controller;
+    memset(&screen->perspective, 0, sizeof(screen->perspective));
+    memset(&screen->calibration_mask, 0, sizeof(screen->calibration_mask));
+    screen->calibration_timer = 0;
 
     screen->resize_pending = false;
     screen->window_shown = false;
@@ -644,6 +850,11 @@ sc_screen_init(struct sc_screen *screen,
     screen->camera = params->camera;
     screen->window_aspect_ratio_lock = params->window_aspect_ratio_lock;
     screen->render_fit = params->render_fit;
+    screen->flex_resize_preview = params->flex_resize_preview;
+    screen->modal_redraw_in_progress = false;
+    screen->modal_redraw_paints = 0;
+    screen->modal_redraw_frames = 0;
+    screen->modal_redraw_log_deadline = 0;
     screen->flex_display = params->flex_display;
 
     screen->bg.r = (params->background_color >> 16) & 0xFF;
@@ -687,6 +898,7 @@ sc_screen_init(struct sc_screen *screen,
 
     // Always create the window hidden to prevent blinking during initialization
     uint32_t window_flags = SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
+    if (params->perspective_socket != SC_SOCKET_NONE) { window_flags |= SDL_WINDOW_TRANSPARENT; }
     if (params->always_on_top) {
         window_flags |= SDL_WINDOW_ALWAYS_ON_TOP;
     }
@@ -725,8 +937,11 @@ sc_screen_init(struct sc_screen *screen,
         LOGE("Could not create window: %s", SDL_GetError());
         goto error_destroy_fps_counter;
     }
+#ifdef _WIN32
+    install_close_hide(screen->window);
+#endif
 
-    screen->renderer = SDL_CreateRenderer(screen->window, NULL);
+    screen->renderer = SDL_CreateRenderer(screen->window, params->perspective_socket != SC_SOCKET_NONE ? "direct3d11" : NULL);
     if (!screen->renderer) {
         LOGE("Could not create renderer: %s", SDL_GetError());
         goto error_destroy_window;
@@ -817,11 +1032,14 @@ sc_screen_init(struct sc_screen *screen,
         .mp = params->mp,
         .gp = params->gp,
         .camera = params->camera,
+        .main_display = params->main_display,
+        .auto_blackout = params->auto_blackout,
         .mouse_bindings = params->mouse_bindings,
         .legacy_paste = params->legacy_paste,
         .clipboard_autosync = params->clipboard_autosync,
         .clipboard_sync = params->clipboard_sync,
         .clipboard_push_on_start = params->clipboard_push_on_start,
+        .clipboard_image_limit = params->perspective_scanner_alignment ? SC_SCAN_CLIPBOARD_IMAGE_LIMIT : 0,
         .shortcut_mods = params->shortcut_mods,
     };
 
@@ -830,15 +1048,6 @@ sc_screen_init(struct sc_screen *screen,
     // Initialize even if not used for simplicity
     sc_mouse_capture_init(&screen->mc, screen->window, params->shortcut_mods);
 
-#ifdef CONTINUOUS_RESIZING_WORKAROUND
-    if (screen->video) {
-        ok = SDL_AddEventWatch(event_watcher, screen);
-        if (!ok) {
-            LOGW("Could not add event watcher for continuous resizing: %s",
-                 SDL_GetError());
-        }
-    }
-#endif
 
     memset(&screen->current_session, 0, sizeof(screen->current_session));
 
@@ -850,6 +1059,18 @@ sc_screen_init(struct sc_screen *screen,
     };
 
     screen->frame_sink.ops = &ops;
+
+    if (params->perspective_socket != SC_SOCKET_NONE) {
+#ifdef _WIN32
+        void *camera_hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(screen->window),
+                SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+        if (!sc_perspective_start(&screen->perspective, params->perspective_socket,
+                                  camera_hwnd, params->perspective_input_period,
+                                  params->perspective_scanner_alignment)) {
+            av_frame_free(&screen->frame); goto error_destroy_texture;
+        }
+#endif
+    }
 
 #ifndef NDEBUG
     screen->open = false;
@@ -873,6 +1094,15 @@ sc_screen_init(struct sc_screen *screen,
             LOGW("Could not start overlay sampling timer: %s", SDL_GetError());
         }
     }
+#ifdef CONTINUOUS_RESIZING_WORKAROUND
+    if (screen->video) {
+        ok = SDL_AddEventWatch(event_watcher, screen);
+        if (!ok) {
+            LOGW("Could not add event watcher for continuous resizing: %s",
+                 SDL_GetError());
+        }
+    }
+#endif
     return true;
 
 error_destroy_texture:
@@ -954,10 +1184,16 @@ void
 sc_screen_hide_window(struct sc_screen *screen) {
     sc_sdl_hide_window(screen->window);
     screen->window_shown = false;
+    if (screen->calibration_timer) {
+        SDL_RemoveTimer(screen->calibration_timer);
+        screen->calibration_timer = 0;
+    }
+    memset(&screen->calibration_mask.state, 0, sizeof(screen->calibration_mask.state));
 }
 
 void
 sc_screen_interrupt(struct sc_screen *screen) {
+    sc_perspective_stop(&screen->perspective);
     sc_fps_counter_interrupt(&screen->fps_counter);
 }
 
@@ -977,6 +1213,11 @@ sc_screen_tsf_destroy(struct sc_screen *screen, HWND hwnd);
 
 void
 sc_screen_join(struct sc_screen *screen) {
+    // Closing the window must not leave a blank (white, renderer default)
+    // client area visible while the remaining cleanup/native-alpha restore runs.
+    if (screen->window) {
+        sc_sdl_hide_window(screen->window);
+    }
     sc_fps_counter_join(&screen->fps_counter);
     if (screen->disconnect_started) {
         sc_disconnect_join(&screen->disconnect);
@@ -985,6 +1226,18 @@ sc_screen_join(struct sc_screen *screen) {
 
 void
 sc_screen_destroy(struct sc_screen *screen) {
+#ifdef CONTINUOUS_RESIZING_WORKAROUND
+    if (screen->video) {
+        SDL_RemoveEventWatch(event_watcher, screen);
+    }
+#endif
+    local_preview_destroy();
+    if (screen->calibration_timer) {
+        SDL_RemoveTimer(screen->calibration_timer);
+        screen->calibration_timer = 0;
+    }
+    sc_calibration_mask_destroy(&screen->calibration_mask);
+    sc_perspective_destroy(&screen->perspective);
 #ifndef NDEBUG
     assert(!screen->open);
 #endif
@@ -1175,8 +1428,19 @@ sc_screen_apply_frame(struct sc_screen *screen, bool can_resize) {
 
 
 static bool
-sc_screen_update_frame(struct sc_screen *screen) {
+sc_screen_update_frame(struct sc_screen *screen, bool *rendered) {
     assert(screen->video);
+    if (rendered) {
+        *rendered = false;
+    }
+
+    sc_mutex_lock(&screen->mutex);
+    bool pending = sc_frame_buffer_has_frame(&screen->fb);
+    sc_mutex_unlock(&screen->mutex);
+    if (!pending) { return true; } // a modal move handler may have consumed it
+    if (screen->modal_redraw_in_progress) {
+        ++screen->modal_redraw_frames;
+    }
 
     if (screen->paused) {
         if (!screen->resume_frame) {
@@ -1200,7 +1464,11 @@ sc_screen_update_frame(struct sc_screen *screen) {
     // read with lock held
     bool can_resize = !screen->prevent_auto_resize;
     sc_mutex_unlock(&screen->mutex);
-    return sc_screen_apply_frame(screen, can_resize);
+    bool ok = sc_screen_apply_frame(screen, can_resize);
+    if (rendered) {
+        *rendered = ok;
+    }
+    return ok;
 }
 
 void
@@ -2089,6 +2357,15 @@ sc_screen_apply_keyboard_layout(struct sc_screen *screen, bool english) {
 
 void
 sc_screen_handle_event(struct sc_screen *screen, const SDL_Event *event) {
+    if (event->type == SC_CALIBRATION_TICK_EVENT) {
+        screen->calibration_timer = 0;
+        if (screen->window_shown
+                && !(SDL_GetWindowFlags(screen->window) & SDL_WINDOW_MINIMIZED)
+                && sc_calibration_mask_visible(&screen->calibration_mask.state)) {
+            sc_screen_render(screen, false);
+        }
+        return;
+    }
     if (event->type == SC_FPS_SAMPLE_EVENT) {
         if (sc_fps_overlay_refresh(&screen->fps_overlay)
                 && screen->window_shown
@@ -2111,6 +2388,11 @@ sc_screen_handle_event(struct sc_screen *screen, const SDL_Event *event) {
     }
 
     switch (event->type) {
+        case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+            if (event->window.windowID == SDL_GetWindowID(screen->window)) {
+                sc_screen_hide_window(screen);
+            }
+            return;
         case SC_EVENT_OPEN_WINDOW: {
             struct sc_size *size = event->user.data1;
             assert(size);
@@ -2130,8 +2412,18 @@ sc_screen_handle_event(struct sc_screen *screen, const SDL_Event *event) {
             sc_screen_render(screen, false);
             return;
         }
+        case SC_EVENT_NATIVE_ALPHA:
+        case SC_EVENT_PERSPECTIVE_STATE:
+#ifdef _WIN32
+            if (event->type == SC_EVENT_NATIVE_ALPHA) sc_native_source_ack_event();
+            if (screen->window_shown
+                    && !(SDL_GetWindowFlags(screen->window) & SDL_WINDOW_MINIMIZED)) {
+                sc_screen_render(screen, false);
+            }
+#endif
+            return;
         case SC_EVENT_NEW_FRAME: {
-            bool ok = sc_screen_update_frame(screen);
+            bool ok = sc_screen_update_frame(screen, NULL);
             if (!ok) {
                 LOGE("Frame update failed\n");
             }
@@ -2471,5 +2763,5 @@ sc_screen_convert_window_to_frame_coords(struct sc_screen *screen,
             break;
     }
 
-    return result;
+    return local_preview_remap_point(result);
 }

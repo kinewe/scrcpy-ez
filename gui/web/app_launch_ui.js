@@ -2,7 +2,7 @@
   'use strict';
   function eligible(w) {
     return w && w.launchFailureID > 0 && !w.notificationWindow && !w.closing &&
-      /^app-(layout-incompatible|reuse-failed|launch-failed|in-use)$/.test(w.phase);
+      /^app-(layout-incompatible|reuse-failed|launch-failed|in-use|camera-mode-change|camera-permission)$/.test(w.phase);
   }
   function key(w) { return w.serial + '\n' + w.pkg; }
   function create(options) {

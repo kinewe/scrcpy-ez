@@ -107,7 +107,7 @@ func TestGui51DeleteUsbMarkPreventsRebuildUntilReplug(t *testing.T) {
 	ops.install(a)
 
 	dev := teachfix3DeviceUSB()
-	a.applyTrackUpdate([]adb.Device{dev}) // 首次插线：建档
+	rc10TrackAndWait(t, a, []adb.Device{dev}) // 首次插线：建档
 	if _, ok := a.profiles.Entry(fixtureArchiveKey(a.profiles, "REDMI K80")); !ok {
 		t.Fatal("首次插线应建档")
 	}
@@ -120,14 +120,14 @@ func TestGui51DeleteUsbMarkPreventsRebuildUntilReplug(t *testing.T) {
 
 	// 同一插线周期再次同步（非 added）：删除标记生效，不得重建档。
 	dev.Battery = 90
-	a.applyTrackUpdate([]adb.Device{dev})
+	rc10TrackAndWait(t, a, []adb.Device{dev})
 	if _, ok := a.profiles.Entry(fixtureArchiveKey(a.profiles, "REDMI K80")); ok {
 		t.Fatal("删除标记期内不得重建档")
 	}
 
 	// 新的插线事件（removed→added）：清标记，重新学习入档。
-	a.applyTrackUpdate(nil)
-	a.applyTrackUpdate([]adb.Device{dev})
+	rc10TrackAndWait(t, a, nil)
+	rc10TrackAndWait(t, a, []adb.Device{dev})
 	if _, ok := a.profiles.Entry(fixtureArchiveKey(a.profiles, "REDMI K80")); !ok {
 		t.Fatal("新插线事件后应重新入档")
 	}

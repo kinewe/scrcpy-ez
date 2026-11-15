@@ -63,6 +63,8 @@ public class ControlMessageReader {
             case ControlMessage.TYPE_CAMERA_ZOOM_OUT:
             case ControlMessage.TYPE_SAVE_CLIPBOARD_IMAGE_TO_GALLERY:
             case ControlMessage.TYPE_KEEP_AWAKE_HEARTBEAT:
+            case ControlMessage.TYPE_TOGGLE_DISPLAY_BACKLIGHT:
+            case ControlMessage.TYPE_AUTO_BLACKOUT:
                 return ControlMessage.createEmpty(type);
             case ControlMessage.TYPE_UHID_CREATE:
                 return parseUhidCreate();

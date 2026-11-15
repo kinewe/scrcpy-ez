@@ -60,6 +60,7 @@ public class Options {
     private String audioEncoder;
     private boolean powerOffScreenOnClose;
     private boolean clipboardAutosync = true;
+    private int clipboardImageLimit;
     private boolean downsizeOnError = true;
     // ez 自定义 ABR 锁定（GUI「锁定」按钮）：锁定后该维度不被 ABR 自动调整
     // （fps 锁定=gui79；码率锁定=gui79；双锁=ABR 整体禁用，最稳定）。
@@ -75,7 +76,17 @@ public class Options {
     private boolean vdSystemDecorations = true;
     private boolean flexDisplay;
     private boolean flexDisplayAutoDpi;
+    private boolean flexDisplayPreserveUi;
+    private boolean nativeUiPixelMatch;
+    private boolean vdFollowMainOrientation;
     private boolean reuseAppTask;
+    private boolean perspectiveCamera;
+    private boolean cameraEvictionNotice;
+    private String perspectivePackage;
+
+    public boolean getPerspectiveCamera() { return perspectiveCamera; }
+    public boolean getCameraEvictionNotice() { return cameraEvictionNotice; }
+    public String getPerspectivePackage() { return perspectivePackage; }
 
     private boolean keepActive;
     private boolean ignoreVideoEncoderConstraints;
@@ -252,6 +263,10 @@ public class Options {
         return clipboardAutosync;
     }
 
+    public int getClipboardImageLimit() {
+        return clipboardImageLimit;
+    }
+
     public boolean getDownsizeOnError() {
         return downsizeOnError;
     }
@@ -296,6 +311,8 @@ public class Options {
         return keepActive && displayId == 0 && newDisplay == null && videoSource == VideoSource.DISPLAY;
     }
 
+    public boolean getVDFollowMainOrientation() { return vdFollowMainOrientation; }
+
     public boolean getFlexDisplay() {
         return flexDisplay;
     }
@@ -303,6 +320,15 @@ public class Options {
     public boolean getFlexDisplayAutoDpi() {
         return flexDisplayAutoDpi;
     }
+
+    public boolean getFlexDisplayPreserveUi() {
+        return flexDisplayPreserveUi;
+    }
+
+    public boolean getNativeUiPixelMatch() {
+        return nativeUiPixelMatch;
+    }
+
 
     public boolean getReuseAppTask() {
         return reuseAppTask;
@@ -517,6 +543,9 @@ public class Options {
                 case "clipboard_autosync":
                     options.clipboardAutosync = Boolean.parseBoolean(value);
                     break;
+                case "clipboard_image_limit":
+                    options.clipboardImageLimit = Math.max(0, Integer.parseInt(value));
+                    break;
                 case "abr_legacy":
                     options.abrLegacy = Boolean.parseBoolean(value);
                     break;
@@ -600,6 +629,15 @@ public class Options {
                 case "camera_torch":
                     options.cameraTorch = Boolean.parseBoolean(value);
                     break;
+                case "perspective_camera":
+                    options.perspectiveCamera = Boolean.parseBoolean(value);
+                    break;
+                case "camera_eviction_notice":
+                    options.cameraEvictionNotice = Boolean.parseBoolean(value);
+                    break;
+                case "perspective_package":
+                    options.perspectivePackage = value;
+                    break;
                 case "new_display":
                     options.newDisplay = parseNewDisplay(value);
                     break;
@@ -615,8 +653,17 @@ public class Options {
                 case "flex_display_auto_dpi":
                     options.flexDisplayAutoDpi = Boolean.parseBoolean(value);
                     break;
+                case "flex_display_preserve_ui":
+                    options.flexDisplayPreserveUi = Boolean.parseBoolean(value);
+                    break;
+                case "native_ui_pixel_match":
+                    options.nativeUiPixelMatch = Boolean.parseBoolean(value);
+                    break;
                 case "reuse_app_task":
                     options.reuseAppTask = Boolean.parseBoolean(value);
+                    break;
+                case "vd_follow_main_orientation":
+                    options.vdFollowMainOrientation = Boolean.parseBoolean(value);
                     break;
                 case "capture_orientation":
                     Pair<Orientation.Lock, Orientation> pair = parseCaptureOrientation(value);

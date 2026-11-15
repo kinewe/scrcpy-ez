@@ -12,6 +12,7 @@ import com.genymobile.scrcpy.model.DeviceApp;
 import com.genymobile.scrcpy.model.Point;
 import com.genymobile.scrcpy.model.Position;
 import com.genymobile.scrcpy.model.Size;
+import com.genymobile.scrcpy.power.AppRuntimeDiagnostics;
 import com.genymobile.scrcpy.util.Ln;
 import com.genymobile.scrcpy.util.LogUtils;
 import com.genymobile.scrcpy.video.CameraCapture;
@@ -39,6 +40,8 @@ import android.view.MotionEvent;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -97,12 +100,16 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
 
     private static final ScheduledExecutorService EXECUTOR = Executors.newSingleThreadScheduledExecutor();
     private ExecutorService startAppExecutor;
+    private com.genymobile.scrcpy.video.CameraPermissionMonitor cameraPermissions;
+    private boolean cameraDiagnosticsStopped;
     private final boolean reuseAppTask;
-    private final boolean flexDisplay;
 
     private Thread thread;
     private Thread keepAwakeWatchdog;
     private final KeepAwakeLease keepAwakeLease;
+    private final KeepAwakeLease appPowerSaveLease;
+    private final ControlDiagnostics controlDiagnostics;
+    private Timer controlDiagnosticsTimer;
 
     private UhidManager uhidManager;
 
@@ -113,6 +120,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     private final CleanUp cleanUp;
     private final DeviceMessageSender sender;
     private final boolean clipboardAutosync;
+    private final int clipboardImageLimit;
     private final boolean powerOn;
     private final boolean keepActive;
 
@@ -137,10 +145,10 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
 
     public Controller(ControlChannel controlChannel, CleanUp cleanUp, Options options) {
         this.reuseAppTask = options.getReuseAppTask();
-        this.flexDisplay = options.getFlexDisplay();
         this.camera = options.getVideoSource() == VideoSource.CAMERA;
         this.controlChannel = controlChannel;
         this.cleanUp = cleanUp;
+        this.controlDiagnostics = AppRuntimeDiagnostics.ENABLED && options.getNewDisplay() != null ? new ControlDiagnostics() : null;
 
         if (this.camera) {
             // Unused for camera
@@ -148,21 +156,31 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
             this.supportsInputEvents = false;
             this.sender = null;
             this.clipboardAutosync = false;
+            this.clipboardImageLimit = 0;
             this.powerOn = false;
             this.keepActive = false;
             this.keepAwakeLease = null;
+            this.appPowerSaveLease = null;
             return;
         }
 
         this.displayId = options.getDisplayId();
 
         this.clipboardAutosync = options.getClipboardAutosync();
+        this.clipboardImageLimit = options.getClipboardImageLimit();
         this.powerOn = options.getPowerOn();
         this.keepActive = options.getKeepActive();
         this.keepAwakeLease = keepActive ? new KeepAwakeLease(() -> {
             final IBinder token = ServiceManager.getPowerManager().acquireScreenWakeLock(getActionDisplayId());
             return () -> ServiceManager.getPowerManager().releaseScreenWakeLock(token);
         }) : null;
+        // Reuse the same heartbeat deadline and watchdog without enabling a
+        // screen wake lock for application/notification virtual displays.
+        this.appPowerSaveLease = options.getNewDisplay() != null && cleanUp != null && cleanUp.hasAppPowerSave()
+                ? new KeepAwakeLease(() -> {
+                    cleanUp.resumeAppPowerSave();
+                    return cleanUp::suspendAppPowerSave;
+                }) : null;
         initPointers();
         sender = new DeviceMessageSender(controlChannel);
 
@@ -196,7 +214,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
                 try {
                     while (clipboardDirty.getAndSet(false)) {
                         try {
-                            ClipboardManager.ClipboardSnapshot snapshot = manager.readSnapshot(true);
+                            ClipboardManager.ClipboardSnapshot snapshot = manager.readSnapshot(true, clipboardImageLimit);
                             if (snapshot != null && !clipboardDirty.get()) {
                                 if (snapshot.image != null && snapshot.image.data().length > 0) {
                                     sender.send(DeviceMessage.createImageClipboard(
@@ -230,6 +248,14 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
             synchronized (displayDataAvailable) {
                 displayDataAvailable.notify();
             }
+        }
+        // Publish the display before waiting for the independent cleanup process:
+        // app launch only waits one second for the display ID. Its exemption
+        // acquisition separately waits for registration before starting the app.
+        if (cleanUp != null) {
+            cleanUp.registerAppPowerSaveDisplay(virtualDisplayId);
+        } else {
+            Ln.w("SCRCPY_EZ_APP_POWER_SAVE action=skipped display=" + virtualDisplayId + " reason=cleanup-disabled");
         }
     }
 
@@ -314,22 +340,70 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
             try {
                 while (!Thread.currentThread().isInterrupted()) {
                     Thread.sleep(1000);
-                    keepAwakeLease.expire(SystemClock.elapsedRealtime());
+                    long now = SystemClock.elapsedRealtime();
+                    if (keepAwakeLease != null) {
+                        try {
+                            keepAwakeLease.expire(now);
+                        } catch (Exception e) {
+                            Ln.e("Could not expire screen wake lock", e);
+                        }
+                    }
+                    if (appPowerSaveLease != null) {
+                        try {
+                            appPowerSaveLease.expire(now);
+                        } catch (Exception e) {
+                            Ln.e("SCRCPY_EZ_APP_POWER_SAVE action=timeout-release-failed", e);
+                        }
+                    }
                 }
             } catch (InterruptedException e) {
                 // Normal session shutdown.
-            } catch (Exception e) {
-                Ln.e("Could not expire screen wake lock", e);
             } finally {
                 releaseKeepAwake();
             }
         });
-        keepAwakeWatchdog.setName("screen-awake-lease");
+        keepAwakeWatchdog.setName("session-resource-lease");
         keepAwakeWatchdog.setDaemon(true);
         keepAwakeWatchdog.start();
     }
 
+    private synchronized void startControlDiagnostics() {
+        if (controlDiagnostics == null || controlDiagnosticsTimer != null) {
+            return;
+        }
+        controlDiagnosticsTimer = new Timer("control-diagnostics", true);
+        controlDiagnosticsTimer.schedule(new TimerTask() {
+            @Override
+            public void run() {
+                DisplayData data = displayData.get();
+                Ln.i("SCRCPY_EZ_CONTROL_RX display=" + (data == null ? -1 : data.virtualDisplayId)
+                        + " " + controlDiagnostics.snapshot(SystemClock.elapsedRealtime()));
+            }
+        }, 0, 5000);
+    }
+
+    private synchronized void stopControlDiagnostics() {
+        if (controlDiagnosticsTimer != null) {
+            controlDiagnosticsTimer.cancel();
+            controlDiagnosticsTimer = null;
+        }
+    }
+
     public void releaseKeepAwake() {
+        stopControlDiagnostics();
+        // Mark the application session closed before closing its lease, so a
+        // normal shutdown is not reported as a heartbeat timeout and late app
+        // launch/notification requests cannot reacquire it.
+        if (cleanUp != null) {
+            cleanUp.closeAppPowerSave();
+        }
+        if (appPowerSaveLease != null) {
+            try {
+                appPowerSaveLease.close();
+            } catch (Exception e) {
+                Ln.e("Could not close application power-save lease", e);
+            }
+        }
         if (keepAwakeLease != null) {
             try {
                 keepAwakeLease.close();
@@ -344,7 +418,17 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
 
     @Override
     public void start(TerminationListener listener) {
-        if (keepActive) {
+        startControlDiagnostics();
+        if (appPowerSaveLease != null) {
+            try {
+                // Establish the initial 30-second grace period even if the
+                // first client heartbeat never reaches this controller.
+                appPowerSaveLease.heartbeat(SystemClock.elapsedRealtime());
+            } catch (Exception e) {
+                Ln.e("Could not initialize application power-save lease", e);
+            }
+        }
+        if (keepActive || appPowerSaveLease != null) {
             startKeepAwakeWatchdog();
         }
 
@@ -370,6 +454,10 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
 
     @Override
     public void stop() {
+        synchronized (this) {
+            cameraDiagnosticsStopped = true;
+            if (cameraPermissions != null) { cameraPermissions.close(); cameraPermissions = null; }
+        }
         releaseKeepAwake();
         clipboardWorker.shutdownNow();
         if (thread != null) {
@@ -407,6 +495,19 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         // Events for all sources (display or camera)
         switch (type) {
             case ControlMessage.TYPE_KEEP_AWAKE_HEARTBEAT:
+                if (controlDiagnostics != null) {
+                    controlDiagnostics.heartbeat(SystemClock.elapsedRealtime());
+                }
+                if (appPowerSaveLease != null) {
+                    try {
+                        appPowerSaveLease.heartbeat(SystemClock.elapsedRealtime());
+                        // A timed-out release may have failed before the
+                        // lease dropped its handle; reconnect must still resume.
+                        cleanUp.resumeAppPowerSave();
+                    } catch (Exception e) {
+                        Ln.e("Could not renew application power-save lease", e);
+                    }
+                }
                 if (keepAwakeLease != null && getActionDisplayId() != Device.DISPLAY_ID_NONE) {
                     try {
                         keepAwakeLease.heartbeat(SystemClock.elapsedRealtime());
@@ -444,15 +545,23 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
                     return true;
                 case ControlMessage.TYPE_INJECT_TOUCH_EVENT:
                     markInteraction();
-                    if (supportsInputEvents) {
-                        injectTouch(
-                                msg.getAction(), msg.getPointerId(), msg.getPosition(), msg.getPressure(), msg.getActionButton(), msg.getButtons());
+                    if (controlDiagnostics != null) {
+                        controlDiagnostics.received(SystemClock.elapsedRealtime());
+                    }
+                    boolean touchAccepted = supportsInputEvents && injectTouch(
+                            msg.getAction(), msg.getPointerId(), msg.getPosition(), msg.getPressure(), msg.getActionButton(), msg.getButtons());
+                    if (controlDiagnostics != null) {
+                        controlDiagnostics.completed(touchAccepted);
                     }
                     return true;
                 case ControlMessage.TYPE_INJECT_SCROLL_EVENT:
                     markInteraction();
-                    if (supportsInputEvents) {
-                        injectScroll(msg.getPosition(), msg.getHScroll(), msg.getVScroll(), msg.getButtons());
+                    if (controlDiagnostics != null) {
+                        controlDiagnostics.received(SystemClock.elapsedRealtime());
+                    }
+                    boolean scrollAccepted = supportsInputEvents && injectScroll(msg.getPosition(), msg.getHScroll(), msg.getVScroll(), msg.getButtons());
+                    if (controlDiagnostics != null) {
+                        controlDiagnostics.completed(scrollAccepted);
                     }
                     return true;
                 case ControlMessage.TYPE_BACK_OR_SCREEN_ON:
@@ -486,6 +595,23 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
                 case ControlMessage.TYPE_SET_DISPLAY_POWER:
                     if (supportsInputEvents) {
                         setDisplayPower(msg.getOn());
+                    }
+                    return true;
+                case ControlMessage.TYPE_TOGGLE_DISPLAY_BACKLIGHT:
+                    if (displayId == 0) {
+                        markInteraction();
+                        if (keepDisplayPowerOff) {
+                            setDisplayPower(true);
+                        } else if (cleanUp != null) {
+                            cleanUp.toggleMainDisplayBacklight();
+                        } else {
+                            Ln.w("Main display backlight toggle requires the cleanup process");
+                        }
+                    }
+                    return true;
+                case ControlMessage.TYPE_AUTO_BLACKOUT:
+                    if (displayId == 0 && !keepDisplayPowerOff && cleanUp != null) {
+                        cleanUp.requestAutoBlackout();
                     }
                     return true;
                 case ControlMessage.TYPE_ROTATE_DEVICE:
@@ -543,6 +669,9 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     }
 
     private boolean injectKeycode(int action, int keycode, int repeat, int metaState) {
+        if (displayId == 0 && cleanUp != null && action == KeyEvent.ACTION_DOWN && keycode == KeyEvent.KEYCODE_POWER) {
+            cleanUp.restoreMainDisplayBacklight();
+        }
         if (keepDisplayPowerOff && action == KeyEvent.ACTION_UP && (keycode == KeyEvent.KEYCODE_POWER || keycode == KeyEvent.KEYCODE_WAKEUP)) {
             assert displayId != Device.DISPLAY_ID_NONE;
             scheduleDisplayPowerOff(displayId);
@@ -799,7 +928,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         // copying an old clipboard content.
         if (!clipboardAutosync) {
             // Try to get image clipboard first
-            ClipboardImage clipboardImage = Device.getClipboardImage();
+            ClipboardImage clipboardImage = Device.getClipboardImage(clipboardImageLimit);
             if (clipboardImage != null && clipboardImage.data().length > 0) {
                 // Send image clipboard data
                 DeviceMessage msg = DeviceMessage.createImageClipboard(clipboardImage.data(), clipboardImage.mimeType());
@@ -836,7 +965,11 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     }
 
     private boolean setImageClipboard(long sequence, boolean paste, String mimeType, byte[] imageData, long epoch, long version) {
-        boolean ok = Device.setClipboardImage(imageData, mimeType, epoch, version);
+        boolean withinLimit = clipboardImageLimit == 0 || imageData.length <= clipboardImageLimit;
+        if (!withinLimit) {
+            Ln.i("Image clipboard: scanner skipped oversized image");
+        }
+        boolean ok = withinLimit && Device.setClipboardImage(imageData, mimeType, epoch, version);
         if (ok) {
             Ln.i("Device image clipboard set");
         }
@@ -907,6 +1040,11 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
             name = name.substring(1);
         }
 
+        boolean wechatScanner = (Device.WECHAT_PACKAGE + ":scan").equals(name);
+        if (wechatScanner) {
+            name = Device.WECHAT_PACKAGE;
+        }
+
         DeviceApp app;
         boolean searchByName = name.startsWith("?");
         if (searchByName) {
@@ -930,6 +1068,9 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
             app = Device.findByPackageName(name);
             if (app == null) {
                 Ln.w("No app found for package \"" + name + "\"");
+                if (wechatScanner) {
+                    Ln.i("SCRCPY_EZ_APP_LAUNCH=launch-failed");
+                }
                 return;
             }
         }
@@ -939,10 +1080,32 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
             Ln.e("No known display id to start app \"" + name + "\"");
             return;
         }
+        if (wechatScanner && startAppDisplayId <= 0) {
+            Ln.w("WeChat Scanner requires a virtual display");
+            return;
+        }
 
         Ln.i("Starting app \"" + app.getName() + "\" [" + app.getPackageName() + "] on display " + startAppDisplayId + "...");
-        if (reuseAppTask && !forceStopBeforeStart && startAppDisplayId > 0) {
-            AppTaskLauncher.Result result = AppTaskLauncher.start(app.getPackageName(), startAppDisplayId, flexDisplay);
+        if (startAppDisplayId > 0) {
+            synchronized (this) {
+                if (!cameraDiagnosticsStopped) {
+                    if (cameraPermissions != null) { cameraPermissions.close(); }
+                    cameraPermissions = new com.genymobile.scrcpy.video.CameraPermissionMonitor(app.getPackageName());
+                    cameraPermissions.start();
+                }
+            }
+        }
+        if (cleanUp != null) {
+            cleanUp.acquireAppPowerSave(app.getPackageName(), startAppDisplayId);
+        }
+        if (wechatScanner) {
+            if (forceStopBeforeStart) {
+                ServiceManager.getActivityManager().forceStopPackage(Device.WECHAT_PACKAGE);
+            }
+            boolean started = Device.startWeChatScanner(startAppDisplayId);
+            Ln.i("SCRCPY_EZ_APP_LAUNCH=" + (started ? "started" : "launch-failed"));
+        } else if (reuseAppTask && !forceStopBeforeStart && startAppDisplayId > 0) {
+            AppTaskLauncher.Result result = AppTaskLauncher.start(app.getPackageName(), startAppDisplayId);
             Ln.i("SCRCPY_EZ_APP_LAUNCH=" + result.code());
         } else {
             Device.startApp(app.getPackageName(), startAppDisplayId, forceStopBeforeStart);
@@ -991,6 +1154,9 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     }
 
     private void setDisplayPower(boolean on) {
+        if (displayId == 0 && cleanUp != null) {
+            cleanUp.restoreMainDisplayBacklight();
+        }
         // Change the power of the main display when mirroring a virtual display
         int targetDisplayId = displayId != Device.DISPLAY_ID_NONE ? displayId : 0;
         boolean setDisplayPowerOk = Device.setDisplayPower(targetDisplayId, on);
@@ -1029,7 +1195,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
 
     private void saveClipboardImageToGallery() {
         ClipboardManager clipboardManager = ServiceManager.getClipboardManager();
-        String savedPath = clipboardManager.saveLatestImageToGallery();
+        String savedPath = clipboardManager.saveLatestImageToGallery(clipboardImageLimit);
         if (savedPath != null) {
             // Direct file write fallback: trigger a media scan so the gallery
             // app picks it up. MediaScannerConnection is the reliable API on

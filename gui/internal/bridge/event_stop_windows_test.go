@@ -17,6 +17,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if dumpWindowTitleArgsIfRequested() {
+		return
+	}
 	if castsupervisor.RunIfRequested(os.Args[1:]) {
 		return
 	}

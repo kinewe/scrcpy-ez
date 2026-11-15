@@ -55,14 +55,57 @@ func (t *Track) run(ctx context.Context) error {
 
 // Topology remains event driven. Refresh only the current connected transports'
 // cached properties; battery/spec TTLs control actual ADB queries.
+func propertyQuery(ctx context.Context) (context.Context, context.CancelFunc) {
+	// Ownership is transferred to the event loop: replacement, completion and
+	// loop exit all cancel the currently owned query.
+	return context.WithTimeout(ctx, 8*time.Second)
+}
+
 func (t *Track) runSnapshots(ctx context.Context, events <-chan deviceevents.Snapshot, refresh <-chan time.Time) error {
 	hub := t.m.EventHub()
-	var dispatched *deviceevents.Snapshot
+	type update struct {
+		job     uint64
+		raw     deviceevents.Snapshot
+		devices []Device
+		done    bool
+	}
+	updates := make(chan update, 1)
+	var current *deviceevents.Snapshot
+	var cancel context.CancelFunc
+	var query context.Context
+	var sequence uint64
+	busy, delivered, pendingRefresh := false, false, false
+	defer func() {
+		if cancel != nil {
+			cancel()
+		}
+	}()
 	for {
 		periodic := false
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case u := <-updates:
+			if u.job != sequence {
+				continue
+			}
+			if u.done {
+				busy = false
+				cancel()
+				if !pendingRefresh {
+					continue
+				}
+				pendingRefresh, periodic = false, true
+			} else {
+				if query.Err() == nil && deviceevents.SameTransports(u.raw, hub.Current()) {
+					added, removed, changed := DiffDevices(t.prev, u.devices)
+					if !delivered || len(added)+len(removed)+len(changed) != 0 {
+						t.dispatchSnapshot(u.devices, &u.raw)
+						delivered = true
+					}
+				}
+				continue
+			}
 		case _, ok := <-events:
 			if !ok {
 				return ctx.Err()
@@ -73,19 +116,44 @@ func (t *Track) runSnapshots(ctx context.Context, events <-chan deviceevents.Sna
 		// Coalesce queued property-query work to the latest raw transport set.
 		s := hub.Current()
 		if !s.Available {
+			if cancel != nil {
+				cancel()
+			}
+			current, busy, pendingRefresh = nil, false, false
 			continue
 		}
-		same := dispatched != nil && deviceevents.SameTransports(*dispatched, s)
-		if same && !periodic {
+		same := current != nil && deviceevents.SameTransports(*current, s)
+		if same && periodic && busy {
+			pendingRefresh = true
+		}
+		if same && (!periodic || busy) {
 			continue // learning notifications do not create device-list changes
 		}
-		qctx, cancel := context.WithTimeout(ctx, 8*time.Second)
-		accepted := t.consumeSnapshotProperties(qctx, s, periodic && same)
-		cancel()
-		if !accepted {
-			continue
+		if cancel != nil {
+			cancel()
 		}
-		dispatched = &s
+		if !same {
+			delivered = false
+		}
+		query, cancel = propertyQuery(ctx)
+		sequence++
+		current, busy = &s, true
+		go func(qctx context.Context, job uint64, raw deviceevents.Snapshot) {
+			send := func(u update) {
+				select {
+				case updates <- u:
+				case <-qctx.Done():
+				}
+			}
+			t.m.devicesFromOutputProgress(snapshotContext(qctx, raw), snapshotOutput(raw), func(devs []Device) {
+				send(update{job: job, raw: raw, devices: devs})
+			})
+			// Completion must also release the busy flag after a timeout.
+			select {
+			case updates <- update{job: job, done: true}:
+			case <-ctx.Done():
+			}
+		}(query, sequence, s)
 	}
 }
 
@@ -130,6 +198,10 @@ func (t *Track) dispatchSnapshot(devs []Device, raw *deviceevents.Snapshot) {
 // DevicesFromSnapshot enriches an already captured event list. It never runs
 // `adb devices`; its caller must validate the raw token before committing.
 func (m *Manager) DevicesFromSnapshot(ctx context.Context, s deviceevents.Snapshot) []Device {
+	return m.devicesFromOutput(snapshotContext(ctx, s), snapshotOutput(s))
+}
+
+func snapshotOutput(s deviceevents.Snapshot) string {
 	var b strings.Builder
 	for _, v := range s.Transports {
 		fmt.Fprintf(&b, "%s\t%s", v.Serial, v.State)
@@ -144,7 +216,7 @@ func (m *Manager) DevicesFromSnapshot(ctx context.Context, s deviceevents.Snapsh
 		}
 		b.WriteByte('\n')
 	}
-	return m.devicesFromOutput(ctx, b.String())
+	return b.String()
 }
 
 // readTrackBlock 从流中读一个长度前缀块；返回文本块内容（CRLF 已归一化为 LF）。

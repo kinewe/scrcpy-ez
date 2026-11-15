@@ -630,5 +630,13 @@ int main(int argc, char *argv[]) {
     const uint8_t expected_feedback[] = {28,0,0,0,1,0,0,0,2,0,0,0,100,0,0,0,200,0,0,0,3,0,0,0,7,0,0,0x61,0xa8,0,7,0xa1,0x20};
     assert(size == sizeof(expected_feedback) && !memcmp(buf, expected_feedback, size));
     free(buf);
+    struct sc_control_msg backlight = {.type = SC_CONTROL_MSG_TYPE_TOGGLE_DISPLAY_BACKLIGHT};
+    buf = sc_control_msg_serialize(&backlight, &size);
+    assert(buf && size == 1 && buf[0] == 29);
+    free(buf);
+    struct sc_control_msg auto_blackout = {.type = SC_CONTROL_MSG_TYPE_AUTO_BLACKOUT};
+    buf = sc_control_msg_serialize(&auto_blackout, &size);
+    assert(buf && size == 1 && buf[0] == 30);
+    free(buf);
     return 0;
 }

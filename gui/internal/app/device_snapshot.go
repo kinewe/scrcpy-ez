@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"regexp"
 	"strings"
 
 	"scrcpy-ez/gui/internal/adb"
@@ -38,7 +39,57 @@ func (a *App) applyDeviceSnapshot(ctx context.Context, devs []adb.Device, raw *d
 	} else {
 		usb = usbDevices(devs)
 	}
-	a.applyTrackUpdateLocked(ctx, devs, usb, raw != nil && raw.Available, replacements)
+	a.applyTrackUpdateLocked(ctx, filterUnavailableEmulators(devs), usb, raw != nil && raw.Available, replacements)
+	if raw != nil && raw.Available {
+		// The enriched list may already have folded TLS+5555 into one card.
+		// Detect removals from raw endpoint tokens, before that information is lost.
+		for key := range a.removedWirelessChannels(*raw) {
+			// Refresh snapshots use a short-lived context which is cancelled as
+			// soon as the commit returns. Checks own their bounded lifetime and
+			// are cancelled by BeginClose instead.
+			go a.checkProfileChannels(context.Background(), key, nil)
+		}
+	}
+}
+
+var emulatorSerial = regexp.MustCompile(`^emulator-[0-9]+$`)
+
+// ADB can register arbitrary loopback listeners as offline emulators. EZ's
+// device list focuses on physical Android devices, so unavailable emulator
+// transports do not become cards or affect its count. Keep online emulators
+// and other service tokens: mDNS folding still needs the latter.
+func filterUnavailableEmulators(devs []adb.Device) []adb.Device {
+	visible := make([]adb.Device, 0, len(devs))
+	for _, d := range devs {
+		if d.ConnType == "other" && d.State != "device" && emulatorSerial.MatchString(d.Serial) {
+			continue
+		}
+		visible = append(visible, d)
+	}
+	return visible
+}
+
+// Called under applyTrackMu. An unavailable ADB snapshot is not negative
+// evidence for every phone; retain the previous tokens until ADB returns.
+func (a *App) removedWirelessChannels(raw deviceevents.Snapshot) map[string]bool {
+	next := map[string]deviceevents.Transport{}
+	for _, transport := range raw.Transports {
+		if IsIPPort(transport.Serial) {
+			next[transport.Serial] = transport
+		}
+	}
+	removed := map[string]bool{}
+	for addr, previous := range a.lastChannelToken {
+		current, present := next[addr]
+		if previous.State != "device" || present && current.State == "device" {
+			continue
+		}
+		if key := a.profiles.ResolveKey(addr); key != "" {
+			removed[key] = true
+		}
+	}
+	a.lastChannelToken = next
+	return removed
 }
 
 // Coalescing may skip an entire unplug/replug gap. A new transport ID or ADB

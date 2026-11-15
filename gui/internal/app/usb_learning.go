@@ -56,22 +56,28 @@ func (a *App) startUsbLearning(_ context.Context, serial string) {
 		a.guard("plug-timeout", func() { a.plugTimeout(id) })
 	})
 	a.teachMu.Unlock()
-	// 第一轮延续原事件链；失败后由独立 worker 重试，不阻塞后续 device 事件。
-	if a.usbLearnAttempt(serial, state) {
+	// Register before returning, but never do device I/O under the topology lock.
+	a.mu.Lock()
+	if a.notificationClosing {
+		a.mu.Unlock()
+		cancel()
 		return
 	}
-	go a.guard("usb-learn-retry", func() {
-		timer := time.NewTimer(usbLearnRetryDelay)
-		defer timer.Stop()
+	a.learningWG.Add(1)
+	a.mu.Unlock()
+	go a.guard("usb-learn", func() {
+		defer a.learningWG.Done()
 		for {
+			finished := false
+			if !a.learningWork.Do(ctx, func() { finished = a.usbLearnAttempt(serial, state) }) || finished {
+				return
+			}
+			timer := time.NewTimer(usbLearnRetryDelay)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return
 			case <-timer.C:
-				if a.usbLearnAttempt(serial, state) {
-					return
-				}
-				timer.Reset(usbLearnRetryDelay)
 			}
 		}
 	})
@@ -109,8 +115,14 @@ func (a *App) teachTcpipAttempt(ctx context.Context, serial string, state *usbLe
 		if err != nil {
 			return fmt.Errorf("读取端口：%w", err)
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		a.checkTlsSwitch(ctx, serial)
 		state.candidates = a.learnWirelessIPCandidates(ctx, serial)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if strings.TrimSpace(port) != "5555" {
 			state.restartIssued.Store(true)
 			tctx, cancel := context.WithTimeout(ctx, teachTcpipTimeout)
@@ -133,6 +145,16 @@ func (a *App) teachTcpipAttempt(ctx context.Context, serial string, state *usbLe
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if state.id != "" {
+		a.applyTrackMu.Lock()
+		defer a.applyTrackMu.Unlock()
+		a.teachMu.Lock()
+		current := a.usbLearning[serial] == state && ctx.Err() == nil
+		a.teachMu.Unlock()
+		if !current || a.deletedUsbMarked(serial) {
+			return context.Canceled
+		}
 	}
 	return a.alignWirelessIP(serial, chosen)
 }

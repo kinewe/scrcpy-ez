@@ -2312,14 +2312,16 @@ var qrcode = function() {
 
   // 错误分类码 → 用户文案（后端 PairStatus.errCode）
   var ERR_TEXT = {
-    'pair-code': '配对失败：配对码不正确或已过期。配对码约 30 秒刷新一次，请以手机屏幕当前显示为准后重试。',
-    'pair-port': '配对失败：配对端口无效（手机配对界面可能已关闭）。请重新打开配对界面，或手动填写 IP / 配对端口。',
-    'conn-port': '缺少连接端口：请手动填写连接端口（手机无线调试主界面显示的端口）。',
-    'connect-failed': '连接失败：请确认设备和电脑处于局域网关系。',
-    'timeout': '操作超时（60 秒）：请确认手机与电脑同一网络后重试。',
-    'addr-invalid': 'IP / 端口格式不正确，请检查后重试。',
-    'serial': '配对已连接，但读不到设备序列号（档案名称为空）。请保持手机亮屏并停留在「无线调试」界面，然后重试配对。',
-    'internal': '操作失败，请重试；若持续失败请查看程序日志。'
+    'pair-code': '配对码不正确或已过期（约 30 秒刷新）\n请使用手机当前显示的配对码重试',
+    'pair-port': '配对端口无效，手机配对界面可能已关闭\n请重新打开配对界面，或手动填写配对端口',
+    'conn-port': '未找到设备的连接端口\n请手动填写无线调试主界面显示的端口',
+    'connect-failed': '连接失败\n请确认设备和电脑处于同一局域网',
+    'adb-unauthorized': '设备尚未允许此电脑通过 5555 调试\n请允许授权后重试，或输入无线调试配对码',
+    'timeout': '操作超时（60 秒）\n请确认手机与电脑处于同一网络后重试',
+    'addr-invalid': 'IP / 端口格式不正确\n请检查 IP 地址和端口后重试',
+    'serial': '无法确认设备序列号，档案未写入\n请在手机上允许 ADB 调试并保持亮屏后重试',
+    'runtime-missing': '缺少 adb.exe 或配套组件\n请完整解压软件包后，从软件目录启动',
+    'internal': '操作失败，请重试\n若持续失败，请查看程序日志'
   };
 
   // 步骤名 → 展示文案（①②③ 顺序由调用方数组保证）
@@ -2353,9 +2355,32 @@ var qrcode = function() {
     return n >= 1 && n <= 65535;
   }
 
+  // A nonempty code always selects real pairing, even if incomplete/invalid.
+  function directAction(manual, port, directAddr, code) {
+    if (String(code == null ? '' : code).trim() !== '') return false;
+    return manual ? String(port).trim() === '5555' : !!directAddr;
+  }
+
   // errText 按分类码取文案；未知码回落 fallback（默认通用文案）。
   function errText(code, fallback) {
-    return ERR_TEXT[code] || (fallback || '操作失败，请重试。');
+    return ERR_TEXT[code] || (fallback || ERR_TEXT.internal);
+  }
+
+  // Preserve explicit sentence boundaries, including backend/RPC errors. Never
+  // split dots inside IP addresses, filenames or version numbers.
+  function formatError(text) {
+    function clean(line) { return line.trim().replace(/[。．.]+$/, '').trim(); }
+    var value = String(text || ERR_TEXT.internal).replace(/\r\n?/g, '\n').trim();
+    var lines = value.split(/\n+/).map(clean).filter(Boolean);
+    if (lines.length < 2) {
+      lines = value.split(/(?:[。；;]\s*|[.!?]\s+)/).map(clean).filter(Boolean);
+    }
+    if (lines.length < 2) {
+      var clause = (lines[0] || '').search(/[：，,]/);
+      if (clause >= 0) lines = [clean(lines[0].slice(0, clause)), clean(lines[0].slice(clause + 1))].filter(Boolean);
+    }
+    if (!lines.length) lines = ERR_TEXT.internal.split('\n');
+    return lines[0] + '\n' + (lines.slice(1).join('，') || '请检查后重试');
   }
 
   // stepLabel 步骤名 → 展示文案。
@@ -2364,10 +2389,12 @@ var qrcode = function() {
   }
 
   return {
+    directAction: directAction,
     validCode: validCode,
     validIp: validIp,
     validPort: validPort,
     errText: errText,
+    formatError: formatError,
     stepLabel: stepLabel
   };
 });

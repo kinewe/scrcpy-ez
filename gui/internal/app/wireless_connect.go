@@ -9,14 +9,14 @@ import (
 	"scrcpy-ez/gui/internal/bridge"
 	"scrcpy-ez/gui/internal/deviceevents"
 	"scrcpy-ez/gui/internal/discovery"
+	"scrcpy-ez/gui/internal/parallel"
 	"scrcpy-ez/gui/internal/wirelessconnect"
 )
 
 func (a *App) startWirelessConnect(ctx context.Context) {
-	c := wirelessconnect.New(ctx, a.connectDiscoveredWireless, wirelessconnect.Policy{})
+	c := wirelessconnect.New(ctx, a.connectDiscoveredWireless, wirelessconnect.Policy{Parallelism: parallel.Devices})
 	a.mu.Lock()
 	a.wirelessConnector = c
-	a.wirelessStartupDone = make(chan struct{})
 	a.mu.Unlock()
 	go func() {
 		for range a.adb.EventHub().Subscribe(ctx) {
@@ -115,10 +115,13 @@ func wirelessConnectTargets(entries map[string]DeviceEntry, services []discovery
 
 func (a *App) currentWirelessConnectTargets() []wirelessconnect.Target {
 	a.mu.RLock()
-	closing, discovering := a.notificationClosing, a.discBusy
+	closing := a.notificationClosing
 	busy := map[string]bool{}
+	for key := range a.discoveryDevices {
+		busy[key] = true
+	}
 	a.mu.RUnlock()
-	if closing || discovering {
+	if closing {
 		return nil
 	}
 	a.teachMu.Lock()
@@ -155,16 +158,6 @@ func (a *App) wirelessConnectCurrent(target wirelessconnect.Target) bool {
 
 func (a *App) connectDiscoveredWireless(ctx context.Context, target wirelessconnect.Target) error {
 	a.waitSrvReady(ctx)
-	a.mu.RLock()
-	startup := a.wirelessStartupDone
-	a.mu.RUnlock()
-	if startup != nil {
-		select {
-		case <-startup:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -198,6 +191,7 @@ func (a *App) connectDiscoveredWireless(ctx context.Context, target wirelessconn
 		// Real track-devices events enrich cards and elect listeners. This worker
 		// cannot write an old address or commit a stale display after interruption.
 		bridge.DebugLog("[app] 无线静默连接完成：%s/%s", target.Identity, addr)
+		a.startWirelessTcpipLearning(target.Identity, addr, serial)
 		return nil
 	}
 	if last == nil {

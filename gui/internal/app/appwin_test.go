@@ -82,8 +82,8 @@ func TestAppWinStartInjectsVdParams(t *testing.T) {
 	if p.StartApp != "com.android.browser" || !p.ReuseAppTask || !p.VdKeepContent {
 		t.Fatalf("任务复用参数丢失: %+v", p)
 	}
-	if p.WinTitle != "浏览器" {
-		t.Fatalf("WinTitle=%q，期望 浏览器", p.WinTitle)
+	if p.WinTitle != "K80 - 浏览器" {
+		t.Fatalf("WinTitle=%q，期望 K80 - 浏览器", p.WinTitle)
 	}
 	if p.Serial != "12345TESTA" {
 		t.Fatalf("设备锁定注入丢失: Serial=%q", p.Serial)
@@ -91,6 +91,25 @@ func TestAppWinStartInjectsVdParams(t *testing.T) {
 	list := waitAppWins(t, e.a, 1)
 	if list[0].Pkg != "com.android.browser" || list[0].Closing {
 		t.Fatalf("快照条目异常: %+v", list[0])
+	}
+}
+
+func TestAppWinStartsWeChatScannerOnSelectedDevice(t *testing.T) {
+	e := newAppWinEnv(t)
+	setDevices(e.a, []adb.Device{{Serial: "12345TESTA", State: "device", ConnType: "usb"}})
+	if err := e.a.StartWeChatScanner("12345TESTA"); err != nil {
+		t.Fatal(err)
+	}
+	p := e.f.waitParams(t, 1)
+	if p.Serial != "12345TESTA" || p.StartApp != "com.tencent.mm:scan" || !p.ReuseAppTask {
+		t.Fatalf("unexpected scanner launch parameters: %+v", p)
+	}
+	if !p.PerspectiveCamera || !p.VdUsb.Perspective || !p.VdWifi.Perspective {
+		t.Fatalf("scanner launch requires the virtual camera on USB and Wi-Fi: %+v", p)
+	}
+	win := waitAppWins(t, e.a, 1)[0]
+	if win.Pkg != "com.tencent.mm" || win.Name != "微信扫一扫" {
+		t.Fatalf("unexpected scanner window: %+v", win)
 	}
 }
 
@@ -210,7 +229,22 @@ func TestAppWinParallelTwoApps(t *testing.T) {
 	if err := a.StartAppWin("S2", "pkg.two", "二"); err != nil {
 		t.Fatal(err)
 	}
-	waitAppWins(t, a, 2)
+	for i := 0; i < 180; i++ {
+		a.onAppWinLine("S2", "pkg.one", "普通日志行 "+itoa(i))
+	}
+	a.onAppWinLine("S2", "pkg.two", "另一窗口的日志")
+	for _, win := range waitAppWins(t, a, 2) {
+		switch win.Pkg {
+		case "pkg.one":
+			if len(win.Log) != 160 || win.Log[0] != "普通日志行 20" || win.Log[159] != "普通日志行 179" {
+				t.Fatalf("第一个窗口应保留最新 160 行，实际行数 %d", len(win.Log))
+			}
+		case "pkg.two":
+			if len(win.Log) != 1 || win.Log[0] != "另一窗口的日志" {
+				t.Fatalf("第二个窗口的日志串到其他会话: %v", win.Log)
+			}
+		}
+	}
 }
 
 // v2.1.32：物理参数缓存 miss 时启动必须立即返回（不注入 dpi，后台预热）——

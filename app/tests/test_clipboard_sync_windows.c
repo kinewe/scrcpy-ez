@@ -41,7 +41,14 @@ test_encoded_image(const char *name, const char *mime, uint64_t revision,
     uint8_t *original;
     size_t original_size;
     char *original_mime;
-    assert(sc_clipboard_sync_get_image(&original, &original_size, &original_mime));
+    bool oversized = false;
+    assert(!sc_clipboard_sync_get_image(&original, &original_size, &original_mime,
+                                       (size_t) size - 1, &oversized));
+    assert(oversized);
+    oversized = false;
+    assert(sc_clipboard_sync_get_image(&original, &original_size, &original_mime,
+                                      (size_t) size, &oversized));
+    assert(!oversized);
     assert(original_size == (size_t) size && !memcmp(original, bytes, size));
     assert(!strcmp(original_mime, mime));
     free(original);
@@ -187,7 +194,8 @@ main(int argc, char **argv) {
     uint8_t *image;
     size_t size;
     char *mime;
-    assert(sc_clipboard_sync_get_image(&image, &size, &mime));
+    bool oversized = false;
+    assert(sc_clipboard_sync_get_image(&image, &size, &mime, 0, &oversized));
     assert(size == sizeof(bmp) && !memcmp(image, bmp, size) && !strcmp(mime, "image/bmp"));
     free(image);
     free(mime);
@@ -220,7 +228,7 @@ main(int argc, char **argv) {
     sc_clipboard_sync_destroy();
     assert(IsClipboardFormatAvailable(CF_DIBV5)); // survives receiver/window exit
     assert(sc_clipboard_sync_init("CLIPBOARD_TEST_DEVICE"));
-    assert(sc_clipboard_sync_get_image(&image, &size, &mime));
+    assert(sc_clipboard_sync_get_image(&image, &size, &mime, 0, &oversized));
     free(image);
     free(mime);
     assert(!sc_clipboard_sync_begin(GetClipboardSequenceNumber(), &tx));

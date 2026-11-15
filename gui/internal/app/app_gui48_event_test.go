@@ -13,7 +13,9 @@ package app
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"scrcpy-ez/gui/internal/adb"
 )
@@ -50,20 +52,22 @@ func TestGui48PlugOfflineThenDeviceSequence(t *testing.T) {
 func TestGui48FirstSeenDeviceTeachSuccessRearmsPlug(t *testing.T) {
 	a, _ := newTestApp()
 	gui31K80Profiles(a)
-	var tcpips int
+	var tcpips atomic.Int32
 	a.teachOps.getpropFn = func(ctx context.Context, serial, prop string) (string, error) {
 		return "5554", nil
 	}
 	a.teachOps.tcpipFn = func(ctx context.Context, serial, port string) error {
-		tcpips++
+		tcpips.Add(1)
 		return nil
 	}
 
 	a.applyTrackUpdate(nil)
 	real := adb.Device{Serial: "TEST0001", State: "device", ConnType: "usb", Name: "REDMI K80", Identity: "REDMI K80"}
 	a.applyTrackUpdate([]adb.Device{real})
-	if tcpips != 1 {
-		t.Fatalf("USB added 事件应触发一次插线学习 tcpip: %d", tcpips)
+	t.Cleanup(a.Close)
+	waitFor(t, 2*time.Second, func() bool { return tcpips.Load() == 1 }, "USB learning must issue tcpip asynchronously")
+	if tcpips.Load() != 1 {
+		t.Fatalf("USB added 事件应触发一次插线学习 tcpip: %d", tcpips.Load())
 	}
 	if _, ok := a.plugging["REDMI K80"]; !ok {
 		t.Fatalf("tcpip 学习成功应补置位 plugging（首见即 device 已被终点一清除）: %+v", a.plugging)

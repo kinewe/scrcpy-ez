@@ -310,15 +310,15 @@ func TestRetryPromptQRDisplay(t *testing.T) {
 func TestLogTrimmed(t *testing.T) {
 	a, _ := newTestApp()
 	_ = a.StartCast("X")
-	for i := 0; i < 80; i++ {
+	for i := 0; i < 180; i++ {
 		a.NotifyLine("X", "普通日志行 "+itoa(i))
 	}
 	s := a.Snapshot().Cast
-	if len(s.Log) != 60 {
-		t.Fatalf("日志应截断为 60, got %d", len(s.Log))
+	if len(s.Log) != 160 {
+		t.Fatalf("日志应截断为 160, got %d", len(s.Log))
 	}
-	if !strings.Contains(s.Log[59], "79") {
-		t.Fatalf("应保留最新行, tail=%q", s.Log[59])
+	if s.Log[0] != "普通日志行 20" || s.Log[159] != "普通日志行 179" {
+		t.Fatalf("应保留最新 160 行, first=%q last=%q", s.Log[0], s.Log[159])
 	}
 }
 
@@ -839,11 +839,12 @@ func TestSaveProfileAndRestartInjectsParams(t *testing.T) {
 	want := bridge.CastParams{
 		Usb:    bridge.ModeParams{Res: 2400, FPS: 75, Bitrate: 55, Set: true, Audio: "pc", VCodec: "h264", ACodec: "opus"},
 		Serial: "X", ExpectedSerial: "X",
+		WinTitle: "X - 主投屏",
 		// v2.1.78：声音档位无条件注入（空档 → 主屏默认 pc）
 		Wifi: bridge.ModeParams{Audio: "pc", VCodec: "h264", ACodec: "opus"},
 		// 设置面板开关 A：GUI 会话总是显式注入参数控件启动可见性（默认=显示）
 		OverlayVisible: true, OverlayVisibleSet: true,
-		KeepDeviceAwake: true, KeepDeviceAwakeSet: true,
+		KeepDeviceAwake: true, KeepDeviceAwakeSet: true, AutoBlackoutMainCast: true,
 		VideoSmoothingSet: true, VideoSmoothingFrames: 2,
 	}
 	// 两次 Start 的 goroutine 调度顺序不定：重启那一次必须带该模式覆盖参数
@@ -890,9 +891,10 @@ func TestStartCastAppliesSavedProfile(t *testing.T) {
 		Usb:    bridge.ModeParams{Res: 2400, FPS: 75, Bitrate: 55, Set: true, Audio: "pc", VCodec: "h264", ACodec: "opus"},
 		Wifi:   bridge.ModeParams{Res: 1280, FPS: 30, Bitrate: 15, Set: true, Audio: "pc", VCodec: "h264", ACodec: "opus"},
 		Serial: "X", ExpectedSerial: "X",
+		WinTitle: "X - 主投屏",
 		// 设置面板开关 A：GUI 会话总是显式注入参数控件启动可见性（默认=显示）
 		OverlayVisible: true, OverlayVisibleSet: true,
-		KeepDeviceAwake: true, KeepDeviceAwakeSet: true,
+		KeepDeviceAwake: true, KeepDeviceAwakeSet: true, AutoBlackoutMainCast: true,
 		VideoSmoothingSet: true, VideoSmoothingFrames: 2,
 	}
 	if got != want {
@@ -914,9 +916,10 @@ func TestStartCastAppliesSavedProfile(t *testing.T) {
 		Usb:    bridge.ModeParams{Audio: "pc", VCodec: "h264", ACodec: "opus"},
 		Wifi:   bridge.ModeParams{Res: 720, FPS: 30, Bitrate: 15, Set: true, Audio: "pc", VCodec: "h264", ACodec: "opus"},
 		Serial: "W", ExpectedSerial: "W",
+		WinTitle: "W - 主投屏",
 		// 设置面板开关 A：GUI 会话总是显式注入参数控件启动可见性（默认=显示）
 		OverlayVisible: true, OverlayVisibleSet: true,
-		KeepDeviceAwake: true, KeepDeviceAwakeSet: true,
+		KeepDeviceAwake: true, KeepDeviceAwakeSet: true, AutoBlackoutMainCast: true,
 		VideoSmoothingSet: true, VideoSmoothingFrames: 2,
 	}
 	if got2 != want2 {
@@ -998,7 +1001,7 @@ func TestBaselineFromSpecLine(t *testing.T) {
 func TestBaselineFallbackFromDevice(t *testing.T) {
 	a, _ := newTestApp()
 	a.mu.Lock()
-	a.devices = []adb.Device{{Serial: "X", Res: "3200x2136", FPS: 120}}
+	a.lastTrack = []adb.Device{{Serial: "X", Res: "3200x2136", FPS: 120}}
 	a.mu.Unlock()
 	p := a.GetProfile("X")
 	if p.Usb.Baseline != (Baseline{Res: 2560, FPS: 120, Bitrate: 60}) {

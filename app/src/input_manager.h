@@ -3,6 +3,8 @@
 
 #include "common.h"
 
+#define SC_SCAN_CLIPBOARD_IMAGE_LIMIT (4 * 1024 * 1024)
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <SDL3/SDL_events.h>
@@ -28,6 +30,8 @@ struct sc_input_manager {
 
     // True when the device screen has been turned off by a client shortcut.
     // Tracked so that every exit path can request to turn it back on.
+    bool main_display;
+    bool auto_blackout_pending;
     bool screen_off;
     // Consume the full Ctrl+P sequence even if Ctrl is released before P.
     bool ctrl_power_pressed;
@@ -36,6 +40,7 @@ struct sc_input_manager {
     bool legacy_paste;
     bool clipboard_autosync;
     bool clipboard_sync;
+    size_t clipboard_image_limit;
     bool suppress_start_push;
 
     uint16_t sdl_shortcut_mods;
@@ -66,12 +71,15 @@ struct sc_input_manager_params {
     struct sc_mouse_processor *mp;
     struct sc_gamepad_processor *gp;
     bool camera;
+    bool main_display;
+    bool auto_blackout;
 
     struct sc_mouse_bindings mouse_bindings;
     bool legacy_paste;
     bool clipboard_autosync;
     bool clipboard_sync;
     bool clipboard_push_on_start;
+    size_t clipboard_image_limit;
     uint8_t shortcut_mods; // OR of enum sc_shortcut_mod values
 };
 
@@ -90,6 +98,9 @@ sc_input_manager_is_screen_off(const struct sc_input_manager *im);
 // Request to turn the device screen back on (no-op when it is already on)
 void
 sc_input_manager_turn_screen_on(struct sc_input_manager *im);
+
+void
+sc_input_manager_request_auto_blackout(struct sc_input_manager *im);
 
 // Send image clipboard from computer to device
 bool

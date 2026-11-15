@@ -88,6 +88,56 @@ func TestGui50PairQrRefresh(t *testing.T) {
 	}
 }
 
+func TestPairQrRefreshAfterFailedConnect(t *testing.T) {
+	for _, mode := range []string{PairModeAuto, PairModeManual, PairModeQR} {
+		t.Run(mode, func(t *testing.T) {
+			a, _ := newWirelessApp()
+			if err := a.PairConnect("__qr_open__", "", "", "", ""); err != nil {
+				t.Fatal(err)
+			}
+			a.mu.Lock()
+			a.pairQR.expireAt = time.Now().Add(-time.Minute)
+			a.pair = &PairStatus{Phase: PairPhaseFailed, Mode: mode, Direct: mode != PairModeQR,
+				ErrCode: PairErrSerial, QrText: a.pairQR.qrText(), QrExpireAt: a.pairQR.expireAt.Unix()}
+			a.mu.Unlock()
+			if err := a.PairConnect("__qr_refresh__", "", "", "", ""); err != nil {
+				t.Fatalf("failed %s flow blocked QR recovery: %v", mode, err)
+			}
+			ps := a.Snapshot().PairStatus
+			if ps.Phase != PairPhaseIdle || ps.Mode != PairModeQR || ps.Direct || ps.ErrCode != "" || ps.QrExpireAt <= time.Now().Unix() {
+				t.Fatalf("refresh did not re-arm QR pairing: phase=%s mode=%s", ps.Phase, ps.Mode)
+			}
+			gui50PairFakes(a)
+			a.maybeAutoPairQR([]discovery.MdnsService{{Type: "_adb-tls-pairing._tcp", Name: pairQrServiceName, Addr: "192.168.1.2:37033", Mode: discovery.MdnsModePairing}})
+			if st := waitPairPhase(t, a, PairPhaseSuccess); st.Mode != PairModeQR {
+				t.Fatal("scan after refresh did not complete QR pairing")
+			}
+		})
+	}
+}
+
+func TestPairQrRefreshCannotReplaceActiveFlow(t *testing.T) {
+	for _, phase := range []string{PairPhasePairing, PairPhaseConn, PairPhaseVerify} {
+		t.Run(phase, func(t *testing.T) {
+			a, _ := newWirelessApp()
+			_ = a.PairConnect("__qr_open__", "", "", "", "")
+			a.mu.Lock()
+			a.pair.Phase = phase
+			beforePair, beforeQR := a.pair, a.pairQR
+			a.mu.Unlock()
+			if err := a.PairConnect("__qr_refresh__", "", "", "", ""); err == nil {
+				t.Fatal("refresh replaced an active pairing")
+			}
+			a.mu.RLock()
+			unchanged := a.pair == beforePair && a.pairQR == beforeQR
+			a.mu.RUnlock()
+			if !unchanged {
+				t.Fatal("rejected refresh changed current pairing")
+			}
+		})
+	}
+}
+
 // pairing 广播 → 自动配对（二维码路线）：pair→connect 端口延迟解析→getprop 建档。
 func TestGui50PairQrAutoFlowOnPairingBroadcast(t *testing.T) {
 	a, _ := newWirelessApp()

@@ -5,7 +5,6 @@ import com.genymobile.scrcpy.FakeContext;
 import com.genymobile.scrcpy.display.DisplayInfo;
 import com.genymobile.scrcpy.model.DeviceApp;
 import com.genymobile.scrcpy.util.Ln;
-import com.genymobile.scrcpy.wrappers.ActivityManager;
 import com.genymobile.scrcpy.wrappers.ClipboardManager;
 import com.genymobile.scrcpy.wrappers.ClipboardManager.ClipboardImage;
 import com.genymobile.scrcpy.wrappers.DisplayControl;
@@ -40,6 +39,7 @@ import java.util.List;
 import java.util.Locale;
 
 public final class Device {
+    public static final String WECHAT_PACKAGE = "com.tencent.mm";
 
     public static final int DISPLAY_ID_NONE = -1;
 
@@ -120,12 +120,12 @@ public final class Device {
         return s.toString();
     }
 
-    public static ClipboardImage getClipboardImage() {
+    public static ClipboardImage getClipboardImage(int imageLimit) {
         ClipboardManager clipboardManager = ServiceManager.getClipboardManager();
         if (clipboardManager == null) {
             return null;
         }
-        return clipboardManager.getImage();
+        return clipboardManager.getImage(imageLimit);
     }
 
     public static boolean setClipboardText(String text, long epoch, long version) {
@@ -203,6 +203,15 @@ public final class Device {
             return true;
         }
         return pressReleaseKeycode(KeyEvent.KEYCODE_POWER, displayId, Device.INJECT_MODE_ASYNC);
+    }
+
+    public static IBinder getSinglePhysicalDisplayToken() {
+        boolean useDisplayControl = Build.VERSION.SDK_INT >= AndroidVersions.API_34_ANDROID_14 && !SurfaceControl.hasGetPhysicalDisplayIdsMethod();
+        long[] ids = useDisplayControl ? DisplayControl.getPhysicalDisplayIds() : SurfaceControl.getPhysicalDisplayIds();
+        if (ids == null || ids.length != 1) {
+            return null;
+        }
+        return useDisplayControl ? DisplayControl.getPhysicalDisplayToken(ids[0]) : SurfaceControl.getPhysicalDisplayToken(ids[0]);
     }
 
     /**
@@ -488,7 +497,26 @@ public final class Device {
             return;
         }
 
-        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (forceStop) {
+            ServiceManager.getActivityManager().forceStopPackage(packageName);
+        }
+        startActivityOnDisplay(launchIntent, displayId);
+    }
+
+    public static boolean startWeChatScanner(int displayId) {
+        // Match the dynamic "扫一扫" shortcut published by WeChat's launcher.
+        Intent intent = new Intent("com.tencent.mm.ui.ShortCutDispatchAction")
+                .setPackage(WECHAT_PACKAGE)
+                .putExtra("LauncherUI.Shortcut.LaunchType", "launch_type_scan_qrcode");
+        int result = startActivityOnDisplay(intent, displayId);
+        if (result < 0) {
+            Ln.w("WeChat Scanner shortcut launch failed: " + result);
+        }
+        return result >= 0;
+    }
+
+    private static int startActivityOnDisplay(Intent intent, int displayId) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
         Bundle options = null;
         if (Build.VERSION.SDK_INT >= AndroidVersions.API_26_ANDROID_8_0) {
@@ -497,11 +525,7 @@ public final class Device {
             options = launchOptions.toBundle();
         }
 
-        ActivityManager am = ServiceManager.getActivityManager();
-        if (forceStop) {
-            am.forceStopPackage(packageName);
-        }
-        am.startActivity(launchIntent, options);
+        return ServiceManager.getActivityManager().startActivity(intent, options);
     }
 
     public static void sendBroadcast(Intent intent) {

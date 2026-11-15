@@ -13,7 +13,11 @@ public class AppTaskLauncherTest {
     private static final int DISPLAY = 40;
 
     private static AppTaskLauncher.Root root(int id, int display, Object token, boolean visible) {
-        return new AppTaskLauncher.Root(id, display, 1, 1, PKG, PKG, new String[] {PKG + "/Detail"}, token, visible);
+        return root(PKG, id, display, token, visible);
+    }
+
+    private static AppTaskLauncher.Root root(String pkg, int id, int display, Object token, boolean visible) {
+        return new AppTaskLauncher.Root(id, display, 1, 1, pkg, pkg, new String[] {pkg + "/Detail"}, token, visible);
     }
 
     private static class Tasks implements AppTaskLauncher.Tasks {
@@ -34,7 +38,7 @@ public class AppTaskLauncherTest {
             moved.add(selected.id);
             if (!ignoreMove) {
                 roots.removeIf(r -> r.same(selected));
-                roots.add(root(selected.id, display, selected.identity, selected.visible));
+                roots.add(root(selected.base, selected.id, display, selected.identity, selected.visible));
             }
             if (onMove != null) { onMove.run(); }
             if (failMove) { throw new Exception("move"); }
@@ -46,12 +50,14 @@ public class AppTaskLauncherTest {
     }
 
     @Test public void movesExistingPageWithoutCallingLauncher() throws Exception {
-        Object token = new Object();
-        Tasks tasks = new Tasks(root(7, 0, token, false));
-        assertEquals(AppTaskLauncher.Result.REUSED, AppTaskLauncher.start(PKG, DISPLAY, tasks));
-        assertEquals(Arrays.asList(7), tasks.moved);
-        assertEquals(0, tasks.launched);
-        assertEquals(token, tasks.roots.get(0).identity);
+        for (String pkg : Arrays.asList(PKG, "com.tencent.mm")) {
+            Object token = new Object();
+            Tasks tasks = new Tasks(root(pkg, 7, 0, token, false));
+            assertEquals(AppTaskLauncher.Result.REUSED, AppTaskLauncher.start(pkg, DISPLAY, tasks));
+            assertEquals(Arrays.asList(7), tasks.moved);
+            assertEquals(0, tasks.launched);
+            assertEquals(token, tasks.roots.get(0).identity);
+        }
     }
 
     @Test public void coldLaunchIsNormalAndVerifiedOnNewDisplay() throws Exception {

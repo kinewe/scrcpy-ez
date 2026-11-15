@@ -118,7 +118,7 @@ func TestTeachfixOfflineAddedThenChangedDeviceLearns(t *testing.T) {
 	ops.install(a)
 	logPath := mdns8StartLogCapture(t)
 
-	a.applyTrackUpdate([]adb.Device{teachfixUsb("TEST0001", "offline")})
+	rc10TrackAndWait(t, a, []adb.Device{teachfixUsb("TEST0001", "offline")})
 	g, _, _, _ := ops.counts()
 	if g != 0 {
 		t.Fatalf("offline added 不应执行学习: getprop=%d", g)
@@ -128,7 +128,7 @@ func TestTeachfixOfflineAddedThenChangedDeviceLearns(t *testing.T) {
 	}
 	mdns8LogContains(t, logPath, "[app] 插线学习待命：TEST0001（offline）")
 
-	a.applyTrackUpdate([]adb.Device{teachfixUsb("TEST0001", "device")})
+	rc10TrackAndWait(t, a, []adb.Device{teachfixUsb("TEST0001", "device")})
 	g, _, _, p := ops.counts()
 	if g != 1 || p != 1 {
 		t.Fatalf("翻转 device 应补学一次: getprop=%d probe=%d", g, p)
@@ -151,7 +151,7 @@ func TestTeachfixAddedDeviceLearnsImmediately(t *testing.T) {
 	ops := &teachfixOps{port: "5555", ip: "192.0.2.200", probeOK: true}
 	ops.install(a)
 
-	a.applyTrackUpdate([]adb.Device{teachfixUsb("TEST0001", "device")})
+	rc10TrackAndWait(t, a, []adb.Device{teachfixUsb("TEST0001", "device")})
 	g, _, _, p := ops.counts()
 	if g != 1 || p != 1 {
 		t.Fatalf("added device 应立即学习: getprop=%d probe=%d", g, p)
@@ -169,7 +169,7 @@ func TestTeachfixOneTeachPerPlugCycle(t *testing.T) {
 	ops.install(a)
 
 	dev := teachfixUsb("TEST0001", "device")
-	a.applyTrackUpdate([]adb.Device{dev})
+	rc10TrackAndWait(t, a, []adb.Device{dev})
 	g, _, _, p := ops.counts()
 	if g != 1 || p != 1 {
 		t.Fatalf("首轮应学习一次: getprop=%d probe=%d", g, p)
@@ -177,7 +177,7 @@ func TestTeachfixOneTeachPerPlugCycle(t *testing.T) {
 
 	// 同周期 changed 事件（如电量变化）不得重复学习。
 	dev.Battery = 100
-	a.applyTrackUpdate([]adb.Device{dev})
+	rc10TrackAndWait(t, a, []adb.Device{dev})
 	g, _, _, p = ops.counts()
 	if g != 1 || p != 1 {
 		t.Fatalf("同周期 changed 不应重学: getprop=%d probe=%d", g, p)
@@ -185,11 +185,11 @@ func TestTeachfixOneTeachPerPlugCycle(t *testing.T) {
 
 	// 拔线：周期结束清除名额；再插线 = 新周期重新学习。
 	a.plugClear("REDMI K80", "测试结束学习周期")
-	a.applyTrackUpdate(nil)
+	rc10TrackAndWait(t, a, nil)
 	if teachfixTaught(a, "TEST0001") {
 		t.Fatal("拔线后应清除 taughtTcpip 名额")
 	}
-	a.applyTrackUpdate([]adb.Device{dev})
+	rc10TrackAndWait(t, a, []adb.Device{dev})
 	g, _, _, p = ops.counts()
 	if g != 2 || p != 2 {
 		t.Fatalf("再插线应重新学习一次: getprop=%d probe=%d", g, p)
@@ -204,7 +204,7 @@ func TestTeachfixLearnAlignsArchive(t *testing.T) {
 	ops.install(a)
 	logPath := mdns8StartLogCapture(t)
 
-	a.applyTrackUpdate([]adb.Device{teachfixUsb("TEST0001", "device")})
+	rc10TrackAndWait(t, a, []adb.Device{teachfixUsb("TEST0001", "device")})
 	ae := teachfixAddrState(a, "REDMI K80", "192.0.2.200:5555")
 	if ae == nil || ae.State != AddrStateActive || ae.Mode != ModeTcpip {
 		t.Fatalf("档案应含学习 IP active tcpip: %+v", ae)
@@ -245,7 +245,7 @@ func TestTeachfixHuaweiStyleAddedDeviceLearns(t *testing.T) {
 		Name: "HUAWEI FLA-TL10", Marketname: "HUAWEI FLA-TL10",
 		Identity: "HUAWEI FLA-TL10",
 	}
-	a.applyTrackUpdate([]adb.Device{dev})
+	rc10TrackAndWait(t, a, []adb.Device{dev})
 	ae := teachfixAddrState(a, "HUAWEI FLA-TL10", "192.0.2.77:5555")
 	if ae == nil || ae.State != AddrStateActive {
 		t.Fatalf("华为型 added device 应学习并对齐档案: %+v", ae)
@@ -263,7 +263,7 @@ func TestTeachfixPortNot5555RunsTcpipThenProbe(t *testing.T) {
 	ops := &teachfixOps{port: "0", ip: "192.0.2.200", probeOK: true}
 	ops.install(a)
 
-	a.applyTrackUpdate([]adb.Device{teachfixUsb("TEST0001", "device")})
+	rc10TrackAndWait(t, a, []adb.Device{teachfixUsb("TEST0001", "device")})
 	_, _, tc, pc := ops.counts()
 	if tc != 1 || pc != 1 {
 		t.Fatalf("非 5555 应 tcpip 一次 + 探测一次: tcpip=%d probe=%d", tc, pc)

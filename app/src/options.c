@@ -124,6 +124,7 @@ const struct scrcpy_options scrcpy_options_default = {
     .start_app = NULL,
     .angle = NULL,
     .vd_destroy_content = true,
+    .perspective_input_period = 5, // 30 camera FPS / 5 = 6 desktop FPS
     .vd_system_decorations = true,
     .camera_torch = false,
     .keep_active = false,

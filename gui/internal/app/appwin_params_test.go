@@ -60,11 +60,11 @@ func TestAppWinDefaultInjectionTwoSets(t *testing.T) {
 	// 两套默认档（v2.1.48 共享主投屏 baseline；v2.1.51 长边 snap 档位表）：
 	// 有线=设备长边 3200 → snap 2560（尺寸 2560x1152，dpi=600×2560÷3200=480）/120/60；
 	// 无线=1920/60/15（尺寸 1920x864，dpi=360)。
-	wantUsb := bridge.VdModeParams{Size: "2560x1152", Dpi: 480, FPS: 120, Bitrate: 60, Flex: true, AutoDpi: true, Audio: "phone"}
+	wantUsb := bridge.VdModeParams{Size: "2560x1152", Dpi: 480, FPS: 120, Bitrate: 60, Flex: true, AutoDpi: true, FollowMainOrientation: true, Audio: "phone", Perspective: true, PerspectiveInputFPS: 6}
 	if p.VdUsb != wantUsb {
 		t.Fatalf("有线套默认档注入异常: %+v", p.VdUsb)
 	}
-	wantWifi := bridge.VdModeParams{Size: "1920x864", Dpi: 360, FPS: 60, Bitrate: 15, Flex: true, AutoDpi: true, Audio: "phone"}
+	wantWifi := bridge.VdModeParams{Size: "1920x864", Dpi: 360, FPS: 60, Bitrate: 15, Flex: true, AutoDpi: true, FollowMainOrientation: true, Audio: "phone", Perspective: true, PerspectiveInputFPS: 6}
 	if p.VdWifi != wantWifi {
 		t.Fatalf("无线套默认档注入异常: %+v", p.VdWifi)
 	}
@@ -200,13 +200,17 @@ func TestNotificationWindowInitialDirectionPreservesProfiles(t *testing.T) {
 
 func TestWeChatNotificationPreservesPhoneResourcesAndVideoProfile(t *testing.T) {
 	phys := devPhys{width: 1440, height: 3200, longSide: 3200, dpi: 600}
-	p := AppWinModeParams{Size: "1920", FPS: 60, Bitrate: 15, Flex: true, Audio: "phone"}
+	p := AppWinModeParams{Size: "1920", FPS: 60, Bitrate: 15, Audio: "phone"}
 	got := notificationVdParamsForPackage("com.tencent.mm", p, phys, "3200x1440")
 	if !got.MatchPhone || got.MaxSize != 1920 || got.Dpi != 0 || got.Flex || got.AutoDpi || got.FPS != 60 || got.Bitrate != 15 {
 		t.Fatalf("WeChat compatibility lost video profile or changed resource density: %+v", got)
 	}
 	if cold := notificationVdParamsForPackage("com.tencent.mm", p, devPhys{}, ""); !cold.MatchPhone || cold.MaxSize != 1920 {
 		t.Fatalf("cold cache reverted to a different display density: %+v", cold)
+	}
+	p.Flex = true
+	if flex := notificationVdParamsForPackage("com.tencent.mm", p, phys, "3200x1440"); flex.MatchPhone || !flex.Flex || !flex.AutoDpi {
+		t.Fatalf("WeChat phone-layout compatibility overrode Flex: %+v", flex)
 	}
 	if other := notificationVdParamsForPackage("com.android.settings", p, phys, "3200x1440"); other.MatchPhone || other.MaxSize != 0 || !other.Flex {
 		t.Fatalf("another app inherited WeChat compatibility: %+v", other)
@@ -216,8 +220,10 @@ func TestWeChatNotificationPreservesPhoneResourcesAndVideoProfile(t *testing.T) 
 		t.Fatalf("explicit DPI ignored: %+v", manual)
 	}
 	p.Dpi, p.RatioW, p.RatioH = 0, 16, 9
-	if manual := notificationVdParamsForPackage("com.tencent.mm", p, phys, "3200x1440"); manual.MatchPhone || manual.Size != "1920x1080" {
-		t.Fatalf("explicit aspect ratio ignored: %+v", manual)
+	direct := appWindowVdParamsForPackage("com.tencent.mm", p, phys, "3200x1440")
+	notification := notificationVdParamsForPackage("com.tencent.mm", p, phys, "3200x1440")
+	if direct != notification || direct.MatchPhone || direct.Size != "1920x1080" || direct.FollowMainOrientation || !direct.Flex {
+		t.Fatalf("explicit aspect ratio and Flex must agree across entries: direct=%+v notification=%+v", direct, notification)
 	}
 }
 
@@ -232,6 +238,45 @@ func TestAppWindowManualDensityDoesNotFollowFlexResize(t *testing.T) {
 	p.Dpi, p.Flex = 0, false
 	if fixed := notificationVdParamsToBridge(p, phys, "3200x1440"); fixed.Dpi != 360 || fixed.AutoDpi {
 		t.Fatalf("non-flex display enabled resize scaling: %+v", fixed)
+	}
+}
+
+func TestWeWorkPerspectiveStartsInNaturalDirection(t *testing.T) {
+	phone := devPhys{width: 1440, height: 3200, longSide: 3200, dpi: 600}
+	base := AppWinModeParams{Size: "1920", FPS: 60, Bitrate: 15, Flex: true,
+		Perspective: true, PerspectiveInputFPS: 10, Audio: "phone"}
+	got := appWindowVdParamsForPackage("com.tencent.wework", base, phone, "3200x1440")
+	if got.Size != "864x1920" || got.Dpi != 360 || !got.Flex || !got.AutoDpi ||
+		!got.Perspective || got.PerspectiveInputFPS != 10 || got.FPS != 60 || got.Bitrate != 15 || got.MatchPhone {
+		t.Fatalf("scanner must start naturally without losing flex or transport settings: %+v", got)
+	}
+	if base.RatioW != 0 || base.RatioH != 0 {
+		t.Fatal("initial-direction compatibility rewrote the saved aspect ratio")
+	}
+	if cold := appWindowVdParamsForPackage("com.tencent.wework", base, devPhys{}, "3200x1440"); cold.Size != "864x1920" || !cold.Flex {
+		t.Fatalf("cold-cache launch lost the natural phone ratio: %+v", cold)
+	}
+	manual := base
+	manual.Dpi = 320
+	if got := appWindowVdParamsForPackage("com.tencent.wework", manual, phone, "3200x1440"); got.Size != "864x1920" || got.Dpi != 320 || got.AutoDpi || !got.Flex {
+		t.Fatalf("manual density was overridden: %+v", got)
+	}
+	manual = base
+	manual.RatioW, manual.RatioH = 16, 9
+	if got := appWindowVdParamsForPackage("com.tencent.wework", manual, phone, "3200x1440"); got.Size != "1920x1080" || !got.Flex {
+		t.Fatalf("explicit landscape ratio was overridden: %+v", got)
+	}
+	tablet := devPhys{width: 3200, height: 2136, longSide: 3200, dpi: 440}
+	if got := appWindowVdParamsForPackage("com.tencent.wework", base, tablet, "3200x2136"); got.Size != "1920x1280" || !got.AutoDpi {
+		t.Fatalf("natural landscape tablet was forced into portrait: %+v", got)
+	}
+	base.Perspective = false
+	if got := appWindowVdParamsForPackage("com.tencent.wework", base, phone, "3200x1440"); got.Size != "1920x864" {
+		t.Fatalf("ordinary casting changed: %+v", got)
+	}
+	base.Perspective = true
+	if got := appWindowVdParamsForPackage("com.xingin.xhs", base, phone, "3200x1440"); got.Size != "1920x864" {
+		t.Fatalf("unrelated app layout changed: %+v", got)
 	}
 }
 
@@ -276,6 +321,69 @@ func TestSaveAppWinParamsRoundtrip(t *testing.T) {
 	}
 	if v2.Usb.Size != "1600" || v2.Usb.FPS != 120 {
 		t.Fatalf("有线套不应被无线保存影响: %+v", v2.Usb)
+	}
+}
+
+func TestPerspectiveCameraProfileIsolation(t *testing.T) {
+	e := newAppWinParamsEnv(t)
+	if err := e.a.SaveAppWinParams("K80", "pkg.perspective",
+		`{"mode":"usb","size":"1920","fps":60,"bitrate":15,"flex":true,"audio":"phone","perspective":true,"perspectiveColorKey":true}`); err != nil {
+		t.Fatal(err)
+	}
+	params, err := e.a.GetAppWinParams("K80", "pkg.perspective")
+	if err != nil || !params.Usb.Perspective || !params.Wifi.Perspective ||
+		!params.Usb.PerspectiveColorKey || params.Wifi.PerspectiveColorKey {
+		t.Fatalf("mode isolation: %+v %v", params, err)
+	}
+	if !vdParamsToBridge(params.Usb, devPhys{}, "1080x2400").PerspectiveColorKey {
+		t.Fatal("color key preference lost at launch")
+	}
+	raw, err := os.ReadFile(e.a.profiles.Path())
+	if err != nil || !strings.Contains(string(raw), `"perspectiveColorKey": true`) {
+		t.Fatalf("profile persistence: %s %v", raw, err)
+	}
+	if err := e.a.SaveAppWinParams("K80", "pkg.perspective",
+		`{"mode":"usb","size":"1920","fps":60,"bitrate":15,"flex":true,"audio":"phone","perspective":false}`); err != nil {
+		t.Fatal(err)
+	}
+	params, err = e.a.GetAppWinParams("K80", "pkg.perspective")
+	if err != nil || params.Usb.Perspective {
+		t.Fatalf("disable persistence: %+v %v", params, err)
+	}
+}
+
+func TestPerspectiveInputFPSProfileAndBridge(t *testing.T) {
+	e := newAppWinParamsEnv(t)
+	for _, invalid := range []float64{-1, 24, 30, 60, 120} {
+		payload := fmt.Sprintf(`{"mode":"usb","size":"1920","fps":60,"bitrate":15,"perspective":true,"perspectiveInputFps":%g}`, invalid)
+		if err := e.a.SaveAppWinParams("K80", "pkg.fps", payload); err == nil {
+			t.Fatalf("accepted invalid desktop fps %g", invalid)
+		}
+	}
+	if err := e.a.SaveAppWinParams("K80", "pkg.fps", `{"mode":"usb","size":"1920","fps":60,"bitrate":15,"perspective":true,"perspectiveInputFps":0.5}`); err != nil {
+		t.Fatal(err)
+	}
+	params, err := e.a.GetAppWinParams("K80", "pkg.fps")
+	if err != nil || params.Usb.PerspectiveInputFPS != 0.5 || params.Wifi.PerspectiveInputFPS != 6 {
+		t.Fatalf("fps mode isolation: %+v %v", params, err)
+	}
+	got := vdParamsToBridge(params.Usb, devPhys{}, "1080x2400")
+	if !got.Perspective || got.PerspectiveInputFPS != 0.5 {
+		t.Fatalf("fps lost at launch: %+v", got)
+	}
+	raw, err := os.ReadFile(e.a.profiles.Path())
+	if err != nil || !strings.Contains(string(raw), `"perspectiveInputFps": 0.5`) {
+		t.Fatalf("fps persistence: %s %v", raw, err)
+	}
+	for _, selection := range []struct{ saved, effective int }{{1, 1}, {0, 6}, {6, 6}} {
+		payload := fmt.Sprintf(`{"mode":"usb","size":"1920","fps":60,"bitrate":15,"perspective":true,"perspectiveInputFps":%d}`, selection.saved)
+		if err := e.a.SaveAppWinParams("K80", "pkg.fps", payload); err != nil {
+			t.Fatal(err)
+		}
+		params, err := e.a.GetAppWinParams("K80", "pkg.fps")
+		if err != nil || params.Usb.PerspectiveInputFPS != float64(selection.effective) {
+			t.Fatalf("saved %d FPS: got %+v %v", selection.saved, params.Usb, err)
+		}
 	}
 }
 
@@ -552,5 +660,20 @@ func TestFlexFalseSurvivesPersistenceAndView(t *testing.T) {
 	b, err := json.Marshal(v)
 	if err != nil || !strings.Contains(string(b), `"flex":false`) {
 		t.Fatalf("API JSON 未包含 flex:false: %s err=%v", b, err)
+	}
+}
+
+func TestAppWindowInitialOrientationUsesLiveDeviceContract(t *testing.T) {
+	p := AppWinModeParams{Size: "1920", Flex: true, Perspective: true}
+	for _, pkg := range []string{"com.example.scanner", "com.xingin.xhs", "com.tencent.wework", "com.tencent.mm"} {
+		got := appWindowVdParamsForPackage(pkg, p, devPhys{}, "3200x1440")
+		if !got.FollowMainOrientation {
+			t.Fatalf("default app window must request fresh main-display orientation: %s %+v", pkg, got)
+		}
+	}
+	p.RatioW, p.RatioH = 16, 9
+	got := appWindowVdParamsForPackage("com.example.scanner", p, devPhys{}, "3200x1440")
+	if got.FollowMainOrientation || got.Size != "1920x1080" {
+		t.Fatalf("explicit aspect direction must win: %+v", got)
 	}
 }

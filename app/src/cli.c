@@ -116,6 +116,8 @@ enum {
     OPT_IGNORE_VIDEO_ENCODER_CONSTRAINTS,
     OPT_NO_TERMINAL_TITLE,
     OPT_HWDEC,
+    OPT_PERSPECTIVE_CAMERA,
+    OPT_PERSPECTIVE_INPUT_FPS,
 };
 
 struct sc_option {
@@ -152,6 +154,17 @@ struct sc_getopt_adapter {
 };
 
 static const struct sc_option options[] = {
+    {
+        .longopt = "perspective-input-fps",
+        .longopt_id = OPT_PERSPECTIVE_INPUT_FPS,
+        .argdesc = "0.5|1|6|10",
+        .text = "Real desktop input rate for local camera composition (default: 6 FPS). The local preview follows the window independently.",
+    },
+    {
+        .longopt = "perspective-camera",
+        .longopt_id = OPT_PERSPECTIVE_CAMERA,
+        .text = "Use local desktop composition with a session camera for recognition. Windows and Android 16 required.",
+    },
     {
         .longopt_id = OPT_ALWAYS_ON_TOP,
         .longopt = "always-on-top",
@@ -3050,6 +3063,16 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
             case OPT_NO_WINDOW_ASPECT_RATIO_LOCK:
                 opts->window_aspect_ratio_lock = false;
                 break;
+            case OPT_PERSPECTIVE_CAMERA:
+                opts->perspective_camera = true;
+                break;
+            case OPT_PERSPECTIVE_INPUT_FPS:
+                if (!strcmp(optarg, "0.5")) opts->perspective_input_period = 60;
+                else if (!strcmp(optarg, "1")) opts->perspective_input_period = 30;
+                else if (!strcmp(optarg, "6")) opts->perspective_input_period = 5;
+                else if (!strcmp(optarg, "10")) opts->perspective_input_period = 3;
+                else { LOGE("--perspective-input-fps must be 0.5, 1, 6 or 10"); return false; }
+                break;
             case OPT_KEEP_ACTIVE:
                 opts->keep_active = true;
                 break;
@@ -3279,6 +3302,16 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
         }
     }
 
+    if (opts->perspective_camera) {
+#ifndef _WIN32
+        LOGE("--perspective-camera requires Windows"); return false;
+#endif
+        if (!opts->new_display || !opts->start_app || !opts->window || !opts->video || !opts->control || !opts->cleanup) {
+            LOGE("--perspective-camera requires an application window, video, control and cleanup"); return false;
+        }
+        opts->vd_destroy_content = false;
+    }
+
     if (opts->new_display) {
         if (opts->video_source != SC_VIDEO_SOURCE_DISPLAY) {
             LOGE("--new-display is only available with --video-source=display");
@@ -3291,6 +3324,8 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
         }
     }
 
+    opts->flex_resize_preview = opts->render_fit == SC_RENDER_FIT_AUTO
+                            && opts->flex_display && !opts->perspective_camera;
     if (opts->render_fit == SC_RENDER_FIT_AUTO) {
         opts->render_fit = opts->flex_display ? SC_RENDER_FIT_UNSCALED
                                               : SC_RENDER_FIT_LETTERBOX;

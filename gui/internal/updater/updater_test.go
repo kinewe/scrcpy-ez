@@ -81,11 +81,23 @@ func testPlan(t *testing.T) Plan {
 	os.MkdirAll(p.Install, 0700)
 	os.MkdirAll(p.Stage(), 0700)
 	archive := filepath.Join(p.Work, "package.zip")
-	write(t, archive, testZIP(t, map[string][]byte{"profiles.json": []byte("wipe"), "settings.json": []byte("wipe"), "config.txt": []byte("wipe")}))
+	write(t, archive, testZIP(t, map[string][]byte{
+		"profiles.json": []byte("wipe"), "settings.json": []byte("wipe"), "config.txt": []byte("wipe"),
+		"WebView2Loader.dll": []byte("loader"), "runtime/MicrosoftEdgeWebView2RuntimeInstallerX64.exe": []byte("installer"),
+		"scrcpy-ez.exe.WebView2/cached-state": []byte("wipe"),
+	}))
 	var e error
 	p.Files, e = Extract(context.Background(), archive, p.Stage())
 	if e != nil {
 		t.Fatal(e)
+	}
+	for _, name := range []string{"WebView2Loader.dll", "runtime/MicrosoftEdgeWebView2RuntimeInstallerX64.exe"} {
+		if _, err := os.Stat(filepath.Join(p.Stage(), name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(p.Stage(), "scrcpy-ez.exe.WebView2", "cached-state")); !os.IsNotExist(err) {
+		t.Fatalf("browser cache was extracted: %v", err)
 	}
 	return p
 }

@@ -32,6 +32,7 @@ function node(id) {
 const saves = [];
 const compatSaves = [];
 const awakeSaves = [];
+const autoBlackoutSaves = [];
 const smoothingSaves = [];
 const smoothingFrameSaves = [];
 const context = {
@@ -41,6 +42,7 @@ const context = {
   SetSettings: (...args) => { saves.push(args); return Promise.resolve(); },
   SetOtherAppWinSystemDecorations: value => { compatSaves.push(value); return Promise.resolve(); },
   SetKeepDeviceAwake: value => { awakeSaves.push(value); return Promise.resolve(); },
+  SetAutoBlackoutMainCast: value => { autoBlackoutSaves.push(value); return Promise.resolve(); },
   SetVideoSmoothing: value => { smoothingSaves.push(value); return Promise.resolve(); },
   SetVideoSmoothingFrames: value => { smoothingFrameSaves.push(value); return Promise.resolve(); },
   toast: message => { throw new Error(message); }
@@ -74,6 +76,18 @@ assert.equal(saves.length, 1);
 console.log('settings compatibility: legacy snapshots, save bindings and independent original settings passed');
 
 (async () => {
+  assert.equal(node('set-auto-blackout').attrs['aria-checked'], 'true');
+  node('set-auto-blackout').handlers.click();
+  node('set-auto-blackout').handlers.click();
+  assert.deepEqual(autoBlackoutSaves, [false]);
+  assert.equal(node('set-auto-blackout').attrs['aria-checked'], 'false');
+  context.syncSettings({ settings: { keepDeviceAwake: true, autoBlackoutMainCast: true } });
+  assert.equal(node('set-keep-awake').attrs['aria-checked'], 'true');
+  assert.equal(node('set-auto-blackout').attrs['aria-checked'], 'false');
+  await Promise.resolve(); await Promise.resolve();
+  context.syncSettings({ settings: { keepDeviceAwake: false, autoBlackoutMainCast: false } });
+  assert.equal(node('set-keep-awake').attrs['aria-checked'], 'false');
+  assert.equal(node('set-auto-blackout').attrs['aria-checked'], 'false');
   node('set-smoothing').handlers.click();
   node('set-smoothing').handlers.click(); // Do not enqueue a second save while pending.
   assert.deepEqual(smoothingSaves, [true]);

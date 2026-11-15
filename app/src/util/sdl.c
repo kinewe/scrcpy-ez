@@ -118,11 +118,11 @@ sc_sdl_render_clear(SDL_Renderer *renderer) {
     return ok;
 }
 
-void
+bool
 sc_sdl_render_present(SDL_Renderer *renderer) {
     bool ok = SDL_RenderPresent(renderer);
     if (!ok) {
         LOGE("Could not render: %s", SDL_GetError());
-        assert(!"unexpected");
     }
+    return ok;
 }

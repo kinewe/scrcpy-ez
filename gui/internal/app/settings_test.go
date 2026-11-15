@@ -17,7 +17,7 @@ func TestSettingsDefaultsWhenFileMissing(t *testing.T) {
 		t.Fatalf("文件缺失不应报错: %v", err)
 	}
 	got := s.Get()
-	if !got.ShowParamOverlay || got.CloseToTray {
+	if !got.ShowParamOverlay || got.CloseToTray || got.ForcePerspectiveColorKey || !got.AutoBlackoutMainCast {
 		t.Fatalf("默认值应为 {显示, 不最小化到托盘}，实际 %+v", got)
 	}
 }
@@ -59,7 +59,7 @@ func TestSettingsFileContentIsolated(t *testing.T) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("settings.json 非法 JSON: %v", err)
 	}
-	if len(m) != 9 || m["videoSmoothing"] != false || m["videoSmoothingFrames"] != float64(2) || m["showParamOverlay"] != true || m["closeToTray"] != true || m["keepDeviceAwake"] != true || m["otherAppWinSystemDecorations"] != true || m["notificationDefault"] != true || m["notificationPreview"] != true || m["notificationCopyMinutes"] != float64(1440) {
+	if len(m) != 10 || m["videoSmoothing"] != false || m["videoSmoothingFrames"] != float64(2) || m["showParamOverlay"] != true || m["closeToTray"] != true || m["keepDeviceAwake"] != true || m["autoBlackoutMainCast"] != true || m["otherAppWinSystemDecorations"] != true || m["notificationDefault"] != true || m["notificationPreview"] != true || m["notificationCopyMinutes"] != float64(1440) {
 		t.Fatalf("settings.json 应只含全局设置: %v", m)
 	}
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
@@ -113,13 +113,16 @@ func TestAppSettingsSnapshotAndReload(t *testing.T) {
 	if err := a.SetSettings(false, true); err != nil {
 		t.Fatal(err)
 	}
-	if got := a.Snapshot().Settings; got.ShowParamOverlay || !got.CloseToTray {
+	if err := a.SetForcePerspectiveColorKey(true); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.Snapshot().Settings; got.ShowParamOverlay || !got.CloseToTray || !got.ForcePerspectiveColorKey {
 		t.Fatalf("SetSettings 后快照应立即更新: %+v", got)
 	}
 
 	a2 := New(Config{BatPath: "C:\\x\\投屏启动.bat", AdbPath: "C:\\x\\adb.exe",
 		Version: "test", SettingsPath: path})
-	if got := a2.Settings(); got.ShowParamOverlay || !got.CloseToTray {
+	if got := a2.Settings(); got.ShowParamOverlay || !got.CloseToTray || !got.ForcePerspectiveColorKey {
 		t.Fatalf("重启（新实例）后设置应保持: %+v", got)
 	}
 }
@@ -180,7 +183,7 @@ func TestSettingsSeparateFromProfiles(t *testing.T) {
 		t.Fatalf("设备档案写入不应影响 settings.json: %v", err)
 	}
 	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil || len(m) != 9 || m["videoSmoothing"] != false || m["videoSmoothingFrames"] != float64(2) || m["notificationDefault"] != true || m["notificationPreview"] != true || m["notificationCopyMinutes"] != float64(1440) {
+	if err := json.Unmarshal(b, &m); err != nil || len(m) != 10 || m["autoBlackoutMainCast"] != true || m["videoSmoothing"] != false || m["videoSmoothingFrames"] != float64(2) || m["notificationDefault"] != true || m["notificationPreview"] != true || m["notificationCopyMinutes"] != float64(1440) {
 		t.Fatalf("settings.json 被设备档案污染: %s (err=%v)", b, err)
 	}
 }

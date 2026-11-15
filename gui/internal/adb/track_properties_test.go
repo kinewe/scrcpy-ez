@@ -14,7 +14,7 @@ import (
 func batteryTrackFixture() (*Manager, *cachedSpec) {
 	m := New("unused-adb", "")
 	now := time.Now()
-	c := &cachedSpec{identity: "device:TABLET", name: "Tablet", marketname: "Tablet", model: "Tablet", at: now, specAt: now, batAt: now, battery: 48, res: "1920x1280", fps: 60}
+	c := &cachedSpec{identity: "device:TABLET", name: "Tablet", marketname: "Tablet", model: "Tablet", at: now, specAt: now, batAt: now, battery: 48, res: "1920x1280", fps: 60, weChatScan: true, weChatScanAt: now}
 	m.cache["192.0.2.20:39263"] = c
 	m.identityResolver = func(string) (string, string) { return "device:TABLET", "TABLET" }
 	m.EventHub().Publish(deviceevents.Snapshot{Epoch: 1, Available: true, Transports: []deviceevents.Transport{{Serial: "192.0.2.20:39263", State: "device", Kind: "wifi", ID: "11"}}})

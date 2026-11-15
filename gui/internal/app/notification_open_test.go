@@ -96,11 +96,18 @@ func TestNotificationCreatesBlankDisplayThenReusesItWithoutRestart(t *testing.T)
 	}
 	source := &testNotificationOpener{valid: true}
 	request := notifications.OpenRequest{Identity: "tablet", Package: "com.example.mail", OwnerPackage: "com.example.mail", App: "邮件"}
+	if err := e.a.SaveAppWinParams("tablet", request.Package,
+		`{"mode":"usb","size":"1280","ratioW":4,"ratioH":3,"fps":60,"bitrate":8,"flex":true}`); err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan error, 1)
 	go func() { done <- e.a.OpenNotification(context.Background(), request, source) }()
 	params := e.f.waitParams(t, 1)
-	if params.StartApp != "" || params.VdSize == "" || !params.VdKeepContent {
+	if params.StartApp != "" || !params.VdKeepContent {
 		t.Fatalf("notification must not start/force-stop app: %+v", params)
+	}
+	if params.VdUsb.Size != "1280x960" || !params.VdUsb.Flex || params.VdUsb.FollowMainOrientation {
+		t.Fatalf("notification ignored the selected ratio or Flex: %+v", params.VdUsb)
 	}
 	deadline := time.Now().Add(time.Second)
 	for {
@@ -117,9 +124,9 @@ func TestNotificationCreatesBlankDisplayThenReusesItWithoutRestart(t *testing.T)
 	}
 	// Opposite pipe arrival orders are both valid; no first-texture deadlock.
 	e.fireLine("SCRCPY_EZ_READY pid=0")
-	e.fireLine("[server] INFO: New display: 1280x720 (id=17)")
+	e.fireLine("[server] INFO: New display: 1280x960 (id=17)")
 	e.fireLine("SCRCPY_EZ_READY pid=987654321")
-	e.fireLine("INFO: Texture (D3D11VA): 1280x720")
+	e.fireLine("INFO: Texture (D3D11VA): 1280x960")
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}

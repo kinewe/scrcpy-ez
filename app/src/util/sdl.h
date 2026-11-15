@@ -34,7 +34,7 @@ sc_sdl_hide_window(SDL_Window *window);
 bool
 sc_sdl_render_clear(SDL_Renderer *renderer);
 
-void
+bool
 sc_sdl_render_present(SDL_Renderer *renderer);
 
 #endif

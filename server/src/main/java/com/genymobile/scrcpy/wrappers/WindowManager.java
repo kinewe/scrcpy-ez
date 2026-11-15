@@ -42,6 +42,10 @@ public final class WindowManager {
         this.manager = manager;
     }
 
+    public boolean isKeyguardLocked() throws ReflectiveOperationException {
+        return (boolean) manager.getClass().getMethod("isKeyguardLocked").invoke(manager);
+    }
+
     private Method getGetRotationMethod() throws NoSuchMethodException {
         if (getRotationMethod == null) {
             Class<?> cls = manager.getClass();

@@ -100,6 +100,10 @@ public final class ClipboardManager {
     }
 
     public ClipboardSnapshot readSnapshot(boolean ignoreRemote) {
+        return readSnapshot(ignoreRemote, 0);
+    }
+
+    public ClipboardSnapshot readSnapshot(boolean ignoreRemote, int imageLimit) {
         ClipData clip = manager.getPrimaryClip();
         if (clip == null || clip.getItemCount() == 0) {
             return null;
@@ -115,7 +119,7 @@ public final class ClipboardManager {
             if (revision == 0) {
                 return null;
             }
-            ClipboardImage image = getImage(clip);
+            ClipboardImage image = getImage(clip, imageLimit);
             if (image == null && clip.getDescription() != null && clip.getDescription().hasMimeType("image/*")) {
                 return null; // unreadable images must not replace the PC clipboard with fallback text
             }
@@ -154,11 +158,11 @@ public final class ClipboardManager {
         return clipData.getItemAt(0).getText();
     }
 
-    public ClipboardImage getImage() {
-        return getImage(manager.getPrimaryClip());
+    public ClipboardImage getImage(int imageLimit) {
+        return getImage(manager.getPrimaryClip(), imageLimit);
     }
 
-    private ClipboardImage getImage(ClipData clipData) {
+    private ClipboardImage getImage(ClipData clipData, int imageLimit) {
         if (clipData == null || clipData.getItemCount() == 0) {
             return null;
         }
@@ -192,6 +196,10 @@ public final class ClipboardManager {
                     while ((bytesRead = inputStream.read(buffer)) != -1) {
                         if (outputStream.size() > (1 << 28) - 1024 - bytesRead) {
                             throw new IOException("Clipboard image exceeds protocol limit");
+                        }
+                        if (imageLimit > 0 && outputStream.size() > imageLimit - bytesRead) {
+                            Ln.i("Image clipboard: scanner skipped oversized image");
+                            return null;
                         }
                         outputStream.write(buffer, 0, bytesRead);
                     }
@@ -480,7 +488,7 @@ public final class ClipboardManager {
      * return the destination path, or null on failure. The media scan is
      * triggered by the caller.
      */
-    public String saveLatestImageToGallery() {
+    public String saveLatestImageToGallery(int imageLimit) {
         try {
             journal(); // another casting server may have cached the image
             ClipData current = manager.getPrimaryClip();
@@ -517,6 +525,10 @@ public final class ClipboardManager {
             }
             if (latest == null) {
                 Ln.w("No clipboard image file found");
+                return null;
+            }
+            if (imageLimit > 0 && latest.length() > imageLimit) {
+                Ln.i("Image clipboard: scanner skipped saving oversized image to gallery");
                 return null;
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

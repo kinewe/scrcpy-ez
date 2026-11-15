@@ -57,25 +57,35 @@ type CastParams struct {
 	// Explicitly supply the global idle-sleep choice to every cast/reconnect.
 	KeepDeviceAwake      bool
 	KeepDeviceAwakeSet   bool
+	AutoBlackoutMainCast bool
 	VideoSmoothing       bool
 	VideoSmoothingSet    bool
 	VideoSmoothingFrames int
 
 	// --- 虚拟屏（应用窗口会话；SCEZ_VD_* 整组"未设置=不注入"，零回归）---
 	// bat 侧据此组装 VD_ARGS（投屏支持.bat「gui56 虚拟屏参数」段）。
-	VdSize        string // SCEZ_VD_SIZE：虚拟屏尺寸 "WxH"（如 1280x720）
-	VdDpi         int    // SCEZ_VD_DPI：虚拟屏 dpi（GUI 按等比公式显式算；0=不注入）
-	VdFlex        bool   // SCEZ_VD_FLEX=1 → --flex-display（窗口拖动=虚拟屏跟随）
-	VdAutoDpi     bool   // SCEZ_VD_AUTO_DPI=1：自动密度随 flex 尺寸等比更新
-	VdMatchPhone  bool   // 保留手机原生虚拟屏规格，兼容缓存资源密度的应用
-	VdMaxSize     int    // 独立限制视频输出长边，不缩小虚拟屏布局
-	VdIme         string // SCEZ_VD_IME → --display-ime-policy=<v>（虚拟屏推荐 local）
-	VdNoDecor     bool   // SCEZ_VD_NO_DECOR=1 → --no-vd-system-decorations
-	VdKeepContent bool   // SCEZ_VD_KEEP_CONTENT=1 → --no-vd-destroy-content
-	VdAudio       string // SCEZ_VD_AUDIO：声音档位单套回退（v2.1.78；phone/pc/both，空=不注入）
-	StartApp      string // SCEZ_START_APP：启动应用包名（调用方带 "+" 前缀=先强停再启动）
-	ReuseAppTask  bool   // Prefer a verified existing task; never silently force-stop.
-	WinTitle      string // SCEZ_WIN_TITLE：窗口标题（应用名；已安全化）
+	VdSize                  string // SCEZ_VD_SIZE：虚拟屏尺寸 "WxH"（如 1280x720）
+	VdDpi                   int    // SCEZ_VD_DPI：虚拟屏 dpi（GUI 按等比公式显式算；0=不注入）
+	VdFlex                  bool   // SCEZ_VD_FLEX=1 → --flex-display（窗口拖动=虚拟屏跟随）
+	VdAutoDpi               bool   // SCEZ_VD_AUTO_DPI=1：自动密度随 flex 尺寸等比更新
+	VdFollowMainOrientation bool
+	VdMatchPhone            bool   // 保留手机原生虚拟屏规格，兼容缓存资源密度的应用
+	VdMaxSize               int    // 独立限制视频输出长边，不缩小虚拟屏布局
+	VdIme                   string // SCEZ_VD_IME → --display-ime-policy=<v>（虚拟屏推荐 local）
+	PerspectiveCamera       bool
+	PerspectiveInputFPS     float64
+	PerspectiveColorKey     bool
+	// PerspectiveCalib：透视标定缓存（GUI 从设备档案取出，注入客户端做热启动）。
+	PerspectiveCalib string
+	// ScannerPageReadyFile：GUI 检测到微信扫一扫页面真正到前台后写入的
+	// ready 信号文件；客户端用它把“无标定场”重试从固定延时改为页面就绪触发。
+	ScannerPageReadyFile string
+	VdNoDecor            bool   // SCEZ_VD_NO_DECOR=1 → --no-vd-system-decorations
+	VdKeepContent        bool   // SCEZ_VD_KEEP_CONTENT=1 → --no-vd-destroy-content
+	VdAudio              string // SCEZ_VD_AUDIO：声音档位单套回退（v2.1.78；phone/pc/both，空=不注入）
+	StartApp             string // SCEZ_START_APP：启动应用包名（调用方带 "+" 前缀=先强停再启动）
+	ReuseAppTask         bool   // Prefer a verified existing task; never silently force-stop.
+	WinTitle             string // Display title; castEnv quotes it as one Windows argument.
 
 	// --- 虚拟屏两套参数（v2.1.47 应用窗口参数面板；有线/无线分别记忆）---
 	// 注入 SCEZ_VD_*_USB / SCEZ_VD_*_WIFI，bat 按当前连接形态各取一套。
@@ -89,15 +99,19 @@ type CastParams struct {
 // 注入为 SCEZ_VD_<KEY>_USB / SCEZ_VD_<KEY>_WIFI 两套环境变量，bat 按当前连接
 // 形态（PICK 含":"=无线）选一套组装 CAST_ARGS/VD_ARGS；各字段零值=不注入。
 type VdModeParams struct {
-	Size       string // SCEZ_VD_SIZE_*：虚拟屏初始尺寸 "WxH"（空=该套不注入）
-	Dpi        int    // SCEZ_VD_DPI_*：>0 注入（GUI 按该套尺寸等比算；0=scrcpy 默认）
-	FPS        int    // SCEZ_VD_FPS_*：>0 注入（bat 无值默认 60）
-	Bitrate    int    // SCEZ_VD_BIT_*：>0 注入（bat 无值默认 8）
-	Flex       bool   // SCEZ_VD_FLEX_*=1（窗口跟随；未注入=不跟随）
-	AutoDpi    bool   // 自动密度；显式 DPI 保持固定
-	MatchPhone bool
-	MaxSize    int
-	Audio      string // SCEZ_VD_AUDIO_*=值（v2.1.78 三档滑条：phone→--no-audio / both→--audio-dup；空=不加参数）
+	Perspective           bool
+	PerspectiveInputFPS   float64
+	PerspectiveColorKey   bool
+	Size                  string // SCEZ_VD_SIZE_*：虚拟屏初始尺寸 "WxH"（空=该套不注入）
+	Dpi                   int    // SCEZ_VD_DPI_*：>0 注入（GUI 按该套尺寸等比算；0=scrcpy 默认）
+	FPS                   int    // SCEZ_VD_FPS_*：>0 注入（bat 无值默认 60）
+	Bitrate               int    // SCEZ_VD_BIT_*：>0 注入（bat 无值默认 8）
+	Flex                  bool   // SCEZ_VD_FLEX_*=1/0（窗口跟随）
+	AutoDpi               bool   // 自动密度；显式 DPI 保持固定
+	FollowMainOrientation bool
+	MatchPhone            bool
+	MaxSize               int
+	Audio                 string // SCEZ_VD_AUDIO_*=值（v2.1.78 三档滑条：phone→--no-audio / both→--audio-dup；空=不加参数）
 	// LockFps/LockBitrate ABR 锁定（v2.1.80 窗口设置「锁定」）：注入
 	// SCEZ_VD_LOCK_FPS_*/SCEZ_VD_LOCK_BITRATE_*=1 → bat 追加 --abr-lock-*。
 	LockFps     bool
@@ -199,6 +213,11 @@ func castEnv(params CastParams, watchTag string) []string {
 		}
 		env = append(env, "SCEZ_KEEP_ACTIVE="+v)
 	}
+	if params.AutoBlackoutMainCast {
+		env = append(env, "SCEZ_AUTO_BLACKOUT_MAIN_CAST=1")
+	} else {
+		env = append(env, "SCEZ_AUTO_BLACKOUT_MAIN_CAST=0")
+	}
 	if params.VideoSmoothingSet {
 		value := "0"
 		if params.VideoSmoothing {
@@ -233,12 +252,30 @@ func castEnv(params CastParams, watchTag string) []string {
 			match = "1"
 		}
 		env = append(env, "SCEZ_VD_MATCH_PHONE="+match)
+		follow := "0"
+		if params.VdFollowMainOrientation {
+			follow = "1"
+		}
+		env = append(env, "SCEZ_VD_FOLLOW_MAIN_ORIENTATION="+follow)
 		if params.VdMaxSize > 0 {
 			env = append(env, fmt.Sprintf("SCEZ_VD_MAX_SIZE=%d", params.VdMaxSize))
 		}
 	}
 	if params.VdIme != "" {
 		env = append(env, "SCEZ_VD_IME="+params.VdIme)
+	}
+	if params.PerspectiveCamera {
+		env = append(env, "SCEZ_PERSPECTIVE_CAMERA=1")
+	} else {
+		env = append(env, "SCEZ_PERSPECTIVE_CAMERA=0")
+	}
+	env = append(env, fmt.Sprintf("SCEZ_PERSPECTIVE_INPUT_FPS=%g", NormalizePerspectiveInputFPS(params.PerspectiveInputFPS)))
+	env = append(env, "SCEZ_PERSPECTIVE_COLOR_KEY="+perspectiveColorKey(params.PerspectiveCamera, params.PerspectiveColorKey))
+	if params.PerspectiveCalib != "" {
+		env = append(env, "SCEZ_PERSPECTIVE_CALIB="+params.PerspectiveCalib)
+	}
+	if params.ScannerPageReadyFile != "" {
+		env = append(env, "SCEZ_SCANNER_PAGE_READY="+params.ScannerPageReadyFile)
 	}
 	if params.VdNoDecor {
 		env = append(env, "SCEZ_VD_NO_DECOR=1")
@@ -260,13 +297,30 @@ func castEnv(params CastParams, watchTag string) []string {
 		env = append(env, "SCEZ_REUSE_APP_TASK="+value)
 	}
 	if params.WinTitle != "" {
-		env = append(env, "SCEZ_WIN_TITLE="+params.WinTitle)
+		env = append(env, "SCEZ_WIN_TITLE="+quoteTitleArg(params.WinTitle))
 	}
 	// 虚拟屏两套参数（v2.1.47）：_USB/_WIFI 各一组；Size 空=该套不注入。
 	env = vdModeEnv(env, "_USB", params.VdUsb)
 	env = vdModeEnv(env, "_WIFI", params.VdWifi)
 	env = append(env, "SCEZ_WATCH_TAG="+watchTag)
 	return env
+}
+
+const DefaultPerspectiveInputFPS = 6
+
+func NormalizePerspectiveInputFPS(fps float64) float64 {
+	switch fps {
+	case 0.5, 1, DefaultPerspectiveInputFPS, 10:
+		return fps
+	}
+	return DefaultPerspectiveInputFPS
+}
+
+func perspectiveColorKey(camera, enabled bool) string {
+	if camera && enabled {
+		return "1"
+	}
+	return "0"
 }
 
 // vdModeEnv 注入单套虚拟屏参数（suffix="_USB"/"_WIFI"）；Size 空=整套不注入
@@ -276,6 +330,13 @@ func vdModeEnv(env []string, suffix string, p VdModeParams) []string {
 		return env
 	}
 	env = append(env, "SCEZ_VD_SIZE"+suffix+"="+p.Size)
+	perspective := "0"
+	if p.Perspective {
+		perspective = "1"
+	}
+	env = append(env, "SCEZ_PERSPECTIVE_CAMERA"+suffix+"="+perspective)
+	env = append(env, fmt.Sprintf("SCEZ_PERSPECTIVE_INPUT_FPS%s=%g", suffix, NormalizePerspectiveInputFPS(p.PerspectiveInputFPS)))
+	env = append(env, "SCEZ_PERSPECTIVE_COLOR_KEY"+suffix+"="+perspectiveColorKey(p.Perspective, p.PerspectiveColorKey))
 	if p.Dpi > 0 {
 		env = append(env, fmt.Sprintf("SCEZ_VD_DPI%s=%d", suffix, p.Dpi))
 	}
@@ -285,9 +346,11 @@ func vdModeEnv(env []string, suffix string, p VdModeParams) []string {
 	if p.Bitrate > 0 {
 		env = append(env, fmt.Sprintf("SCEZ_VD_BIT%s=%d", suffix, p.Bitrate))
 	}
+	flex := "0"
 	if p.Flex {
-		env = append(env, "SCEZ_VD_FLEX"+suffix+"=1")
+		flex = "1"
 	}
+	env = append(env, "SCEZ_VD_FLEX"+suffix+"="+flex)
 	value := "0"
 	if p.AutoDpi {
 		value = "1"
@@ -298,6 +361,11 @@ func vdModeEnv(env []string, suffix string, p VdModeParams) []string {
 		match = "1"
 	}
 	env = append(env, "SCEZ_VD_MATCH_PHONE"+suffix+"="+match)
+	follow := "0"
+	if p.FollowMainOrientation {
+		follow = "1"
+	}
+	env = append(env, "SCEZ_VD_FOLLOW_MAIN_ORIENTATION"+suffix+"="+follow)
 	env = append(env, fmt.Sprintf("SCEZ_VD_MAX_SIZE%s=%d", suffix, max(0, p.MaxSize)))
 	if p.Audio != "" {
 		env = append(env, "SCEZ_VD_AUDIO"+suffix+"="+p.Audio)

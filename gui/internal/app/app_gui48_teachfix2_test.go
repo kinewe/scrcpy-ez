@@ -187,7 +187,7 @@ func TestTeachfix2LearnPicksPhysicalReachableCandidate(t *testing.T) {
 	}
 	ops.install(a)
 
-	a.applyTrackUpdate([]adb.Device{teachfix2Usb("device")})
+	rc10TrackAndWait(t, a, []adb.Device{teachfix2Usb("device")})
 	calls := ops.probes()
 	if len(calls) != 2 {
 		t.Fatalf("应对 wlan+eth 两个物理候选并行探测（蜂窝不参与）: %v", calls)
@@ -247,7 +247,7 @@ func TestTeachfix2MaskLifecycleBindsTcpipReady(t *testing.T) {
 	gui49fix6FastStable(t)
 	logPath := mdns8StartLogCapture(t)
 
-	a.applyTrackUpdate([]adb.Device{teachfix2Usb("device")})
+	rc10TrackAndWait(t, a, []adb.Device{teachfix2Usb("device")})
 	if !teachfix2PlugActive(a, "REDMI K80") {
 		t.Fatal("tcpip 未就绪时遮罩应持续")
 	}
@@ -286,7 +286,7 @@ func TestTeachfix2HuaweiStyleRegression(t *testing.T) {
 	}
 	ops.install(a)
 
-	a.applyTrackUpdate([]adb.Device{{
+	rc10TrackAndWait(t, a, []adb.Device{{
 		Serial: "FLA123", State: "device", ConnType: "usb",
 		Name: "HUAWEI FLA-TL10", Marketname: "HUAWEI FLA-TL10",
 		Identity: "HUAWEI FLA-TL10",

@@ -102,6 +102,25 @@ func TestMdnsListenStateFirstAndUpsertGone(t *testing.T) {
 	}
 }
 
+func TestMdnsListenForceConfirmsOnlyRespondingChannel(t *testing.T) {
+	st := newMdnsListenState(nil, nil, nil)
+	defer st.stop()
+	events := collectEvents(st)
+	tls := MdnsService{Type: "_adb-tls-connect._tcp", Name: "adb-a-Ab12Cd", Addr: "192.0.2.2:36329", Mode: MdnsModeTls}
+	tcp := MdnsService{Type: "_adb._tcp", Name: "adb-a", Addr: "192.0.2.2:5555", Mode: MdnsModeTcpip}
+	st.upsert(tls, time.Now(), false)
+	st.upsert(tcp, time.Now(), false)
+	generation := st.entries[mdnsRecordKey(tls)].generation
+	st.upsert(tcp, time.Now(), true)
+	last := (*events)[len(*events)-1]
+	if len(last.Snapshot) != 2 || len(last.Added) != 1 || last.Added[0] != tcp {
+		t.Fatalf("5555 response must not re-confirm cached TLS: %+v", last)
+	}
+	if st.entries[mdnsRecordKey(tls)].generation != generation {
+		t.Fatal("5555 response reset the independent TLS expiry")
+	}
+}
+
 func TestMdnsListenStateIdleProbe(t *testing.T) {
 	old := mdnsIdleProbeAfter
 	mdnsIdleProbeAfter = 30 * time.Millisecond
@@ -272,6 +291,7 @@ func TestMdnsProcessMessageGoodbyeAndUpdate(t *testing.T) {
 
 	build := func(ttl uint32) *dns.Msg {
 		m := new(dns.Msg)
+		m.Response = true
 		svc := "_adb-tls-connect._tcp.local."
 		inst := "adb-a-Xy9zQ2._adb-tls-connect._tcp.local."
 		host := "a.local."
@@ -351,6 +371,7 @@ func TestMdnsQueryResponseUpsertResetsIdleTimer(t *testing.T) {
 	// QU 查询的应答 → 与广播同等处理：upsert + 重置 idle timer。
 	build := func() *dns.Msg {
 		m := new(dns.Msg)
+		m.Response = true
 		svcName := "_adb-tls-connect._tcp.local."
 		inst := "adb-a-Xy9zQ2._adb-tls-connect._tcp.local."
 		host := "a.local."
@@ -435,6 +456,7 @@ func TestMdnsQuerySentFromDedicatedSocket(t *testing.T) {
 		t.Fatalf("查询应从专用 socket 发往 224.0.0.251:5353: last=%d to=%v", len(conn.last), conn.to)
 	}
 	m := new(dns.Msg)
+	m.Response = true
 	if err := m.Unpack(conn.last); err != nil {
 		t.Fatalf("查询包解析失败: %v", err)
 	}
@@ -454,9 +476,10 @@ func TestMdnsQueryResponseForcedEmit(t *testing.T) {
 	st.upsert(svc, time.Now(), false)
 	n := len(*evs)
 
-	// QU 应答内容与上次完全相同 → force emit，Added=当前快照全量。
+	// QU 应答内容与上次完全相同 → force emit，Added=本次实际应答服务。
 	build := func() *dns.Msg {
 		m := new(dns.Msg)
+		m.Response = true
 		svcName := "_adb._tcp.local."
 		inst := "adb-a._adb._tcp.local."
 		host := "a.local."
@@ -473,7 +496,7 @@ func TestMdnsQueryResponseForcedEmit(t *testing.T) {
 	}
 	last := (*evs)[len(*evs)-1]
 	if len(last.Added) != 1 || len(last.Removed) != 0 || len(last.Snapshot) != 1 || last.First {
-		t.Fatalf("强制 emit 事件错误（Added=快照全量，Removed=空）: %+v", last)
+		t.Fatalf("强制 emit 事件错误（Added=本次实际应答，Removed=空）: %+v", last)
 	}
 }
 
@@ -576,6 +599,7 @@ func (f *fakeMdnsReadConn) isClosed() bool {
 
 func mdnsTestAdvertise(inst, svcType string) *dns.Msg {
 	m := new(dns.Msg)
+	m.Response = true
 	svcFQDN := svcType + ".local."
 	instFQDN := inst + "." + svcFQDN
 	host := inst + ".local."
@@ -765,5 +789,44 @@ func TestMdnsRebuildFailureKeepsOldSocket(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("保留的旧 socket 作为当前活跃 socket，意外退出未上报")
+	}
+}
+
+func TestLanQueryBindAddrsFrom(t *testing.T) {
+	upMulti := net.FlagUp | net.FlagMulticast
+	all := []mdnsIface{
+		mdnsTestIface("Ethernet", "00:11:22:33:44:55", "192.0.2.174", upMulti),
+		mdnsTestIface("Ethernet 2", "00:11:22:33:44:56", "192.0.2.175", upMulti),
+		mdnsTestIface("ZeroTier One [x]", "02:00:00:aa:bb:cc", "10.151.76.18", upMulti),
+		mdnsTestIface("vEthernet (WSL)", "00:15:5d:aa:bb:cc", "172.17.208.1", upMulti),
+		mdnsTestIface("Ethernet Dup", "00:11:22:33:44:57", "192.0.2.174", upMulti),
+		mdnsTestIface("No IPv4", "00:11:22:33:44:58", "", upMulti),
+	}
+	got := lanQueryBindAddrsFrom(all)
+	want := []string{"192.0.2.174", "192.0.2.175"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("QU 绑定地址 = %v，期望 %v（排除虚拟/重复/无地址接口）", got, want)
+	}
+	if got := lanQueryBindAddrsFrom(nil); len(got) != 0 {
+		t.Fatalf("空输入应返回空: %v", got)
+	}
+	if got := lanQueryBindAddrsFrom([]mdnsIface{mdnsTestIface("ZeroTier One [x]", "02:00:00:aa:bb:cc", "10.151.76.18", upMulti)}); len(got) != 0 {
+		t.Fatalf("只有虚拟接口时应返回空: %v", got)
+	}
+}
+
+func TestMdnsQueryFnSendsToAllSockets(t *testing.T) {
+	c1 := &fakeQueryConn{local: &net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 40001}}
+	c2 := &fakeQueryConn{local: &net.UDPAddr{IP: net.ParseIP("192.0.2.11"), Port: 40002}}
+	fn := mdnsQueryFnFor(c1, c2)
+	fn("_adb._tcp")
+	if len(c1.last) == 0 || len(c2.last) == 0 {
+		t.Fatalf("QU 应发给每个 LAN socket: c1=%d c2=%d", len(c1.last), len(c2.last))
+	}
+	if c1.to == nil || c1.to.String() != mdnsUDPAddr.String() || c2.to == nil || c2.to.String() != mdnsUDPAddr.String() {
+		t.Fatalf("QU 目标错误: c1=%v c2=%v", c1.to, c2.to)
+	}
+	if len(c1.last) != len(c2.last) {
+		t.Fatalf("各 socket 查询长度应一致: %d/%d", len(c1.last), len(c2.last))
 	}
 }

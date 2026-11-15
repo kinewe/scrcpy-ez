@@ -175,6 +175,8 @@ sc_control_msg_serialized_size(const struct sc_control_msg *msg) {
         case SC_CONTROL_MSG_TYPE_CAMERA_ZOOM_IN:
         case SC_CONTROL_MSG_TYPE_CAMERA_ZOOM_OUT:
         case SC_CONTROL_MSG_TYPE_KEEP_AWAKE_HEARTBEAT:
+        case SC_CONTROL_MSG_TYPE_TOGGLE_DISPLAY_BACKLIGHT:
+        case SC_CONTROL_MSG_TYPE_AUTO_BLACKOUT:
             // no additional data
             return 1;
         default:
@@ -326,6 +328,8 @@ serialize_into(const struct sc_control_msg *msg, uint8_t *buf) {
         case SC_CONTROL_MSG_TYPE_CAMERA_ZOOM_IN:
         case SC_CONTROL_MSG_TYPE_CAMERA_ZOOM_OUT:
         case SC_CONTROL_MSG_TYPE_KEEP_AWAKE_HEARTBEAT:
+        case SC_CONTROL_MSG_TYPE_TOGGLE_DISPLAY_BACKLIGHT:
+        case SC_CONTROL_MSG_TYPE_AUTO_BLACKOUT:
             // no additional data
             return 1;
         default:
@@ -510,6 +514,12 @@ sc_control_msg_log(const struct sc_control_msg *msg) {
             return;
         case SC_CONTROL_MSG_TYPE_KEEP_AWAKE_HEARTBEAT:
             LOG_CMSG("keep-awake heartbeat");
+            break;
+        case SC_CONTROL_MSG_TYPE_TOGGLE_DISPLAY_BACKLIGHT:
+            LOG_CMSG("toggle display backlight");
+            break;
+        case SC_CONTROL_MSG_TYPE_AUTO_BLACKOUT:
+            LOG_CMSG("automatically turn off display backlight");
             break;
         case SC_CONTROL_MSG_TYPE_SCAN_FILE:
             LOG_CMSG("scan file \"%s\"", msg->scan_file.path);

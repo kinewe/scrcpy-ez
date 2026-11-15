@@ -147,6 +147,8 @@ sc_input_manager_init(struct sc_input_manager *im,
     im->mp = params->mp;
     im->gp = params->gp;
     im->camera = params->camera;
+    im->main_display = params->main_display;
+    im->auto_blackout_pending = params->auto_blackout;
     im->screen_off = false;
     im->ctrl_power_pressed = false;
 
@@ -155,6 +157,7 @@ sc_input_manager_init(struct sc_input_manager *im,
     im->clipboard_autosync = params->clipboard_autosync;
     im->clipboard_sync = params->clipboard_sync;
     im->suppress_start_push = !params->clipboard_push_on_start;
+    im->clipboard_image_limit = params->clipboard_image_limit;
 
     im->sdl_shortcut_mods = sc_shortcut_mods_to_sdl(params->shortcut_mods);
 
@@ -240,6 +243,7 @@ save_clipboard_image_to_gallery(struct sc_input_manager *im) {
 
 static inline void
 action_power(struct sc_input_manager *im, enum sc_action action) {
+    im->auto_blackout_pending = false;
     send_keycode(im, AKEYCODE_POWER, action, "POWER");
 }
 
@@ -471,7 +475,7 @@ clipboard_fnv1a(const uint8_t *data, size_t size) {
 // (which returns the same original file bytes), and both fingerprints must
 // match to avoid a duplicate push.
 static bool
-clipboard_hdrop_fingerprint(uint64_t *out_fp) {
+clipboard_hdrop_fingerprint(uint64_t *out_fp, size_t limit) {
     wchar_t path[MAX_PATH] = {0};
     if (!clipboard_get_hdrop_first_file(path, sizeof(path))) {
         return false;
@@ -486,6 +490,10 @@ clipboard_hdrop_fingerprint(uint64_t *out_fp) {
     uint64_t size = 0;
     while ((rd = fread(buf, 1, sizeof(buf), f)) > 0) {
         size += rd;
+        if (limit && size > limit) {
+            fclose(f);
+            return false;
+        }
         for (size_t i = 0; i < rd; i++) {
             h ^= buf[i];
             h *= 1099511628211ULL;
@@ -502,7 +510,7 @@ clipboard_hdrop_fingerprint(uint64_t *out_fp) {
 // alternate fingerprint of a HDROP push (SDL re-encodes the file, so
 // this fingerprint differs from the raw file bytes fingerprint).
 static bool
-clipboard_sdl_data_fingerprint(uint64_t *out_fp) {
+clipboard_sdl_data_fingerprint(uint64_t *out_fp, size_t limit) {
     const char *image_mime_types[] = {
         "image/png",
         "image/jpeg",
@@ -516,6 +524,10 @@ clipboard_sdl_data_fingerprint(uint64_t *out_fp) {
         size_t size;
         void *sdldata = SDL_GetClipboardData(image_mime_types[i], &size);
         if (sdldata && size > 0) {
+            if (limit && size > limit) {
+                SDL_free(sdldata);
+                return false;
+            }
             uint64_t fp = clipboard_fnv1a(sdldata, size) ^ size;
             SDL_free(sdldata);
             *out_fp = fp;
@@ -537,11 +549,11 @@ clipboard_sdl_data_fingerprint(uint64_t *out_fp) {
 // then SDL image data, then text. Returns false if the content cannot
 // be fingerprinted.
 static bool
-clipboard_current_fingerprint(uint64_t *out_fp) {
+clipboard_current_fingerprint(uint64_t *out_fp, size_t limit) {
     if (clipboard_has_hdrop_image()) {
-        return clipboard_hdrop_fingerprint(out_fp);
+        return clipboard_hdrop_fingerprint(out_fp, limit);
     }
-    return clipboard_sdl_data_fingerprint(out_fp);
+    return clipboard_sdl_data_fingerprint(out_fp, limit);
 }
 
 // Read the first image file from the CF_HDROP clipboard data (copy file in
@@ -552,7 +564,7 @@ clipboard_current_fingerprint(uint64_t *out_fp) {
 // non-image file must not be pushed, to avoid pushing a file path as text).
 static bool
 clipboard_get_hdrop_image(uint8_t **out_data, size_t *out_size,
-                           const char **out_mime) {
+                          const char **out_mime, size_t limit, bool *oversized) {
     wchar_t path[MAX_PATH] = {0};
     if (!clipboard_get_hdrop_first_file(path, sizeof(path))) {
         return false;
@@ -580,6 +592,11 @@ clipboard_get_hdrop_image(uint8_t **out_data, size_t *out_size,
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
     if (sz <= 0) {
+        fclose(f);
+        return false;
+    }
+    if (limit && (size_t) sz > limit) {
+        *oversized = true;
         fclose(f);
         return false;
     }
@@ -632,12 +649,13 @@ clipboard_has_hdrop_image(void) {
 // false otherwise (caller falls back to SDL data).
 static bool
 clipboard_push_hdrop_image(struct sc_input_manager *im, bool paste,
-                           uint64_t sequence) {
+                           uint64_t sequence, bool *oversized) {
     uint32_t snapshot_sequence = GetClipboardSequenceNumber();
     const char *hdrop_mime = NULL;
     uint8_t *hdrop_data = NULL;
     size_t hdrop_size = 0;
-    if (!clipboard_get_hdrop_image(&hdrop_data, &hdrop_size, &hdrop_mime)) {
+    if (!clipboard_get_hdrop_image(&hdrop_data, &hdrop_size, &hdrop_mime,
+                                  im->clipboard_image_limit, oversized)) {
         return false;
     }
     // Compute the fingerprints BEFORE pushing: the main one uses the file
@@ -647,7 +665,8 @@ clipboard_push_hdrop_image(struct sc_input_manager *im, bool paste,
     // own clipboard event).
     uint64_t hdrop_fp = clipboard_fnv1a(hdrop_data, hdrop_size) ^ hdrop_size;
     uint64_t sdl_alt = 0;
-    bool sdl_alt_ok = clipboard_sdl_data_fingerprint(&sdl_alt);
+    bool sdl_alt_ok = !im->clipboard_image_limit
+                   && clipboard_sdl_data_fingerprint(&sdl_alt, 0);
     size_t mimetype_len = strlen(hdrop_mime);
     size_t msg_size = 34 + mimetype_len + hdrop_size;
     if (msg_size > SC_CONTROL_MSG_MAX_SIZE) {
@@ -694,6 +713,7 @@ bool
 sc_input_manager_set_device_image_clipboard(struct sc_input_manager *im, bool paste,
                            uint64_t sequence) {
     assert(im->controller && im->kp && !im->camera);
+    size_t limit = im->clipboard_image_limit;
 
     // Multi-step clipboard write (e.g. Explorer with a preview extension
     // writes a thumbnail bitmap first, then CF_HDROP within the same
@@ -705,7 +725,9 @@ sc_input_manager_set_device_image_clipboard(struct sc_input_manager *im, bool pa
     uint8_t *original;
     size_t original_size;
     char *original_mime;
-    if (sc_clipboard_sync_get_image(&original, &original_size, &original_mime)) {
+    bool oversized = false;
+    if (sc_clipboard_sync_get_image(&original, &original_size, &original_mime,
+                                   limit, &oversized)) {
         struct sc_control_msg msg = {.type = SC_CONTROL_MSG_TYPE_SET_IMAGE_CLIPBOARD};
         msg.set_image_clipboard.sequence = sequence;
         msg.clipboard_pc_sequence = snapshot_sequence;
@@ -718,8 +740,12 @@ sc_input_manager_set_device_image_clipboard(struct sc_input_manager *im, bool pa
         free(original_mime);
         return false;
     }
-    if (clipboard_push_hdrop_image(im, paste, sequence)) {
+    if (!oversized && clipboard_push_hdrop_image(im, paste, sequence, &oversized)) {
         return true;
+    }
+    if (oversized) {
+        LOGI("Image clipboard: scanner skipped image larger than 4 MiB");
+        return false;
     }
 #endif
 
@@ -739,6 +765,11 @@ sc_input_manager_set_device_image_clipboard(struct sc_input_manager *im, bool pa
         size_t size;
         void *img_data = SDL_GetClipboardData(mime_type, &size);
         if (img_data && size > 0) {
+            if (limit && size > limit) {
+                SDL_free(img_data);
+                LOGI("Image clipboard: scanner skipped image larger than 4 MiB");
+                return false;
+            }
             // Verify that the data matches the claimed MIME type: some
             // applications register exotic clipboard formats under a misleading
             // name. If the data does not match, the server would not be able to
@@ -755,7 +786,7 @@ sc_input_manager_set_device_image_clipboard(struct sc_input_manager *im, bool pa
             // main = SDL data hash, alternate = HDROP file hash.
             uint64_t sdl_fp = clipboard_fnv1a(data, size) ^ size;
             uint64_t hdrop_alt = 0;
-            bool hdrop_alt_ok = clipboard_hdrop_fingerprint(&hdrop_alt);
+            bool hdrop_alt_ok = !limit && clipboard_hdrop_fingerprint(&hdrop_alt, 0);
 
             // Compress large BMP images to JPEG to keep the control message small
             if (strcmp(mime_type, "image/bmp") == 0
@@ -937,7 +968,8 @@ sc_input_manager_process_clipboard_update(struct sc_input_manager *im) {
         // If the sequence number changed, the user copied something
         // new right after startup: push it normally.
         if (GetClipboardSequenceNumber() == clipboard_start_suppress_seq
-                && !sc_clipboard_sync_needs_recovery(clipboard_start_suppress_seq)) {
+                && (im->clipboard_image_limit
+                    || !sc_clipboard_sync_needs_recovery(clipboard_start_suppress_seq))) {
             return;
         }
         im->suppress_start_push = false;
@@ -1001,6 +1033,7 @@ sc_input_manager_process_clipboard_update(struct sc_input_manager *im) {
 static void
 set_display_power(struct sc_input_manager *im, bool on) {
     assert(im->controller && !im->camera);
+    im->auto_blackout_pending = false;
 
     struct sc_control_msg msg;
     msg.type = SC_CONTROL_MSG_TYPE_SET_DISPLAY_POWER;
@@ -1026,6 +1059,15 @@ void
 sc_input_manager_turn_screen_on(struct sc_input_manager *im) {
     if (im->screen_off) {
         set_display_power(im, true);
+    }
+}
+
+void
+sc_input_manager_request_auto_blackout(struct sc_input_manager *im) {
+    assert(im->auto_blackout_pending && im->controller && im->main_display);
+    struct sc_control_msg msg = {.type = SC_CONTROL_MSG_TYPE_AUTO_BLACKOUT};
+    if (sc_controller_push_msg(im->controller, &msg)) {
+        im->auto_blackout_pending = false;
     }
 }
 
@@ -1283,14 +1325,23 @@ sc_input_manager_process_key(struct sc_input_manager *im,
         return;
     }
 
-    // Ctrl+H: toggle the device screen power (screen off saves battery while
-    // mirroring). Same interception pattern as Ctrl+G/F: never forwarded to
-    // the device, works with a Chinese IME active.
+    // Ctrl+H: blank the main panel without changing its display power mode.
+    // Virtual displays retain the existing physical screen power shortcut.
     if (down && !repeat && ctrl && !shift
             && !(event->mod & SDL_KMOD_ALT) && !(event->mod & SDL_KMOD_GUI)
             && sdl_keycode == SDLK_H) {
         if (control && !im->camera && !disconnected && !paused) {
-            set_display_power(im, im->screen_off);
+            im->auto_blackout_pending = false;
+            if (im->main_display && !im->screen_off) {
+                struct sc_control_msg msg = {
+                    .type = SC_CONTROL_MSG_TYPE_TOGGLE_DISPLAY_BACKLIGHT,
+                };
+                if (!sc_controller_push_msg(im->controller, &msg)) {
+                    LOGW("Could not request display backlight toggle");
+                }
+            } else {
+                set_display_power(im, im->screen_off);
+            }
         }
         return;
     }
@@ -1606,7 +1657,7 @@ sc_input_manager_process_key(struct sc_input_manager *im,
             // conclude "not pushed yet" and push the same content again.
             if (clipboard_last_pushed_fp_valid) {
                 uint64_t fp;
-                if (clipboard_current_fingerprint(&fp)
+                if (clipboard_current_fingerprint(&fp, im->clipboard_image_limit)
                         && fp == clipboard_last_pushed_fp) {
                     LOGD("Clipboard already pushed to device (fingerprint match), only injecting PASTE");
                     push = false;

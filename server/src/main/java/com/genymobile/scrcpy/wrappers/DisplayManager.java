@@ -19,6 +19,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.util.concurrent.Executor;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,6 +28,8 @@ public final class DisplayManager {
 
     // android.hardware.display.DisplayManager.EVENT_FLAG_DISPLAY_CHANGED
     public static final long EVENT_FLAG_DISPLAY_CHANGED = 1L << 2;
+    // DisplayManagerGlobal's internal brightness event mask, not the public listener mask.
+    private static final long INTERNAL_BRIGHTNESS_CHANGED = 1L << 3;
 
     public interface DisplayListener {
         /**
@@ -63,6 +66,15 @@ public final class DisplayManager {
 
     private DisplayManager(Object manager) {
         this.manager = manager;
+    }
+
+    public float getAdjustedBrightness(int displayId) throws ReflectiveOperationException {
+        Object info = manager.getClass().getMethod("getBrightnessInfo", int.class).invoke(manager, displayId);
+        return info == null ? Float.NaN : info.getClass().getField("adjustedBrightness").getFloat(info);
+    }
+
+    public void setTemporaryBrightness(int displayId, float brightness) throws ReflectiveOperationException {
+        manager.getClass().getMethod("setTemporaryBrightness", int.class, float.class).invoke(manager, displayId, brightness);
     }
 
     // public to call it from unit tests
@@ -121,6 +133,11 @@ public final class DisplayManager {
             getDisplayInfoMethod = manager.getClass().getMethod("getDisplayInfo", int.class);
         }
         return getDisplayInfoMethod;
+    }
+
+    public int getDisplayGroupId(int displayId) throws ReflectiveOperationException {
+        Object info = getGetDisplayInfoMethod().invoke(manager, displayId);
+        return info == null ? -1 : info.getClass().getField("displayGroupId").getInt(info);
     }
 
     public DisplayInfo getDisplayInfo(int displayId) {
@@ -246,5 +263,38 @@ public final class DisplayManager {
         } catch (Exception e) {
             Ln.e("Could not unregister display listener", e);
         }
+    }
+
+    @TargetApi(AndroidVersions.API_31_ANDROID_12)
+    public DisplayListenerHandle registerBrightnessListener(DisplayListener listener, Handler handler) throws ReflectiveOperationException {
+        android.hardware.display.DisplayManager.DisplayListener callback = new android.hardware.display.DisplayManager.DisplayListener() {
+            @Override
+            public void onDisplayAdded(int displayId) {
+            }
+
+            @Override
+            public void onDisplayRemoved(int displayId) {
+            }
+
+            @Override
+            public void onDisplayChanged(int displayId) {
+                listener.onDisplayChanged(displayId);
+            }
+        };
+        Class<?> type = android.hardware.display.DisplayManager.DisplayListener.class;
+        Class<?> global = manager.getClass();
+        String method = "registerDisplayListener";
+        try {
+            global.getMethod(method, type, Handler.class, long.class, String.class)
+                    .invoke(manager, callback, handler, INTERNAL_BRIGHTNESS_CHANGED, FakeContext.PACKAGE_NAME);
+        } catch (NoSuchMethodException noHandlerWithPackage) {
+            try {
+                global.getMethod(method, type, Executor.class, long.class, String.class)
+                        .invoke(manager, callback, (Executor) handler::post, INTERNAL_BRIGHTNESS_CHANGED, FakeContext.PACKAGE_NAME);
+            } catch (NoSuchMethodException noExecutorWithPackage) {
+                global.getMethod(method, type, Handler.class, long.class).invoke(manager, callback, handler, INTERNAL_BRIGHTNESS_CHANGED);
+            }
+        }
+        return new DisplayListenerHandle(callback);
     }
 }

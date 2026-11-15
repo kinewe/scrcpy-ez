@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,5 +80,64 @@ func TestDebugLogEnabledWrites(t *testing.T) {
 	}
 	if got := debugLogPathForTest(); got != path {
 		t.Fatalf("日志路径记录错误: %q", got)
+	}
+}
+
+func TestDebugLogRotatesAndRetainsNewestFiles(t *testing.T) {
+	dir := t.TempDir()
+	writer := rotatingDebugLog{path: filepath.Join(dir, "bridge.log"), limit: 3}
+	if err := writer.open(); err != nil {
+		t.Fatal(err)
+	}
+	defer writer.close()
+	for i := 0; i < 7; i++ {
+		if err := writer.write(fmt.Sprintf("%d\n", i)); err != nil {
+			t.Fatalf("write %d failed: %v", i, err)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 4 {
+		t.Fatalf("expected an active file and three archives, got %v", entries)
+	}
+	for i, expected := range []string{"6\n", "3\n", "4\n", "5\n"} {
+		content, err := os.ReadFile(filepath.Join(dir, entries[i].Name()))
+		if err != nil || string(content) != expected {
+			t.Fatalf("%s = %q, err = %v, want %q", entries[i].Name(), content, err, expected)
+		}
+	}
+}
+
+func TestDebugLogPrunesOnlyExpiredManagedFiles(t *testing.T) {
+	now := time.Now()
+	dir := t.TempDir()
+	writer := rotatingDebugLog{path: filepath.Join(dir, "bridge.log")}
+	stamp := now.Add(-8 * 24 * time.Hour).UTC().Format(debugLogStamp)
+	expired := []string{"bridge.log.ez-" + stamp, "bridge-20260101.log"}
+	keep := []string{"bridge.log", "bridge-20260230.log", "bridge.log.ez-manual", "custom.log.ez-" + stamp, "frame-trace-123.jsonl"}
+	for _, name := range append(append([]string{}, expired...), keep...) {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("diagnostics"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		old := now.Add(-8 * 24 * time.Hour)
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.prune(now, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range expired {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("expired managed log %s survived: %v", name, err)
+		}
+	}
+	for _, name := range keep {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatalf("file %s should have been preserved: %v", name, err)
+		}
 	}
 }

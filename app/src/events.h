@@ -10,6 +10,7 @@
 
 enum {
     SC_EVENT_NEW_FRAME = SDL_EVENT_USER,
+    SC_EVENT_NATIVE_ALPHA,
     SC_EVENT_OPEN_WINDOW,
     SC_EVENT_DEVICE_DISCONNECTED,
     SC_EVENT_SERVER_CONNECTION_FAILED,
@@ -31,6 +32,7 @@ enum {
     // scrcpy-ez: user pressed "stop mirroring" on the device notification
     SC_EVENT_STOP_MIRRORING,
     SC_EVENT_ROUTE_SWITCH,
+    SC_EVENT_PERSPECTIVE_STATE,
 };
 
 bool

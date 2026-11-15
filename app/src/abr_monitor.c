@@ -108,15 +108,19 @@ struct sc_abr_sample sc_abr_monitor_sample(struct sc_abr_monitor *m, sc_tick now
         .flags = (m->hardware ? SC_ABR_FEEDBACK_HW : 0)
                | (m->blocked ? SC_ABR_FEEDBACK_BLOCKED : 0),
     };
-    if (m->clock_valid && m->epoch == m->decode_epoch
-            && now - m->last_arrival < SC_TICK_FROM_SEC(1)) {
-        sample.flags |= SC_ABR_FEEDBACK_VALID;
+    if (m->clock_valid && m->epoch == m->decode_epoch) {
         sc_tick oldest = m->oldest_queued;
         if (m->active_recv && (!oldest || m->active_recv < oldest)) {
             oldest = m->active_recv;
         }
-        if (oldest && !m->blocked) {
-            sample.queue_ms = age_ms(now - oldest - m->allowance);
+        if (now - m->last_arrival < SC_TICK_FROM_SEC(1)) {
+            sample.flags |= SC_ABR_FEEDBACK_VALID;
+            if (oldest && !m->blocked) {
+                sample.queue_ms = age_ms(now - oldest - m->allowance);
+            }
+        } else if (!oldest && !m->queue_count && !m->blocked) {
+            // This epoch received video, then went quiet and fully drained.
+            sample.flags |= SC_ABR_FEEDBACK_IDLE;
         }
     }
     sc_mutex_unlock(&m->mutex);

@@ -39,7 +39,12 @@ type File struct {
 }
 
 func protected(name string) bool {
-	for _, part := range strings.Split(strings.ToLower(strings.ReplaceAll(name, "\\", "/")), "/") {
+	normalized := strings.ToLower(strings.ReplaceAll(name, "\\", "/"))
+	switch normalized {
+	case "webview2loader.dll", "runtime/microsoftedgewebview2runtimeinstallerx64.exe":
+		return false
+	}
+	for _, part := range strings.Split(normalized, "/") {
 		if strings.HasPrefix(part, ".") || part == "profiles.json" || part == "settings.json" || part == "config.txt" || part == "cache" || part == "logs" || part == "backups" || strings.Contains(part, "webviewcache") || strings.Contains(part, "webview2") || strings.Contains(part, ".bak") || strings.HasSuffix(part, ".old") || strings.HasSuffix(part, ".log") || strings.HasSuffix(part, ".zip") || strings.HasSuffix(part, ".flag") {
 			return true
 		}

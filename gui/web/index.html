@@ -66,65 +66,88 @@
   </div>
   <div id="cast-sessions"></div>
 
-  <!-- 参数浮窗（有线/无线两套独立；投屏中快捷调参，保持现状） -->
+  <!-- 参数浮窗（主投屏设置：画面 / 声音 / 功能 三页签；有线/无线两套独立记忆） -->
   <div class="modal-mask" id="param-modal" style="display:none">
-    <div class="modal-card param-card">
+    <div class="modal-card param-card" id="param-card">
       <div class="modal-head">
-        <b id="param-title">自定义参数</b>
+        <div class="param-title-wrap">
+          <b id="param-title">投屏参数</b>
+          <span class="param-mode-pill" id="param-mode">有线模式</span>
+        </div>
         <span class="modal-close" id="param-close">✕</span>
       </div>
+      <div class="param-sub" id="param-sub">投屏参数 · 每设备分别记忆有线 / 无线两套 · 保存后重新投屏</div>
+      <div class="dialog-tabs" id="param-tabs" role="tablist" aria-label="主投屏设置分类">
+        <button class="dtab active" type="button" data-tab="display" id="param-tab-display" role="tab" aria-selected="true" aria-controls="param-page-display">画面</button>
+        <button class="dtab" type="button" data-tab="audio" id="param-tab-audio" role="tab" aria-selected="false" aria-controls="param-page-audio" tabindex="-1">声音</button>
+        <button class="dtab" type="button" data-tab="feature" id="param-tab-feature" role="tab" aria-selected="false" aria-controls="param-page-feature" tabindex="-1">功能</button>
+      </div>
       <div class="param-body">
-      <div class="param-sub">每设备两套分别记忆 · 保存后重新投屏</div>
-      <div class="param-mode" id="param-mode">当前：有线模式</div>
-      <div id="param-rows"></div>
+        <div class="dpage active" id="param-page-display" data-page="display" role="tabpanel" aria-labelledby="param-tab-display">
+          <div id="param-rows"></div>
 
-      <div class="param-row" id="param-vcodec-row">
-        <div class="param-rowhead">
-          <span class="param-label" id="param-vcodec-label">视频编码 (<b>h264</b>)</span>
-          <span class="param-actions"><button class="param-reset" id="param-vcodec-reset">重置</button></span>
-        </div>
-        <div class="chips" id="param-vcodec-chips"></div>
-      </div>
-      <div class="param-row" id="param-audio-row">
-        <div class="param-rowhead">
-          <span class="param-label" id="param-audio-label">声音 (<b>电脑</b>)</span>
-          <span class="param-actions"><button class="param-reset" id="param-audio-reset">重置</button></span>
-        </div>
-        <div class="audio-slider" id="param-audio-slider">
-          <div class="as-labels">
-            <span class="as-label" data-i="0">手机</span>
-            <span class="as-label" data-i="1">电脑</span>
-            <span class="as-label" data-i="2">两边</span>
+          <div class="param-row" id="param-vcodec-row">
+            <div class="param-rowhead">
+              <span class="param-label" id="param-vcodec-label">视频编码 (<b>h264</b>)</span>
+              <span class="param-actions"><button class="param-reset" id="param-vcodec-reset">重置</button></span>
+            </div>
+            <div class="chips" id="param-vcodec-chips"></div>
           </div>
-          <div class="as-rail">
-            <div class="as-track"></div>
-            <div class="as-stop" data-i="0"></div>
-            <div class="as-stop" data-i="1"></div>
-            <div class="as-stop" data-i="2"></div>
-          </div>
-        </div>
-        <div class="param-audio-note" id="param-audio-note"></div>
-      </div>
-      <div class="param-row" id="param-acodec-row">
-        <div class="param-rowhead">
-          <span class="param-label" id="param-acodec-label">音频编码 (<b>opus</b>)</span>
-          <span class="param-actions"><button class="param-reset" id="param-acodec-reset">重置</button></span>
-        </div>
-        <div class="chips" id="param-acodec-chips"></div>
-      </div>
 
-      <div class="param-note" id="param-note"></div>
+          <div class="param-note" id="param-note-display"></div>
+        </div>
+
+        <div class="dpage" id="param-page-audio" data-page="audio" role="tabpanel" aria-labelledby="param-tab-audio" hidden>
+          <div class="param-row" id="param-audio-row">
+            <div class="param-rowhead">
+              <span class="param-label" id="param-audio-label">声音输出 (<b>电脑</b>)</span>
+              <span class="param-actions"><button class="param-reset" id="param-audio-reset">重置</button></span>
+            </div>
+            <div class="audio-slider" id="param-audio-slider">
+              <div class="as-labels">
+                <span class="as-label" data-i="0">手机</span>
+                <span class="as-label" data-i="1">电脑</span>
+                <span class="as-label" data-i="2">两边</span>
+              </div>
+              <div class="as-rail">
+                <div class="as-track"></div>
+                <div class="as-stop" data-i="0"></div>
+                <div class="as-stop" data-i="1"></div>
+                <div class="as-stop" data-i="2"></div>
+              </div>
+            </div>
+            <div class="param-audio-note" id="param-audio-note"></div>
+          </div>
+          <div class="param-row" id="param-acodec-row">
+            <div class="param-rowhead">
+              <span class="param-label" id="param-acodec-label">音频编码 (<b>opus</b>)</span>
+              <span class="param-actions"><button class="param-reset" id="param-acodec-reset">重置</button></span>
+            </div>
+            <div class="chips" id="param-acodec-chips"></div>
+          </div>
+
+          <div class="param-note" id="param-note-audio"></div>
+        </div>
+
+        <div class="dpage" id="param-page-feature" data-page="feature" role="tabpanel" aria-labelledby="param-tab-feature" hidden>
+          <div class="fgroup-title">设备维护</div>
+          <label class="param-assist" for="param-root-repair" title="上传权限失败时自动尝试修复；仅适用于已 root 的设备，切换立即生效" data-note="上传权限自动修复：上传权限失败时自动尝试修复；仅适用于已 root 的设备，切换立即生效、无需保存">
+            <span class="param-assist-copy">
+              <span class="param-assist-title" id="param-root-title">上传权限自动修复</span>
+              <span class="param-assist-description" id="param-root-description">（仅 root 设备）</span>
+              <span class="param-inline-tag">即时生效</span>
+            </span>
+            <span class="param-assist-toggle">
+              <input id="param-root-repair" class="param-assist-input" type="checkbox" role="switch" aria-labelledby="param-root-title" aria-describedby="param-root-description">
+              <span class="switch" aria-hidden="true"><span class="knob"></span></span>
+            </span>
+          </label>
+
+          <div class="param-note" id="param-note-feature">有线与无线的参数分别记忆：本页改动只作用于当前连接方式，切换后会自动切换到另一套。托盘、保持唤醒、自动平滑等应用级设置请在右上角齿轮的「设置」中调整</div>
+        </div>
+
+        <div class="param-pending" id="param-pending" style="display:none">连接方式确认后，自动显示对应模式的参数</div>
       </div>
-      <label class="param-assist" for="param-root-repair" title="上传权限失败时自动尝试修复；仅适用于已 root 的设备，切换立即生效">
-        <span class="param-assist-copy">
-          <span class="param-assist-title" id="param-root-title">上传权限自动修复</span>
-          <span class="param-assist-description" id="param-root-description">（仅 root 设备）</span>
-        </span>
-        <span class="param-assist-toggle">
-          <input id="param-root-repair" class="param-assist-input" type="checkbox" role="switch" aria-labelledby="param-root-title" aria-describedby="param-root-description">
-          <span class="switch" aria-hidden="true"><span class="knob"></span></span>
-        </span>
-      </label>
       <div class="param-foot">
         <button class="btn ghost" id="param-cancel">取消</button>
         <button class="btn primary" id="param-save">保存并重新投屏</button>
@@ -304,7 +327,7 @@
     <div class="set-row">
       <div class="set-main">
         <div class="set-title">启动投屏时显示参数控件</div>
-        <div class="set-note">投屏窗口上的 fps/码率/状态浮层，投屏中 Ctrl+F 可随时开关</div>
+        <div class="set-note">投屏窗口上的 FPS/码率/状态浮层，投屏中 Ctrl+F 可随时开关</div>
       </div>
       <div class="switch" id="set-overlay" role="switch" aria-checked="true"><span class="knob"></span></div>
     </div>
@@ -327,10 +350,24 @@
     </div>
     <div class="set-row">
       <div class="set-main">
+        <div class="set-title" id="set-auto-blackout-label">主投屏成功后自动黑屏</div>
+        <div class="set-note">手机解锁且投屏画面出现后关闭实体屏发光。Ctrl+H 可恢复亮度，修改后重新主投屏生效</div>
+      </div>
+      <div class="switch" id="set-auto-blackout" role="switch" tabindex="0" aria-labelledby="set-auto-blackout-label" aria-checked="true"><span class="knob"></span></div>
+    </div>
+    <div class="set-row">
+      <div class="set-main">
         <div class="set-title">应用投屏显示导航栏和桌面</div>
         <div class="set-note">在应用投屏窗口显示导航栏和桌面，方便返回或切换应用，界面或手机手势异常时可关闭，重新打开应用投屏后生效，小米、REDMI、POCO 已自动关闭，不受此开关影响</div>
       </div>
       <div class="switch" id="set-appwin-decor" role="switch" aria-checked="true"><span class="knob"></span></div>
+    </div>
+    <div class="set-row">
+      <div class="set-main">
+        <div class="set-title">强制使用兼容透视相机</div>
+        <div class="set-note">开启后，透视相机统一使用纯色抠图。关闭后优先使用原生 RGBA，不可用时自动改用纯色抠图。重新打开投屏后生效</div>
+      </div>
+      <div class="switch" id="set-force-perspective-key" role="switch" aria-checked="false" tabindex="0" aria-label="强制使用兼容透视相机"><span class="knob"></span></div>
     </div>
     </section>
     <section class="settings-section" aria-labelledby="settings-video-title">
@@ -349,48 +386,46 @@
         <button id="set-smoothing-two" type="button" aria-pressed="true" disabled>2 帧</button>
       </div>
     </div>
-    <div class="set-note smoothing-help">1 帧偏低延迟，2 帧多一些缓冲余量；实际等待自动调节，最多 32ms，不补帧。</div>
+    <div class="set-note smoothing-help">1 帧偏低延迟，2 帧多一些缓冲余量；实际等待自动调节，最多 32ms，不补帧</div>
     </section>
     </div>
   </div>
 </div>
 
-<!-- ================= 应用窗口设置浮窗（二期 Step 4/5：虚拟屏参数——每应用有线/无线两套） ================= -->
+<!-- ================= 应用窗口设置浮窗（画面 / 声音 / 功能 三页签；每应用有线/无线两套） ================= -->
 <div class="modal-mask" id="appset-modal" style="display:none">
-  <div class="modal-card param-card">
+  <div class="modal-card param-card" id="appset-card">
     <div class="modal-head">
-      <b id="appset-title">窗口设置</b>
+      <div class="param-title-wrap">
+        <b id="appset-title">窗口设置</b>
+        <span class="param-mode-pill" id="appset-mode">无线参数</span>
+      </div>
       <span class="modal-close" id="appset-close">✕</span>
     </div>
-    <div class="param-sub">每应用两套分别记忆 · 保存后重新投屏</div>
-    <div id="appset-rows"></div>
-    <div class="param-row" id="appset-vcodec-row">
-      <div class="param-rowhead">
-        <span class="param-label" id="appset-vcodec-label">视频编码 (<b>h264</b>)</span>
-        <span class="param-actions"><button class="param-reset" id="appset-vcodec-reset">重置</button></span>
-      </div>
-      <div class="chips" id="appset-vcodec-chips"></div>
+    <div class="param-sub">窗口设置 · 每应用分别记忆有线 / 无线两套 · 保存后重新投屏</div>
+    <div class="dialog-tabs" id="appset-tabs" role="tablist" aria-label="应用窗口设置分类">
+      <button class="dtab active" type="button" data-tab="display" id="appset-tab-display" role="tab" aria-selected="true" aria-controls="appset-page-display">画面</button>
+      <button class="dtab" type="button" data-tab="audio" id="appset-tab-audio" role="tab" aria-selected="false" aria-controls="appset-page-audio" tabindex="-1">声音</button>
+      <button class="dtab" type="button" data-tab="feature" id="appset-tab-feature" role="tab" aria-selected="false" aria-controls="appset-page-feature" tabindex="-1">功能</button>
     </div>
-    <div class="param-row" id="appset-acodec-row">
-      <div class="param-rowhead">
-        <span class="param-label" id="appset-acodec-label">音频编码 (<b>opus</b>)</span>
-        <span class="param-actions"><button class="param-reset" id="appset-acodec-reset">重置</button></span>
-      </div>
-      <div class="chips" id="appset-acodec-chips"></div>
-    </div>
-    <div class="param-note" id="appset-note"></div>
-    <div class="appset-opts">
-      <div class="set-row">
-        <div class="set-main">
-          <div class="set-title">窗口跟随</div>
-          <div class="set-note">调整窗口大小时，画面自动适应窗口尺寸</div>
-        </div>
-        <div class="switch on" id="appset-flex" role="switch" aria-checked="true"><span class="knob"></span></div>
-      </div>
-      <div class="set-row" id="appset-audio-row">
-        <div class="set-main">
+    <div class="param-body">
+      <div class="dpage active" id="appset-page-display" data-page="display" role="tabpanel" aria-labelledby="appset-tab-display">
+        <div id="appset-rows"></div>
+        <div class="param-row" id="appset-vcodec-row">
           <div class="param-rowhead">
-            <div class="set-title">声音</div>
+            <span class="param-label" id="appset-vcodec-label">视频编码 (<b>h264</b>)</span>
+            <span class="param-actions"><button class="param-reset" id="appset-vcodec-reset">重置</button></span>
+          </div>
+          <div class="chips" id="appset-vcodec-chips"></div>
+        </div>
+
+        <div class="param-note" id="appset-note-display"></div>
+      </div>
+
+      <div class="dpage" id="appset-page-audio" data-page="audio" role="tabpanel" aria-labelledby="appset-tab-audio" hidden>
+        <div class="param-row" id="appset-audio-row">
+          <div class="param-rowhead">
+            <span class="param-label" id="appset-audio-label">声音输出 (<b>手机</b>)</span>
             <span class="param-actions"><button class="param-reset" id="appset-audio-reset">重置</button></span>
           </div>
           <div class="audio-slider" id="appset-audio">
@@ -406,8 +441,45 @@
               <div class="as-stop" data-i="2"></div>
             </div>
           </div>
-          <div class="set-note" id="appset-audio-note"></div>
+          <div class="param-audio-note" id="appset-audio-note"></div>
         </div>
+        <div class="param-row" id="appset-acodec-row">
+          <div class="param-rowhead">
+            <span class="param-label" id="appset-acodec-label">音频编码 (<b>opus</b>)</span>
+            <span class="param-actions"><button class="param-reset" id="appset-acodec-reset">重置</button></span>
+          </div>
+          <div class="chips" id="appset-acodec-chips"></div>
+        </div>
+
+        <div class="param-note" id="appset-note-audio"></div>
+      </div>
+
+      <div class="dpage" id="appset-page-feature" data-page="feature" role="tabpanel" aria-labelledby="appset-tab-feature" hidden>
+        <div class="fgroup-title">窗口行为</div>
+        <div class="set-row" id="appset-flex-row" data-note="窗口跟随：调整窗口大小时，画面自动适应窗口尺寸，并同步改变该窗口的分辨率；保存并重新投屏后生效">
+          <div class="set-main">
+            <div class="set-title">窗口跟随</div>
+          </div>
+          <div class="switch on" id="appset-flex" role="switch" aria-checked="true"><span class="knob"></span></div>
+        </div>
+        <div class="fgroup-title">实验功能</div>
+        <div class="set-row" id="appset-perspective-row" data-note="开启后，将投屏窗口背后的桌面作为应用的相机画面；拖动或缩放时，电脑上的画面会即时跟随。需要 Android 16 或以上及可用的虚拟相机服务，重新打开应用投屏后生效">
+          <div class="set-main">
+            <div class="set-title">透视相机 <span class="param-inline-tag">Android 16+</span></div>
+          </div>
+          <div class="switch on" id="appset-perspective" role="switch" tabindex="0" aria-label="透视相机" aria-checked="true"><span class="knob"></span></div>
+        </div>
+        <div class="set-row" id="appset-perspective-fps-row" data-note="送给手机识别的桌面画面更新频率，默认 6 FPS。拖动窗口时，本地预览仍即时跟随" style="display:none">
+          <div class="set-main"><label class="set-title" for="appset-perspective-fps">桌面送帧</label></div>
+          <select class="perspective-fps-select" id="appset-perspective-fps">
+            <option value="0.5" data-detail="两秒一帧">0.5 FPS</option>
+            <option value="1">1 FPS</option>
+            <option value="6" selected data-detail="默认">6 FPS</option>
+            <option value="10">10 FPS</option>
+          </select>
+        </div>
+
+        <div class="param-note" id="appset-note-feature">透视相机切换或关闭后需要重新打开应用窗口才会生效；部分应用（如相机类）可能限制虚拟相机。「应用投屏显示导航栏和桌面」在右上角齿轮中设置</div>
       </div>
     </div>
     <div class="param-foot">
@@ -420,7 +492,7 @@
 <div class="modal-mask" id="appset-ratio-error-modal" style="display:none">
   <div class="modal-card ratio-error-card">
     <div class="modal-head"><b id="appset-ratio-error-title">初始比例未完成</b><span class="modal-close" id="appset-ratio-error-close">✕</span></div>
-    <div class="set-note" id="appset-ratio-error-message">请输入完整且有效的宽、高整数。</div>
+    <div class="set-note" id="appset-ratio-error-message">请输入完整且有效的宽、高整数</div>
     <div class="param-foot"><button class="btn primary" id="appset-ratio-error-ok">返回修改</button></div>
   </div>
 </div>
@@ -436,6 +508,14 @@
   </div>
 </div>
 
+<div class="modal-mask" id="camera-permission-modal" style="display:none">
+  <div class="modal-card app-launch-card" role="dialog" aria-modal="true" aria-labelledby="camera-permission-title" aria-describedby="camera-permission-message">
+    <div class="modal-head"><b id="camera-permission-title">应用尚未获得相机权限</b><button type="button" class="modal-close" id="camera-permission-close" aria-label="关闭提示">✕</button></div>
+    <p id="camera-permission-device"></p>
+    <p id="camera-permission-message" style="white-space:pre-line"></p>
+    <div class="param-foot"><button type="button" class="btn primary" id="camera-permission-ok">知道了</button></div>
+  </div>
+</div>
 <div class="modal-mask" id="guide-modal" style="display:none">
   <div class="modal-card">
     <div class="modal-head"><b>指引</b><span class="modal-close" id="guide-close">✕</span></div>
@@ -484,7 +564,10 @@
     <div class="update-note" id="update-notice" style="display:none"></div>
     <div class="update-error" id="update-error" style="display:none" role="alert"></div>
     <div id="update-progress" style="display:none">
-      <progress id="update-progress-bar" max="100" aria-label="下载进度"></progress>
+      <div class="update-track" id="update-progress-track">
+        <progress id="update-progress-bar" max="100" aria-label="下载进度"></progress>
+        <span class="update-glint" id="update-progress-glint" aria-hidden="true"></span>
+      </div>
       <div class="update-note" id="update-progress-text" aria-live="polite"></div>
     </div>
     <div class="update-note">下载期间可以继续投屏，关闭此弹窗后仍会下载。重启安装会结束投屏窗口，设备档案与设置会保留。</div>

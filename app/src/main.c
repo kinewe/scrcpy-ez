@@ -27,6 +27,10 @@
 static int
 main_scrcpy(int argc, char *argv[]) {
 #ifdef _WIN32
+    // Do not let the Desktop Window Manager replace a busy scrcpy window with
+    // its white "not responding" ghost window while close/native-alpha restore
+    // runs. The real window is hidden explicitly on close instead.
+    DisableProcessWindowsGhosting();
     // disable buffering, we want logs immediately
     // even line buffering (setvbuf() with mode _IOLBF) is not sufficient
     setbuf(stdout, NULL);
@@ -34,7 +38,7 @@ main_scrcpy(int argc, char *argv[]) {
 #endif
 
     printf("scrcpy " SCRCPY_VERSION
-           " <https://github.com/Genymobile/scrcpy> | launcher v2.4.1\n");
+           " <https://github.com/Genymobile/scrcpy> | launcher v2.5.0\n");
 
     struct scrcpy_cli_args args = {
         .opts = scrcpy_options_default,

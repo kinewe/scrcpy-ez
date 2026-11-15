@@ -14,10 +14,13 @@ func TestKeepDeviceAwakeSettingsAndFailedPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := NewSettingsStore(path)
-	if err := s.Load(); err != nil || !s.Get().KeepDeviceAwake {
+	if err := s.Load(); err != nil || !s.Get().KeepDeviceAwake || !s.Get().AutoBlackoutMainCast {
 		t.Fatal("old settings must enable main-cast idle protection by default", err)
 	}
 	if err := s.SetKeepDeviceAwake(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAutoBlackoutMainCast(false); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Set(false, true); err != nil {
@@ -31,7 +34,7 @@ func TestKeepDeviceAwakeSettingsAndFailedPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := reloaded.Get()
-	if !got.KeepDeviceAwake || got.ShowParamOverlay || !got.CloseToTray || got.OtherAppWinSystemDecorations {
+	if !got.KeepDeviceAwake || got.AutoBlackoutMainCast || got.ShowParamOverlay || !got.CloseToTray || got.OtherAppWinSystemDecorations {
 		t.Fatalf("independent choices did not survive reload: %+v", got)
 	}
 	if err := reloaded.SetKeepDeviceAwake(false); err != nil {
@@ -43,6 +46,9 @@ func TestKeepDeviceAwakeSettingsAndFailedPersistence(t *testing.T) {
 	blocked := NewSettingsStore(filepath.Join(path, "blocked.json"))
 	if err := blocked.SetKeepDeviceAwake(false); err == nil || !blocked.Get().KeepDeviceAwake {
 		t.Fatal("failed save must not change the option in memory")
+	}
+	if err := blocked.SetAutoBlackoutMainCast(false); err == nil || !blocked.Get().AutoBlackoutMainCast {
+		t.Fatal("failed save must keep automatic blackout enabled")
 	}
 }
 
@@ -71,6 +77,9 @@ func TestKeepDeviceAwakeMainAndAppSessions(t *testing.T) {
 				p := e.f.waitParams(t, 1)
 				if !p.KeepDeviceAwakeSet || p.KeepDeviceAwake != (enabled && !appWindow) {
 					t.Fatalf("usb/wifi main/app session lost the global choice: %+v", p)
+				}
+				if p.AutoBlackoutMainCast == appWindow {
+					t.Fatalf("automatic blackout must default to main casts regardless of idle sleep: %+v", p)
 				}
 			}
 		}

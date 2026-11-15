@@ -15,7 +15,7 @@ func TestRenamedServicePreservesTransportAndIdentity(t *testing.T) {
 			}
 		}
 	}
-	for _, serial := range []string{"SAMPLE18600000000", "PHONE-Ab12Cd", "SERIAL(2)", "USB_WITH_underscores-123"} {
+	for _, serial := range []string{"H9RNW18604002288", "PHONE-Ab12Cd", "SERIAL(2)", "USB_WITH_underscores-123"} {
 		if got := StableSerial(serial); got != serial {
 			t.Fatalf("changed hardware serial %q to %q", serial, got)
 		}

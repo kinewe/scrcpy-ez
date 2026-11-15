@@ -34,6 +34,7 @@ public class SurfaceEncoder implements AsyncProcessor {
 
     private static final int DEFAULT_I_FRAME_INTERVAL = 10; // seconds
     private static final int REPEAT_FRAME_DELAY_US = 100_000; // repeat after 100ms
+    private static final int ABR_IDLE_POLL_US = 200_000;
     private static final String KEY_MAX_FPS_TO_ENCODER = "max-fps-to-encoder";
 
     // Keep the values in descending order
@@ -323,7 +324,7 @@ public class SurfaceEncoder implements AsyncProcessor {
         boolean dynamicFpsAvailable = capture instanceof ScreenCapture || capture instanceof NewDisplayCapture;
         this.backlogAbr = new BacklogAbr(videoBitRate, maxFps, abrLockBitrate, abrLockFps || !dynamicFpsAvailable);
         this.effectiveMaxFpsForLog = maxFps > 0 ? maxFps : 120;
-        Ln.i("Video ABR strategy: " + (abrLegacy ? "legacy comparison" : "confirmed backlog"));
+        Ln.i("Video ABR strategy: " + (abrLegacy ? "legacy comparison" : "confirmed backlog (rc6)"));
         if (this.abrLockFps) {
             this.fpsLevels = new int[] { lockFpsValue, lockFpsValue, lockFpsValue, lockFpsValue };
         } else {
@@ -615,9 +616,22 @@ public class SurfaceEncoder implements AsyncProcessor {
 
         boolean eos;
         do {
-            int outputBufferId = codec.dequeueOutputBuffer(bufferInfo, -1);
+            boolean checkIdle = !abrLegacy && !legacyDevice && clientBacklog != null && backlogAbr.canRecoverFps();
+            int outputBufferId = codec.dequeueOutputBuffer(bufferInfo, checkIdle ? ABR_IDLE_POLL_US : -1);
+            if (outputBufferId == MediaCodec.INFO_TRY_AGAIN_LATER && checkIdle && !stopped.get() && !captureControl.isResetRequested()) {
+                long nowNs = SystemClock.elapsedRealtimeNanos();
+                BacklogAbr.Decision decision = backlogAbr.observeIdle(nowNs / 1000000, clientBacklog.get());
+                if (decision != null) {
+                    applyBacklogDecision(codec, decision);
+                    // A static desktop may never reach the per-frame report below.
+                    if (deviceMessageSender != null) {
+                        lastAbrMsgNs = nowNs;
+                        deviceMessageSender.send(DeviceMessage.createAbrState(currentBitRate, (int) effectiveMaxFps()));
+                    }
+                }
+            }
             try {
-                eos = (bufferInfo.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
+                eos = outputBufferId >= 0 && (bufferInfo.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
                 // On EOS, there might be data or not, depending on bufferInfo.size
                 if (outputBufferId >= 0 && bufferInfo.size > 0) {
                     boolean isConfig = (bufferInfo.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
@@ -720,6 +734,24 @@ public class SurfaceEncoder implements AsyncProcessor {
         } while (!eos);
     }
 
+    private void applyBacklogDecision(MediaCodec codec, BacklogAbr.Decision decision) {
+        int oldRate = currentBitRate;
+        float oldFps = effectiveMaxFpsForLog;
+        if (decision.bitrate != oldRate && !applyBitrate(codec, decision.bitrate)) {
+            backlogAbr.rejectBitrate(oldRate, oldFps);
+            return;
+        }
+        currentBitRate = decision.bitrate;
+        if (decision.fps != oldFps) {
+            capture.setTargetFps(decision.fps >= (maxFps > 0 ? maxFps : 120) ? 0 : Math.round(decision.fps));
+        }
+        effectiveMaxFpsForLog = decision.fps;
+        abrFps = Math.round(decision.fps);
+        Ln.i("ABR2: reason=" + decision.reason + " source=" + decision.sourceMs
+                + "ms delivery=" + decision.deliveryMs + "ms decodeQueue=" + decision.queueMs
+                + "ms bitrate=" + oldRate + "->" + currentBitRate + " fps=" + oldFps + "->" + decision.fps);
+    }
+
     /**
      * Short-window encoder overload detection and adaptive bitrate reduction.
      * Called once per encoded (output) frame. Every ABR_WINDOW_NS, compare the
@@ -747,21 +779,7 @@ public class SurfaceEncoder implements AsyncProcessor {
                 abrCalibCount = ABR_CALIB_FRAMES;
             }
             if (decision != null) {
-                int oldRate = currentBitRate;
-                float oldFps = effectiveMaxFpsForLog;
-                if (decision.bitrate != currentBitRate && !applyBitrate(codec, decision.bitrate)) {
-                    backlogAbr.rejectBitrate(oldRate, oldFps);
-                    return;
-                }
-                currentBitRate = decision.bitrate;
-                if (decision.fps != effectiveMaxFpsForLog) {
-                    capture.setTargetFps(decision.fps >= (maxFps > 0 ? maxFps : 120) ? 0 : Math.round(decision.fps));
-                }
-                effectiveMaxFpsForLog = decision.fps;
-                abrFps = Math.round(decision.fps);
-                Ln.i("ABR2: reason=" + decision.reason + " source=" + decision.sourceMs
-                        + "ms delivery=" + decision.deliveryMs + "ms decodeQueue=" + decision.queueMs
-                        + "ms bitrate=" + oldRate + "->" + currentBitRate + " fps=" + oldFps + "->" + decision.fps);
+                applyBacklogDecision(codec, decision);
             }
             return;
         }

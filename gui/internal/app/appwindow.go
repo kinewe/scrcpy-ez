@@ -25,6 +25,7 @@ import (
 
 	"scrcpy-ez/gui/internal/adb"
 	"scrcpy-ez/gui/internal/bridge"
+	"scrcpy-ez/gui/internal/nativealpha"
 )
 
 const (
@@ -38,10 +39,14 @@ const (
 
 // AppListItem 是应用列表一项（`scrcpy --list-apps` 解析结果）。
 type AppListItem struct {
-	Pkg       string `json:"pkg"`
-	Name      string `json:"name"`
-	IconStamp string `json:"iconStamp,omitempty"`
-	Sys       bool   `json:"sys"` // * = 系统应用 / - = 第三方
+	Pkg            string               `json:"pkg"`
+	Name           string               `json:"name"`
+	IconStamp      string               `json:"iconStamp,omitempty"`
+	Sys            bool                 `json:"sys"` // * = 系统应用 / - = 第三方
+	VersionName    string               `json:"versionName,omitempty"`
+	VersionCode    int64                `json:"versionCode,omitempty"`
+	LastUpdateTime int64                `json:"lastUpdateTime,omitempty"`
+	NativeAlpha    *nativealpha.Profile `json:"nativeAlpha,omitempty"`
 }
 
 // appListEntry 应用列表缓存项（内存态；持久层在档案 profiles.json）。

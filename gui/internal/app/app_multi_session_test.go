@@ -167,14 +167,14 @@ func TestMultiSessionEventRouting(t *testing.T) {
 		t.Fatalf("日志未按会话独立: A=%d B=%d", len(sA.Cast.Log), len(sB.Cast.Log))
 	}
 
-	// 独立日志缓冲：A 灌 80 行截断为 60；B 保持 1 行
-	for i := 0; i < 80; i++ {
+	// A 的日志截断为最近 160 行，B 仍保持 1 行。
+	for i := 0; i < 180; i++ {
 		a.NotifyLine("A", "普通日志行 "+itoa(i))
 	}
 	sA = sessionBySerial(t, a, "A")
 	sB = sessionBySerial(t, a, "B")
-	if len(sA.Cast.Log) != 60 || !strings.Contains(sA.Cast.Log[59], "79") {
-		t.Fatalf("A 日志应截断为最新 60 行: %d", len(sA.Cast.Log))
+	if len(sA.Cast.Log) != 160 || sA.Cast.Log[159] != "普通日志行 179" {
+		t.Fatalf("A 日志应截断为最新 160 行: %d", len(sA.Cast.Log))
 	}
 	if len(sB.Cast.Log) != 1 {
 		t.Fatalf("B 日志不应受 A 影响: %d", len(sB.Cast.Log))

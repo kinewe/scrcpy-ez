@@ -144,7 +144,7 @@ public final class ActivityManager {
                     /* userId */ /* UserHandle.USER_CURRENT */ -2);
         } catch (Throwable e) {
             Ln.e("Could not invoke method", e);
-            return 0;
+            return -1;
         }
     }
 
@@ -183,10 +183,15 @@ public final class ActivityManager {
         try {
             // Equivalent to:
             //     adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://<path>
-            Method method = getBroadcastIntentMethod();
-            method.invoke(manager, null, intent, null, null, 0, null, null, null, -1, null, true, false, /* userId */ -2);
+            sendBroadcastAsUser(intent, /* UserHandle.USER_CURRENT */ -2);
         } catch (Throwable e) {
             Ln.e("Could not invoke method", e);
         }
+    }
+
+    /** Returns dispatch status, not receiver completion or application recovery. */
+    public int sendBroadcastAsUser(Intent intent, int userId) throws ReflectiveOperationException {
+        Method method = getBroadcastIntentMethod();
+        return (Integer) method.invoke(manager, null, intent, null, null, 0, null, null, null, -1, null, true, false, userId);
     }
 }

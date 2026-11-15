@@ -17,6 +17,7 @@ final class BacklogAbr {
         }
     }
     private static final int[] LEVELS = {240, 180, 144, 120, 90, 60, 45, 30, 24, 15, 10, 5};
+    private static final int FPS_RECOVERY_MS = 2000;
     private static final class Evidence {
         long since = -1;
         int count;
@@ -37,6 +38,8 @@ final class BacklogAbr {
     private int bitrate;
     private float fps;
     private long firstMs = -1, lastMs, baseline, lastAction = -10000, healthySince = -1;
+    private long idleSince = -1, lastIdleFeedbackMs;
+    private int idleEpoch;
     private long lastSourcePts = -1;
     private double periodUs;
     private int clientEpoch = -1, clientSequence = -1;
@@ -64,6 +67,7 @@ final class BacklogAbr {
     float fps() { return fps; }
     long sourceExcessMs() { return lastSourceExcess; }
     long baselineMs() { return baseline; }
+    boolean canRecoverFps() { return !lockFps && fps < maxFps; }
     void reject(int oldBitrate, float oldFps) { bitrate = oldBitrate; fps = oldFps; clearEvidence(); }
     void rejectBitrate(int oldBitrate, float oldFps) {
         reject(oldBitrate, oldFps);
@@ -82,12 +86,55 @@ final class BacklogAbr {
 
     private void clearEvidence() {
         source.reset(); delivery.reset(); decode.reset(); healthySince = -1; lastDecodeDepth = -1;
+        idleSince = -1;
+    }
+
+    Decision observeIdle(long now, ClientBacklog.Sample sample) {
+        if (!calibrated || !canRecoverFps() || sample == null || !sample.idle(now)) {
+            idleSince = -1;
+            return null;
+        }
+        if (idleSince < 0 || sample.epoch != idleEpoch || sample.receivedMs - lastIdleFeedbackMs > ClientBacklog.MAX_SAMPLE_AGE_MS) {
+            idleSince = now;
+            idleEpoch = sample.epoch;
+        }
+        lastIdleFeedbackMs = sample.receivedMs;
+        if (!canProbeFps(now, idleSince)) {
+            return null;
+        }
+        float nextFps = nextRecoveryFps(sample);
+        if (nextFps == fps) {
+            return null;
+        }
+        fps = nextFps;
+        lastAction = lastFpsAction = lastFpsRaise = now;
+        return new Decision(bitrate, fps, "idle-recovery", 0, 0, 0);
+    }
+
+    private boolean canProbeFps(long now, long stableSince) {
+        return canRecoverFps() && now - stableSince >= FPS_RECOVERY_MS
+                && now - lastFpsAction >= FPS_RECOVERY_MS && now >= fpsBlockedUntil;
+    }
+
+    private float nextRecoveryFps(ClientBacklog.Sample sample) {
+        float nextFps = maxFps;
+        for (int i = LEVELS.length - 1; i >= 0; --i) {
+            if (LEVELS[i] > fps && LEVELS[i] < nextFps) {
+                nextFps = LEVELS[i];
+                break;
+            }
+        }
+        if (decodeLimited && sample != null && sample.workUs > 0 && nextFps > 1000000.0 / sample.workUs * .95) {
+            return fps;
+        }
+        return nextFps;
     }
 
     Decision observe(long now, long rawSourceDelayMs, long ptsUs, long lastWriteMs, ClientBacklog.Sample sample) {
         return observe(now, rawSourceDelayMs, ptsUs, lastWriteMs, 0, sample);
     }
     Decision observe(long now, long rawSourceDelayMs, long ptsUs, long lastWriteMs, long codedBps, ClientBacklog.Sample sample) {
+        idleSince = -1;
         if (!calibrated || now < lastMs || now - lastMs > 3000 || (lastSourcePts >= 0 && ptsUs <= lastSourcePts)) {
             resetSource();
             baseline = rawSourceDelayMs;
@@ -212,12 +259,8 @@ final class BacklogAbr {
         if (healthySince < 0) healthySince = now;
         int newBitrate = bitrate;
         float newFps = fps;
-        if (!lockFps && fps < maxFps && now - healthySince >= 2000 && now - lastFpsAction >= 2000 && now >= fpsBlockedUntil) {
-            newFps = maxFps;
-            for (int i = LEVELS.length - 1; i >= 0; --i) {
-                if (LEVELS[i] > fps && LEVELS[i] < newFps) { newFps = LEVELS[i]; break; }
-            }
-            if (decodeLimited && valid && sample.workUs > 0 && newFps > 1000000.0 / sample.workUs * .95) newFps = fps;
+        if (canProbeFps(now, healthySince)) {
+            newFps = nextRecoveryFps(valid ? sample : null);
         }
         if (newFps == fps && !lockBitrate && bitrateMutable && bitrate < maxBitrate && now - healthySince >= 1500
                 && now - lastBitrateAction >= bitrateProbeDelay && now >= bitrateBlockedUntil) {

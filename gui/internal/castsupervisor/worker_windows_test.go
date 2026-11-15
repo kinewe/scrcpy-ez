@@ -102,6 +102,7 @@ func newFixture(t *testing.T, hub *deviceevents.Hub, extra ...string) *fixture {
 	c.SysProcAttr.CmdLine = `cmd.exe /d /s /c ""` + bat + `""`
 	c.Env = append(os.Environ(), "SCEZ_ROOT_ENDPOINT=", "SCEZ_ROOT_TOKEN=", "SCEZ_EVENT_CHILD=", "SCEZ_EVENT_ROUTE=", "SCEZ_EVENT_HELPER="+exe, "SCEZ_WATCH_TAG="+f.tag, "SCEZ_EXPECT_SERIAL=PHONE_A", "SCEZ_SERIAL=", "SCEZ_ADDR=192.0.2.1:5555", "SCEZ_EVENT_ENDPOINT="+endpoint, "SCEZ_EVENT_TOKEN="+token, fmt.Sprintf("SCEZ_EVENT_PARENT_PID=%d", os.Getpid()), "SCEZ_TEST_ADB_LOG="+filepath.Join(dir, "adb.log"), "SCEZ_TEST_CAST_LOG="+filepath.Join(dir, "cast.log"))
 	c.Env = append(c.Env, extra...)
+	c.Env = append(c.Env, "SCEZ_TEST_SCANNER_ARGS_LOG="+filepath.Join(dir, "scanner.args"))
 	c.Stdout = &f.output
 	c.Stderr = &f.output
 	if err = c.Start(); err != nil {
@@ -177,6 +178,39 @@ func TestWorkerStartupWaitsForUSBIdentityAndLearning(t *testing.T) {
 	}
 }
 
+func TestPerspectiveUnavailableWaitsInsteadOfRepeatedCameraCreation(t *testing.T) {
+	h := deviceevents.NewHub()
+	w := transport("192.0.2.1:5555", "wifi", "device")
+	publish(h, w)
+	f := newFixture(t, h, "SCEZ_TEST_PERSPECTIVE_UNAVAILABLE=1")
+	f.waitStarts(1)
+	// A normal transient failure retries in 500 ms. An unresponsive system
+	// camera service must remain paused even if unchanged device events arrive.
+	f.assertStable(1, 2200*time.Millisecond)
+	publish(h, w)
+	f.assertStable(1, 1200*time.Millisecond)
+}
+
+func TestWeChatScannerFallsBackWithoutRetryingVirtualCamera(t *testing.T) {
+	h := deviceevents.NewHub()
+	w := transport("192.0.2.1:5555", "wifi", "device")
+	publish(h, w)
+	f := newFixture(t, h, "SCEZ_TEST_PERSPECTIVE_UNAVAILABLE=1",
+		"SCEZ_START_APP=com.tencent.mm:scan", "SCEZ_PERSPECTIVE_CAMERA=1",
+		"SCEZ_PERSPECTIVE_CAMERA_USB=1", "SCEZ_PERSPECTIVE_CAMERA_WIFI=1",
+		"SCEZ_VD_SIZE=1280x720", "SCEZ_VD_AUDIO=both")
+	f.waitStarts(2)
+	f.assertStable(2, 1800*time.Millisecond)
+	if log := f.log("cast.log"); strings.Count(log, "CAMERA fallback") != 1 {
+		t.Fatal(log)
+	}
+	if args := f.log("scanner.args"); strings.Count(args, "--perspective-camera") != 1 ||
+		strings.Count(args, "--start-app=com.tencent.mm:scan") != 2 ||
+		strings.Count(args, "--audio-dup") != 2 {
+		t.Fatal(args)
+	}
+}
+
 func TestWorkerSwitchRecoveryAndUserClose(t *testing.T) {
 	h := deviceevents.NewHub()
 	w := transport("192.0.2.1:5555", "wifi", "device")
@@ -208,6 +242,9 @@ func TestWorkerSwitchRecoveryAndUserClose(t *testing.T) {
 	}
 	if strings.Contains(before, "devices ") || strings.Contains(before, "get-state ") || strings.Contains(before, "kill-server ") {
 		t.Fatal(before)
+	}
+	if !strings.Contains(before, "$(getprop ro.build.version.sdk)") || strings.Contains(before, "shell getprop ro.build.version.sdk") {
+		t.Fatalf("cast should reuse the SDK read with the transport identity:\n%s", before)
 	}
 	f.user.Signal()
 	select {

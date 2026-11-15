@@ -35,15 +35,17 @@ func TestHiddenDirectCmdAndPowerShellChildrenHaveNoConsoleWindow(t *testing.T) {
 		exec.Command("cmd.exe", "/d", "/s", "/c", `""`+executable+`" -test.run=^TestConsoleProbeChild$"`),
 		exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", "& '"+strings.ReplaceAll(executable, "'", "''")+"' '-test.run=^TestConsoleProbeChild$'"),
 	}
-	for _, command := range commands {
-		command.Env = append(os.Environ(), "SCEZ_CONSOLE_PROBE=1")
-		HideConsole(command)
-		if strings.EqualFold(filepath.Base(command.Path), "cmd.exe") {
-			command.SysProcAttr.CmdLine = `cmd.exe /d /s /c ""` + executable + `" -test.run=TestConsoleProbeChild"`
-		}
-		output, err := command.CombinedOutput()
-		if err != nil || !strings.Contains(string(output), "OWN_CONSOLE=0") {
-			t.Fatalf("%s: child console suppression failed: %v %s", command.Path, err, output)
-		}
+	for i, command := range commands {
+		t.Run([]string{"direct", "cmd", "powershell"}[i], func(t *testing.T) {
+			command.Env = append(os.Environ(), "SCEZ_CONSOLE_PROBE=1")
+			HideConsole(command)
+			if strings.EqualFold(filepath.Base(command.Path), "cmd.exe") {
+				command.SysProcAttr.CmdLine = `cmd.exe /d /s /c ""` + executable + `" -test.run=TestConsoleProbeChild"`
+			}
+			output, err := command.CombinedOutput()
+			if err != nil || !strings.Contains(string(output), "OWN_CONSOLE=0") {
+				t.Fatalf("%s: child console suppression failed: %v %s", command.Path, err, output)
+			}
+		})
 	}
 }

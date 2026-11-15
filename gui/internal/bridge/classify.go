@@ -146,10 +146,11 @@ type Event struct {
 }
 
 var (
-	reSpecRes = regexp.MustCompile(`(\d{3,4})x(\d{3,4})@(\d{1,3})Hz`)
-	reSpecBr  = regexp.MustCompile(`(\w{2,4})/(\d{1,3})M/(\d{2,4})/(\d{1,3})fps`)
-	reKeySDK  = regexp.MustCompile(`SDK=(\d+) -> (\w+) legacy=(\w*)`)
-	reCustom  = regexp.MustCompile(`^\[custom\] (wired|wireless) res=(\d+) fps=(\d+) bitrate=(\d+)( \((usb|wifi)\))?(?: codec=(\w{2,4}))?(?: acodec=(\w{2,4}))?$`)
+	reSpecRes   = regexp.MustCompile(`(\d{3,4})x(\d{3,4})@(\d{1,3})Hz`)
+	reSpecBr    = regexp.MustCompile(`(\w{2,4})/(\d{1,3})M/(\d{2,4})/(\d{1,3})fps`)
+	reKeySDK    = regexp.MustCompile(`SDK=(\d+) -> (\w+) legacy=(\w*)`)
+	reCustom    = regexp.MustCompile(`^\[custom\] (wired|wireless) res=(\d+) fps=(\d+) bitrate=(\d+)( \((usb|wifi)\))?(?: codec=(\w{2,4}))?(?: acodec=(\w{2,4}))?$`)
+	reRouteMode = regexp.MustCompile(`^\[自动切换\] (?:启动|切换至) (usb|wifi)：\S+`)
 	// 规格行精确格式（行首锚定 + 全格式匹配）：baseline 提取只认这三类 bat 回显行。
 	// 排除 bat 的"使用默认规格"回退行（检测失败时的 50M 默认值不是设备真实规格），
 	// 也天然排除任何 [server] INFO / FRAME / ABR / PULSE 日志行（行首不匹配）。
@@ -313,6 +314,8 @@ func ClassifyLine(line string) Event {
 		ev.Kind = KindWatchOn
 	case strings.Contains(t, "检测到 USB 插线，切换至有线投屏"):
 		ev.Kind = KindSwitchUSB
+	case reRouteMode.MatchString(t):
+		ev.Kind, ev.Mode = KindReconnect, reRouteMode.FindStringSubmatch(t)[1]
 	case strings.Contains(t, "SCRCPY_EZ_ROUTE_SWITCH") || strings.Contains(t, "[自动切换] 启动 ") || strings.Contains(t, "[自动切换] 切换至 "):
 		ev.Kind = KindReconnect
 	case strings.Contains(t, "检测到连接断开"):

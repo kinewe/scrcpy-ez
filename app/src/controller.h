@@ -22,6 +22,7 @@ struct sc_controller {
     sc_mutex mutex;
     sc_cond msg_cond;
     bool stopped;
+    // Enables the shared session heartbeat, not Android screen wake locks.
     bool keep_awake;
 
     struct sc_control_msg_queue queue;

@@ -23,6 +23,7 @@
   'use strict';
 
   var lastJson = '';
+  var lastWeChatScanNotice = '';
   var lastState = null;
   var pollTimer = null;
   var sessions = {};     // serial -> 会话标签/面板
@@ -52,28 +53,26 @@
 
   function sanitizeId(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, '_'); }
 
-  function toast(msg) {
+  function toast(msg, kind) {
     var t = el('cast-toast');
+    t.classList.toggle('pair-error', kind === 'pair-error');
     t.textContent = msg;
     t.style.display = '';
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { t.style.display = 'none'; }, 2200);
   }
 
-  // 副行 = 当前连接方式的投屏参数：
-  //   USB 在线 → "USB · 序列号 · <原生分辨率(宽≥高)> · <Hz>"
-  //   仅无线   → "无线 · IP:端口 · <无线分辨率(长边1920换算)> · 60fps"
+  // 副行 = 当前连接方式的投屏参数：无线保留 IP、插线保留序列号（短号），另带
+  // 当前投屏分辨率；不再显示「无线/USB」连接方式文字与帧率。
   function fmtSub(d) {
     var parts = [];
     if (d.connType === 'usb') {
-      parts.push('USB');
       if (d.serial) parts.push(d.serial);
-      if (d.res) parts.push(d.res + (d.fps ? ' · ' + d.fps + 'Hz' : ''));
+      if (d.res) parts.push(d.res);
     } else if (d.connType === 'wifi') {
-      parts.push('无线');
       if (d.wirelessIP) parts.push(d.wirelessIP);
       else if (d.serial) parts.push(d.serial);
-      if (d.wirelessRes) parts.push(d.wirelessRes + ' · ' + (d.fps ? d.fps + 'fps' : '60fps'));
+      if (d.wirelessRes) parts.push(d.wirelessRes);
     } else {
       parts.push('其他');
       if (d.serial) parts.push(d.serial);
@@ -138,7 +137,11 @@
     if (d.state !== 'device' || d.connecting) return;
     var k = stickyKey(d), now = Date.now();
     var e = fieldSticky[k];
-    if (!e) e = fieldSticky[k] = { battery: 0, res: '', wirelessRes: '', at: now };
+    if (!e) e = fieldSticky[k] = { battery: 0, res: '', wirelessRes: '', mode: d.connType, at: now };
+    if (e.mode !== d.connType) {
+      e.res = e.wirelessRes = '';
+      e.mode = d.connType;
+    }
     if (d.battery > 0) e.battery = d.battery;
     if (d.res) e.res = d.res;
     if (d.wirelessRes) e.wirelessRes = d.wirelessRes;
@@ -443,6 +446,147 @@
     }
   }
 
+  // ---------- 指针悬停跨快照重建（v2.4.2-rc.29 UI 修正） ----------
+  // refreshNow 每 700ms 拉一次快照；任何字段变化（通知状态、电量、富化信息…）都会
+  // 整体重建设备卡。鼠标不动时新节点拿不到 :hover，CSS 动画也会从头开始 → 悬停视觉
+  // 与「微信扫一扫」扫动会闪一下。这里按「设备键 + 按钮角色」记住指针落点：
+  //   1) 重建时给指针下的按钮补 .pt-hover（与 :hover 同款视觉，不闪断）；
+  //   2) 扫动改由 requestAnimationFrame 驱动，动效状态挂在设备键上，节点被替换后
+  //      继续原相位；指针离开时**等当前周期自然播完**，再快速淡入回中位（初始态）。
+  var pointerTarget = null;   // 指针所指设备卡按钮：{key, role} | null
+  var pointerHoverEl = null;  // 当前补过 .pt-hover 的节点（移开时清掉）
+  var scanButtons = Object.create(null); // 设备键 → {btn, beam}
+  var scanStates = Object.create(null);  // 设备键 → {phase: sweep/finish/restore/rest, t0, finishAt}
+  var scanRaf = null;
+  var scanReducedMotion = false;
+  try { scanReducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) { scanReducedMotion = false; }
+
+  function scanNow() {
+    return (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+  }
+
+  // 每轮 renderDevices 开头重置本轮注册表（旧节点随后被移除；动效状态另存 scanStates）。
+  function beginScanButtonRegistration() {
+    scanButtons = Object.create(null);
+  }
+
+  function registerScanButton(btn, key) {
+    var beam = btn.querySelector ? btn.querySelector('.scan-ico-beam') : null;
+    scanButtons[key] = { btn: btn, beam: beam };
+  }
+
+  function clearPointerHover() {
+    if (pointerHoverEl && pointerHoverEl.classList) pointerHoverEl.classList.remove('pt-hover');
+    pointerHoverEl = null;
+  }
+
+  // 重建卡片时调用：指针仍停在同一个按钮上 → 立即补悬停类（插入前生效，无过渡闪动）。
+  function markPointerHover(btn, key, role) {
+    if (!pointerTarget || pointerTarget.key !== key || pointerTarget.role !== role) return;
+    if (btn.classList) btn.classList.add('pt-hover');
+    pointerHoverEl = btn;
+  }
+
+  function scanTargetKey() {
+    return (pointerTarget && pointerTarget.role === 'scan') ? pointerTarget.key : null;
+  }
+
+  function scanApplyPose(key, pose) {
+    var refs = scanButtons[key];
+    if (!refs || !refs.beam || !refs.beam.style) return;
+    refs.beam.style.transform = 'translateY(' + pose.y.toFixed(2) + 'px)';
+    refs.beam.style.opacity = pose.opacity.toFixed(3);
+  }
+
+  function scanRestPose(key) {
+    var refs = scanButtons[key];
+    if (!refs || !refs.beam || !refs.beam.style) return;
+    refs.beam.style.transform = 'translateY(0px)';
+    refs.beam.style.opacity = '1';
+  }
+
+  function scanTick(now) {
+    scanRaf = null;
+    var active = false;
+    Object.keys(scanStates).forEach(function (key) {
+      var st = scanStates[key];
+      if (!scanButtons[key]) return; // 本轮重建尚未注册（sync 会处理），先保留相位
+      var elapsed = now - st.t0;
+      if (st.phase === 'sweep' || st.phase === 'finish') {
+        var p = (elapsed % SCEZScanIcon.sweepMs) / SCEZScanIcon.sweepMs;
+        scanApplyPose(key, SCEZScanIcon.sweepPose(p));
+        if (st.phase === 'finish' && now >= st.finishAt) {
+          // 当前周期已播完（扫描线在底部淡出）→ 快速淡入回中位。
+          st.phase = 'restore';
+          st.t0 = now;
+          scanApplyPose(key, SCEZScanIcon.restorePose(0));
+        }
+        active = true;
+      } else if (st.phase === 'restore') {
+        var rp = (now - st.t0) / SCEZScanIcon.restoreMs;
+        if (rp >= 1) {
+          st.phase = 'rest';
+          scanRestPose(key);
+        } else {
+          scanApplyPose(key, SCEZScanIcon.restorePose(rp));
+          active = true;
+        }
+      }
+    });
+    if (active) scanRaf = requestAnimationFrame(scanTick);
+  }
+
+  function scanStartLoop() {
+    if (scanRaf === null) scanRaf = requestAnimationFrame(scanTick);
+  }
+
+  // 指针落点 / 卡片重建后都会调用：按当前指针决定每台设备扫动的相位。
+  function scanAnimationSync() {
+    var hoverKey = scanTargetKey();
+    if (scanReducedMotion) hoverKey = null;
+    Object.keys(scanStates).forEach(function (key) {
+      var st = scanStates[key];
+      if (!scanButtons[key] && key !== hoverKey) { delete scanStates[key]; return; }
+      if (key === hoverKey) {
+        if (st.phase !== 'sweep') { st.phase = 'sweep'; st.t0 = scanNow(); st.finishAt = 0; }
+      } else if (st.phase === 'sweep') {
+        // 指针已离开：不打断当前周期——等这一轮自然播完再回位。
+        st.phase = 'finish';
+        st.finishAt = st.t0 + (Math.floor((scanNow() - st.t0) / SCEZScanIcon.sweepMs) + 1) * SCEZScanIcon.sweepMs;
+      }
+    });
+    if (hoverKey && !scanStates[hoverKey]) {
+      scanStates[hoverKey] = { phase: 'sweep', t0: scanNow(), finishAt: 0 };
+    }
+    if (Object.keys(scanStates).length) scanStartLoop();
+  }
+
+  function trackPointer(ev) {
+    var t = ev.target;
+    var card = (t && t.closest) ? t.closest('.device-card') : null;
+    var button = (t && t.closest) ? t.closest('.device-card .btn') : null;
+    var next = null;
+    if (card && button && card.dataset && card.dataset.key) {
+      next = { key: card.dataset.key, role: button.dataset.role || '' };
+    }
+    var same = (!next && !pointerTarget) ||
+      (next && pointerTarget && next.key === pointerTarget.key && next.role === pointerTarget.role);
+    if (same) return;
+    clearPointerHover();
+    pointerTarget = next;
+    scanAnimationSync();
+  }
+
+  document.addEventListener('pointermove', trackPointer, { passive: true });
+  document.addEventListener('pointerout', function (ev) {
+    // relatedTarget 为空 = 指针离开页面（去别的窗口/标题栏）：按“已离开”收尾。
+    if (ev.relatedTarget) return;
+    clearPointerHover();
+    if (!pointerTarget) return;
+    pointerTarget = null;
+    scanAnimationSync();
+  });
+
   function renderDevices(st) {
     var promoted = reconcileBatchDeviceKeys(st);
     var box = el('device-list');
@@ -463,11 +607,13 @@
 
     var cards = [];
     box.classList.toggle('batch', batchMode);
+    beginScanButtonRegistration(); // 本轮卡片重建：刷新扫一扫按钮注册表（动效状态另存）
     if (!st.adbOK) {
       var bad = document.createElement('div');
       bad.className = 'banner error';
       bad.textContent = '⚠ 无法连接 adb（adb.exe 缺失或未响应），请检查程序目录';
       commitDeviceCards(box, [bad]);
+      scanAnimationSync();
       return;
     }
     // 真空期去抖：adb 仍可用但当前连续失败（点投屏后 bat 重置 adb 服务的 1-2s 真空）——
@@ -494,6 +640,7 @@
       }
       cards.push(tip);
       commitDeviceCards(box, cards);
+      scanAnimationSync();
       return;
     }
 
@@ -668,7 +815,7 @@
           // gui49-fix5：USB offline 瞬态（线插着）→ 「连接中…」，不显示「离线」。
           sub.textContent = d.connecting ? '连接中…' : (d.state === 'unauthorized' ? '未授权 · 请解锁手机点击"允许 USB 调试"' : '离线 · ' + d.serial);
         }
-        info.appendChild(sub);
+        if (sub.textContent) info.appendChild(sub);
       }
 
       // Notification details belong to bulk management, never the normal device cards.
@@ -695,12 +842,36 @@
           appBtn.textContent = d.appBusy ? '读取中…' : '应用';
           appBtn.disabled = !!d.appBusy;
           appBtn.style.opacity = d.appBusy ? '0.55' : '';
+          appBtn.dataset.role = 'app';
+          markPointerHover(appBtn, key, 'app');
             appBtn.addEventListener('click', function (ev) {
               ev.stopPropagation();
               // 主人 0919：先跳到「窗口总览」（应用窗口的家），再打开应用面板选择应用。
               switchView('cast');
               openAppWin(d.serial, d.name || d.serial);
             });
+          // 按钮顺序（左→右）：微信扫一扫（可选）、应用、投屏——应用与投屏的相对位置保持原样。
+          // 微信扫一扫直达仅在该机具备能力时出现：后端用包管理器解析微信动态快捷方式
+          // 分发 Activity（com.tencent.mm/.ui.ShortCutDispatchActivity）；未装微信 /
+          // 版本无此接口的设备不显示按钮（避免死按钮）。真机实测 Android 8~16 的微信 8.x 均可用。
+          if (d.wechatScan) {
+            var scanBtn = document.createElement('button');
+            scanBtn.type = 'button';
+            scanBtn.className = 'btn ghost tiny scan-btn';
+            scanBtn.dataset.role = 'scan';
+            scanBtn.innerHTML = SCEZScanIcon.svg();
+            scanBtn.title = '微信扫一扫';
+            scanBtn.setAttribute('aria-label', '微信扫一扫');
+            scanBtn.addEventListener('click', function (ev) {
+              ev.stopPropagation();
+              window.StartWeChatScanner(d.serial).then(refreshNow).catch(function (e) {
+                toast('启动微信扫一扫失败：' + (e && e.message ? e.message : e));
+              });
+            });
+            registerScanButton(scanBtn, key);
+            markPointerHover(scanBtn, key, 'scan');
+            card.appendChild(scanBtn);
+          }
           card.appendChild(appBtn);
         }
         if (deletingCard) {
@@ -750,6 +921,8 @@
             btn.addEventListener('click', function () { startCast(d.serial, d.name || d.serial); });
           }
         }
+        btn.dataset.role = 'cast';
+        markPointerHover(btn, key, 'cast');
         card.appendChild(btn);
       }
 
@@ -793,7 +966,7 @@
             appBarBtn.textContent = '全部关闭';
             appBarBtn.addEventListener('click', function (ev) {
               ev.stopPropagation(); // 按钮=独立动作（全部关闭）；条子其余区域冒泡=跳转
-              appBarList.forEach(function (k) { stopAllAppWins(k); });
+              if (appBarList.length) stopAllAppWins(appBarList[0]);
               // v2.1.60：受理即反馈——按钮位换「正在关闭…」灰标签（重建后按数据态保持）
               var tag = document.createElement('div');
               tag.className = 'dev-appbar-closing';
@@ -823,6 +996,7 @@
       cards.push(card);
     });
     commitDeviceCards(box, cards);
+    scanAnimationSync(); // 重建完成：指针仍悬停时无缝接续扫动/悬停态
   }
 
   // ---------- 投屏 ----------
@@ -1007,6 +1181,7 @@
   //   leaving = 离开动画中（淡出播完即真删——含"停止完成"/"用户手关窗口"）
   // 交互：浮窗里点应用 → 浮窗退出 + 卡片落到「应用窗口」按钮下方（同应用去重）。
   var openAppCards = {};
+  var appCardOrders = Object.create(null);
   // renderedPkgs：serial → {pkg:true}——entering 淡入动画只对"首次出现"的卡片播一次
   // （全量重建时不重复闪；卡片删卡后重新打开会再次播）。
   var renderedPkgs = {};
@@ -1026,9 +1201,14 @@
   function addOpenAppCard(serial, pkg, name) {
     var list = openAppCards[serial] || (openAppCards[serial] = []);
     for (var i = 0; i < list.length; i++) {
-      if (list[i].pkg === pkg) return false;
+      if (list[i].pkg !== pkg) continue;
+      if (!list[i].leaving) return false;
+      clearTimeout(list[i].leaveTimer);
+      list[i] = { pkg: pkg, identity: (appWins[serial] && appWins[serial].identity) || deviceIdentityOf(serial), name: name || pkg, bornAt: Date.now() };
+      renderOpenAppCards(serial);
+      return true;
     }
-    list.push({ pkg: pkg, name: name || pkg, bornAt: Date.now() });
+    list.push({ pkg: pkg, identity: (appWins[serial] && appWins[serial].identity) || deviceIdentityOf(serial), name: name || pkg, bornAt: Date.now() });
     renderOpenAppCards(serial);
     return true;
   }
@@ -1105,11 +1285,17 @@
           if (list[i].pkg === w.pkg) { a = list[i]; break; }
         }
         if (!a) {
-          list.push({ pkg: w.pkg, name: w.name || w.pkg, closing: !!w.closing, notificationWindow: !!w.notificationWindow, phase: w.phase || '', phaseText: w.phaseText || '', mode: w.mode || '', bornAt: Date.now() });
+          list.push({ pkg: w.pkg, identity: w.identity, name: w.name || w.pkg, closing: !!w.closing, notificationWindow: !!w.notificationWindow, phase: w.phase || '', phaseText: w.phaseText || '', mode: w.mode || '', bornAt: Date.now() });
           dirty[serial] = true;
           return;
         }
-        if (a.leaving) { a.leaving = false; dirty[serial] = true; } // 防御：条目复活
+        if (a.identity !== w.identity) { a.identity = w.identity; dirty[serial] = true; }
+        if (a.leaving) {
+          clearTimeout(a.leaveTimer);
+          a.leaveTimer = null;
+          a.leaving = false;
+          dirty[serial] = true;
+        }
         if (!!a.notificationWindow !== !!w.notificationWindow) { a.notificationWindow = !!w.notificationWindow; dirty[serial] = true; }
         // closing：服务端受理=true 立即同步；服务端 false（停止失败复位）等
         // 乐观窗口（4s）过后才清除——避免点击瞬间的旧快照把遮罩冲掉。
@@ -1139,19 +1325,32 @@
       openAppCards[serial].forEach(function (a) {
         if (srv.some(function (w) { return w.pkg === a.pkg; })) return;
         if (a.leaving) return; // 已在离开流程（动画中）
-        if (a.bornAt && Date.now() - a.bornAt < 5000) return; // 启动保护窗口
+        var closed = (lastState && lastState.recentCastLogs || []).some(function (log) {
+          return log.pkg === a.pkg && log.closedAt >= (a.bornAt || 0) && logDeviceKey(log) === logPaneDeviceKey(serial);
+        });
+        if (!closed && a.bornAt && Date.now() - a.bornAt < 5000) return; // 启动保护窗口
         a.leaving = true;
         dirty[serial] = true;
         scheduleLeave(serial, a);
       });
     });
 
+    (serverList || []).forEach(function (win) {
+      var key = win.identity || deviceIdentityOf(win.serial) || win.serial;
+      if (Object.keys(sessions).some(function (k) { return logPaneDeviceKey(k) === key; }) ||
+          Object.keys(appWins).some(function (k) { return appWins[k].pane && logPaneDeviceKey(k) === key; })) return;
+      if (!appWins[key]) appWins[key] = {name: win.deviceName || win.serial, identity: win.identity || '', tab: null, pane: null, pollLeft: 0};
+      ensureAppWinPane(key);
+    });
     Object.keys(dirty).forEach(function (serial) { renderOpenAppCards(serial); });
   }
 
   // scheduleLeave：离开动画播完即真删（350ms 动画 + 30ms 余量；一次性）。
   function scheduleLeave(serial, a) {
-    setTimeout(function () { removeOpenAppCard(serial, a.pkg); }, 380);
+    a.leaveTimer = setTimeout(function () {
+      a.leaveTimer = null;
+      if (a.leaving && (openAppCards[serial] || []).indexOf(a) >= 0) removeOpenAppCard(serial, a.pkg);
+    }, 380);
   }
 
   // stopAllAppWins：给本设备全部应用窗口发关闭指令（v2.1.41「全部关闭」按钮）——
@@ -1159,21 +1358,22 @@
   // 回滚该卡遮罩（快照校准兜底）。
   function stopAllAppWins(serial) {
     // v2.1.52：数据键归一（按钮绑定键=会话键；卡片数据键可能不同）。
-    var dk = appKeyOf(serial);
-    var list = (openAppCards[dk] || []).slice();
+    var list = appCardsForDevice(logPaneDeviceKey(serial));
     if (list.length === 0) return;
-    list.forEach(function (a) {
+    list.forEach(function (entry) {
+      var a = entry.card;
       a.closing = true;
       a.closingAt = Date.now();
     });
-    renderOpenAppCards(dk); // 乐观：全部先显示"正在关闭…"
-    list.forEach(function (a) {
+    renderOpenAppCards(serial); // 乐观：全部先显示"正在关闭…"
+    list.forEach(function (entry) {
+      var a = entry.card;
       if (typeof window.StopAppWin === 'function') {
-        window.StopAppWin(dk, a.pkg).catch(function (e) {
+        window.StopAppWin(entry.serial, a.pkg).catch(function (e) {
           toast('关闭失败：' + (e && e.message ? e.message : e));
           a.closing = false;
           a.closingAt = 0;
-          renderOpenAppCards(dk);
+          renderOpenAppCards(serial);
         });
       }
     });
@@ -1184,18 +1384,15 @@
   //   - 只认带 data-pkg 的卡片：列表尾部的 hint 等无 key 元素不可拖（drag_order 的
   //     keyOf 判定），也不参与换位；closing/leaving 中的卡片不参与；
   //   - 拖动中的卡片置顶（.dragging 类 → z-index，CSS 同设备卡同款）；
-  //   - 顺序=openAppCards[serial] 数组顺序（会话级内存态；不持久化，重启恢复快照序）。
+  //   - 拖拽顺序按设备保存，窗口操作仍走各自的会话键。
   function attachAppCardDrag(box, serial) {
     DragOrder.attach(box, {
       axis: 'y',
       getOrder: function () {
-        return (openAppCards[serial] || []).map(function (a) { return a.pkg; });
+        return appCardsForDevice(logPaneDeviceKey(serial)).map(function (entry) { return entry.card.pkg; });
       },
       setOrder: function (next) {
-        var list = openAppCards[serial] || [];
-        var byPkg = {};
-        list.forEach(function (a) { byPkg[a.pkg] = a; });
-        openAppCards[serial] = next.map(function (k) { return byPkg[k]; }).filter(Boolean);
+        appCardOrders[logPaneDeviceKey(serial)] = next.slice();
       },
       keyOf: function (el) {
         if (!el || !el.classList) return null;
@@ -1220,33 +1417,50 @@
   // renderOpenAppCards：把卡片列表渲染进该设备的容器（会话 pane / 蓝灯应用标签页
   // 都可能承载；容器缺失=no-op）。图标走 requestIcon 懒加载（与浮窗同一缓存）。
   // v2.1.27：entering 淡入（仅首次出现）/ leaving 淡出（状态类）/ closing 遮罩。
+  // appCardsForDevice：按设备身份汇总卡片——同一台手机的应用窗口可能挂在不同的
+  // 后端键下（通知入口=设备身份；微信扫一扫等入口=当前连接键）。日志本就按身份
+  // 合并，卡片必须同样按身份汇总才能与日志一致；每张卡保留自己的数据键（serial）
+  // 供停止/重启/浮前/参数等操作使用。
+  function appCardsForDevice(device) {
+    var cards = new Map();
+    Object.keys(openAppCards).forEach(function (serial) {
+      openAppCards[serial].forEach(function (card) {
+        if ((card.identity || logPaneDeviceKey(serial)) !== device) return;
+        var previous = cards.get(card.pkg);
+        if (!previous || (previous.card.leaving && !card.leaving)) cards.set(card.pkg, { serial: serial, card: card });
+      });
+    });
+    var list = [];
+    (appCardOrders[device] || []).forEach(function (pkg) {
+      if (cards.has(pkg)) { list.push(cards.get(pkg)); cards.delete(pkg); }
+    });
+    return list.concat(Array.from(cards.values()));
+  }
+
   function renderOpenAppCards(serial) {
-    var list = openAppCards[serial] || [];
+    var device = logPaneDeviceKey(serial);
+    var list = appCardsForDevice(device);
     var boxes = [];
-    var s = sessions[serial];
-    if (!s) {
-      // v2.1.52：同设备多形态键——数据键（serial）与容器键（会话键）可能不同，身份归一。
-      var sk = sessionKeyOf(serial);
-      if (sk) s = sessions[sk];
-    }
-    if (s && s.pane) boxes.push(s.pane.querySelector('.openapp-list'));
-    var w = appWins[serial];
-    if (w && w.pane) boxes.push(w.pane.querySelector('.openapp-list'));
-    var seen = renderedPkgs[serial] || (renderedPkgs[serial] = {});
-    boxes.forEach(function (box, bi) {
+    [sessions, appWins].forEach(function (panes) {
+      Object.keys(panes).forEach(function (key) {
+        if (panes[key].pane && logPaneDeviceKey(key) === device) boxes.push({key: key, box: panes[key].pane.querySelector('.openapp-list')});
+      });
+    });
+    boxes.forEach(function (target, bi) {
+      var box = target.box;
       if (!box) return;
       // v2.1.35：拖拽进行中跳过重建（同设备页 gui44 的 drag-active 防御）——
       // 否则轮询刷新会在拖拽中销毁 activeEl 的 DOM 节点，拖拽错乱。标记 pending，
       // pointerup 后补渲染（拖拽期间被删的卡片 DOM 不残留）。
       if (box.classList.contains('drag-active')) {
-        pendingRender[serial] = true;
+        pendingRender[target.key] = true;
         return;
       }
       // v2.1.35：容器级幂等绑定纵向拖拽（绑定在容器上、DOM 重建不失效；
       // pane 重建 → 标记随新 DOM 消失 → 自动重绑）。
       if (!box.dataset.dragBound) {
         box.dataset.dragBound = '1';
-        attachAppCardDrag(box, serial);
+        attachAppCardDrag(box, target.key);
       }
       box.innerHTML = '';
       // v2.1.41：「全部关闭」按钮显隐——本设备有应用窗口卡片时出现（右对齐同行）
@@ -1255,7 +1469,10 @@
         if (allBtn) allBtn.style.display = list.length > 0 ? '' : 'none';
       }
       if (list.length === 0) return;
-      list.forEach(function (a) {
+      list.forEach(function (entry) {
+        var a = entry.card;
+        var serial = entry.serial;
+        var seen = renderedPkgs[serial] || (renderedPkgs[serial] = {});
         var isNew = !seen[a.pkg];
         seen[a.pkg] = true;
         var card = document.createElement('div');
@@ -1387,19 +1604,50 @@
   }
 
   var appLaunchFocus = null;
+  var cameraPermissionFocus = null;
+  var cameraPermissionDialog = SCEZAppLaunchUI.create({
+    present: function (app) {
+      cameraPermissionFocus = document.activeElement;
+      el('camera-permission-device').textContent = (app.deviceName || '当前设备') + ' · ' + (app.name || app.pkg);
+      el('camera-permission-message').textContent = '系统拒绝了该应用的相机访问\n请到手机或平板设置中允许「' + (app.name || app.pkg) + '」使用相机，再重新进入相机页面';
+      el('camera-permission-modal').style.display = '';
+      el('camera-permission-ok').focus();
+    },
+    hide: function () {
+      el('camera-permission-modal').style.display = 'none';
+      if (cameraPermissionFocus && cameraPermissionFocus.isConnected) cameraPermissionFocus.focus();
+    },
+    reveal: function () { if (typeof window.ShowMainWindow === 'function') window.ShowMainWindow().catch(function () {}); },
+    resolve: function () { return Promise.resolve(); }
+  });
+  ['camera-permission-ok', 'camera-permission-close'].forEach(function (id) {
+    el(id).addEventListener('click', function () { cameraPermissionDialog.choose(false); });
+  });
+  el('camera-permission-modal').addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') { event.preventDefault(); cameraPermissionDialog.choose(false); }
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      el(document.activeElement === el('camera-permission-ok') ? 'camera-permission-close' : 'camera-permission-ok').focus();
+    }
+  });
   var appLaunchDialog = SCEZAppLaunchUI.create({
     present: function (app, busy, error) {
       var mask = el('app-launch-modal');
       var opening = mask.style.display === 'none';
       if (opening) appLaunchFocus = document.activeElement;
       var name = '「' + (app.name || '应用') + '」';
-      el('app-launch-title').textContent = name + '暂时无法直接投屏';
-      el('app-launch-message').textContent = app.phase === 'app-in-use'
+      var cameraChange = app.phase === 'app-camera-mode-change';
+      el('app-launch-title').textContent = cameraChange ? '应用透视相机设置' : name + '暂时无法直接投屏';
+      el('app-launch-message').textContent = cameraChange
+        ? '相机环境变更或相机使用中的重新投屏需要重新启动' + name + '\n取消会保留当前页面和设置'
+        : app.phase === 'app-in-use'
         ? '手机上正在使用' + name + '，暂时无法同时投屏。可先取消，回到手机桌面后再试'
         : app.phase === 'app-layout-incompatible'
         ? '手机上的' + name + '已有打开的页面，暂时无法直接保留这个页面进行投屏'
         : '暂时无法打开投屏窗口。可以取消，或关闭' + name + '后重新投屏';
-      el('app-launch-warning').textContent = '继续会先关闭' + name + '，再打开投屏。当前操作会被打断，未发送或未保存的内容可能丢失';
+      el('app-launch-warning').textContent = cameraChange
+        ? '继续会关闭并重新打开' + name + '\n未发送或未保存的内容可能丢失'
+        : '继续会先关闭' + name + '，再打开投屏。当前操作会被打断，未发送或未保存的内容可能丢失';
       el('app-launch-error').textContent = error;
       el('app-launch-error').style.display = error ? '' : 'none';
       ['app-launch-cancel', 'app-launch-restart', 'app-launch-close'].forEach(function (id) { el(id).disabled = busy; });
@@ -1495,7 +1743,7 @@
     var pane = buildAppWinPane(serial);
     el('cast-sessions').appendChild(pane);
     w.pane = pane;
-    if (openAppCards[serial]) renderOpenAppCards(serial);
+    renderOpenAppCards(serial);
     updateTabs();
   }
 
@@ -1524,6 +1772,8 @@
         if (w.tab) w.tab.querySelector('.casttab-name').textContent = name;
       }
     }
+    cancelLogPaneFade(w);
+    w.recentLogPane = false; // 用户主动打开应用选择器，转为普通蓝灯页。
     w.pollLeft = 40; // 重新进入=重拉（防陈旧）
     loadAppWinApps(serial);
     // 主人 0919 问题3：点哪个设备就跳到哪个设备的标签页
@@ -1658,6 +1908,7 @@
     if (!node || node.__audioBound) return;
     node.__audioBound = true;
     var dragging = false;
+    node.__cancelAudioDrag = function () { dragging = false; };
     function pick(ev) {
       var r = node.getBoundingClientRect();
       if (!r.width) return;
@@ -1676,6 +1927,74 @@
     node.addEventListener('pointercancel', function () { dragging = false; });
   }
 
+  // ---------- rc23-UI1：设置弹窗三页签 / 每页一条说明框 / 未保存角标（param + appset 共用） ----------
+  // 只切显示，不重建内容；草稿状态仍由 paramState / appSetState 持有。
+  var DIALOG_TABS = ['display', 'audio', 'feature'];
+  function dialogTabEl(prefix, name) { return el(prefix + '-tab-' + name); }
+  function dialogPageEl(prefix, name) { return el(prefix + '-page-' + name); }
+  function showDialogTab(prefix, name) {
+    if (DIALOG_TABS.indexOf(name) < 0) name = 'display';
+    DIALOG_TABS.forEach(function (t) {
+      var btn = dialogTabEl(prefix, t);
+      var page = dialogPageEl(prefix, t);
+      var on = t === name;
+      if (btn) {
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        btn.tabIndex = on ? 0 : -1;
+      }
+      if (page) {
+        page.classList.toggle('active', on);
+        if (on) page.removeAttribute('hidden'); else page.setAttribute('hidden', '');
+      }
+    });
+  }
+  function showAllDialogPages(prefix, on) {
+    DIALOG_TABS.forEach(function (t) {
+      var page = dialogPageEl(prefix, t);
+      if (!page) return;
+      page.classList.toggle('active', on && t === currentDialogTab(prefix));
+      if (on && t === currentDialogTab(prefix)) page.removeAttribute('hidden');
+      else page.setAttribute('hidden', '');
+    });
+  }
+  function currentDialogTab(prefix) {
+    for (var i = 0; i < DIALOG_TABS.length; i++) {
+      var btn = dialogTabEl(prefix, DIALOG_TABS[i]);
+      if (btn && btn.classList.contains('active')) return DIALOG_TABS[i];
+    }
+    return 'display';
+  }
+  function bindDialogTabs(prefix, onSwitch) {
+    DIALOG_TABS.forEach(function (t) {
+      var btn = dialogTabEl(prefix, t);
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        showDialogTab(prefix, t);
+        if (typeof onSwitch === 'function') onSwitch(t);
+      });
+      btn.addEventListener('keydown', function (ev) {
+        if (ev.key !== 'ArrowRight' && ev.key !== 'ArrowLeft') return;
+        var i = DIALOG_TABS.indexOf(t);
+        var next = DIALOG_TABS[(i + (ev.key === 'ArrowRight' ? 1 : DIALOG_TABS.length - 1)) % DIALOG_TABS.length];
+        ev.preventDefault();
+        var nextBtn = dialogTabEl(prefix, next);
+        if (nextBtn) { nextBtn.focus(); nextBtn.click(); }
+      });
+    });
+  }
+  function setTabDirty(prefix, name, dirty) {
+    var btn = dialogTabEl(prefix, name);
+    if (btn) btn.classList.toggle('dirty', !!dirty);
+  }
+  function clearDialogDirty(prefix) {
+    DIALOG_TABS.forEach(function (t) { setTabDirty(prefix, t, false); });
+  }
+  function setNote(id, text) { var node = el(id); if (node && typeof text === 'string') node.textContent = text.replace(/[。.]\s*$/, ''); }
+  // 功能页静态说明（默认文案）在打开时记住，切回页签/未点击具体项时复位。
+  var PARAM_FEATURE_NOTE_DEFAULT = el('param-note-feature') ? el('param-note-feature').textContent : '';
+  var APPSET_FEATURE_NOTE_DEFAULT = el('appset-note-feature') ? el('appset-note-feature').textContent : '';
+
   // ---------- 应用窗口设置浮窗（二期 Step 4/5：虚拟屏参数——每应用有线/无线两套） ----------
   // 与参数浮窗（param-modal）同构：四栏档位（分辨率/刷新率/码率/界面密度）+ 每栏重置 +
   // ＋自定义；开关=窗口跟随/静音；「保存并重新投屏」=写档案 + 重启会话（生效）。
@@ -1687,13 +2006,13 @@
   // 短边按设备宽高比由后端换算（mdns10ProfileRes；虚拟屏注入仍是完整 WxH）。
   var APPSET_FIELDS = {
     size: { label: '分辨率档', unit: '', fixed: [2560, 1920, 1080] },
-    fps: { label: '刷新率上限', unit: ' fps', fixed: [120, 90, 60] },
+    fps: { label: '帧率上限', unit: ' FPS', fixed: [120, 90, 60] },
     bit: { label: '码率上限', unit: ' Mbps', fixed: [32, 16, 8, 4] },
     dpi: { label: '界面密度', unit: '', isDpi: true, fixed: [160, 240, 320, 480] }
   };
   var APPSET_NOTES = {
     size: '分辨率说明：长边由档位/自定义值决定；比例框留空时跟随设备，填写宽 × 高后按该比例计算短边。开启「窗口跟随」后，调整窗口大小会同步改变分辨率',
-    fps: '刷新率说明：虚拟屏会话的实际传输帧数上限；画面静止时降频属系统省电行为',
+    fps: '帧率说明：虚拟屏会话的传输帧数上限；画面静止时降频属系统省电行为',
     bit: '码率说明：画面码率上限，越大越清晰、占用带宽越高；无线下建议低档',
     dpi: '界面密度说明：数值越大，字和图标越大、一屏显示的内容越少；「自动」按设备屏幕等比适配',
     audio: '声音说明：手机＝只在手机出声（不传输到电脑）；电脑＝只在电脑出声（手机静音；手机音量键同步控制投屏音量）；两边＝电脑与手机同时出声（需 Android 13+；两边音量相互独立——投屏音量请用电脑调）',
@@ -1703,71 +2022,228 @@
   var APPSET_ORDER = ['size', 'fps', 'bit', 'dpi'];
   var appSetState = null; // {serial,pkg,name,mode,flex,mute,activeField,physDpi,physLong,tiers,fields}
 
+  // rc23-UI1：应用窗口设置的三页签脏标记。
+  // 只比较“草稿 vs 打开时快照”；改回原值/清空自定义/重置回档 → 角标自动消失。
+  function appsetEffectiveField(f) {
+    if (!appSetState) return 0;
+    var st = appSetState.fields[f];
+    if (!st) return 0;
+    var raw = String(st.input == null ? '' : st.input).trim();
+    if (st.edit && raw !== '' && /^\d+$/.test(raw)) return +raw;
+    return st.val;
+  }
+  function snapshotAppSetState() {
+    if (!appSetState) return null;
+    return {
+      size: appsetEffectiveField('size'), fps: appsetEffectiveField('fps'),
+      bit: appsetEffectiveField('bit'), dpi: appsetEffectiveField('dpi'),
+      ratioW: appSetState.ratioW, ratioH: appSetState.ratioH,
+      flex: !!appSetState.flex, perspective: !!appSetState.perspective,
+      perspectiveInputFps: appSetState.perspectiveInputFps,
+      audio: appSetState.audio,
+      vcodec: appSetState.vcodec, ownVCodec: !!appSetState.ownVCodec,
+      acodec: appSetState.acodec, ownACodec: !!appSetState.ownACodec,
+      lockFps: !!appSetState.lockFps, lockBitrate: !!appSetState.lockBitrate
+    };
+  }
+  function updateAppsetDirtyTabs() {
+    if (!appSetState || !appSetState.initial) return;
+    var s = appSetState, i = s.initial;
+    var touch = s.touched || {};
+    setTabDirty('appset', 'display', !!touch.display &&
+      (appsetEffectiveField('size') !== i.size || appsetEffectiveField('fps') !== i.fps ||
+      appsetEffectiveField('bit') !== i.bit || appsetEffectiveField('dpi') !== i.dpi ||
+      (s.ratioW || '') !== (i.ratioW || '') || (s.ratioH || '') !== (i.ratioH || '') ||
+      s.vcodec !== i.vcodec || !!s.ownVCodec !== i.ownVCodec ||
+      !!s.lockFps !== i.lockFps || !!s.lockBitrate !== i.lockBitrate));
+    setTabDirty('appset', 'audio', !!touch.audio &&
+      (s.audio !== i.audio || s.acodec !== i.acodec || !!s.ownACodec !== i.ownACodec));
+    setTabDirty('appset', 'feature', !!touch.feature &&
+      (!!s.flex !== i.flex || !!s.perspective !== i.perspective ||
+      s.perspectiveInputFps !== i.perspectiveInputFps));
+  }
+  function resetAppsetPageNote(name) {
+    if (name === 'display') setNote('appset-note-display', APPSET_NOTES.size);
+    else if (name === 'audio') setNote('appset-note-audio', APPSET_NOTES.audio);
+    else setNote('appset-note-feature', APPSET_FEATURE_NOTE_DEFAULT);
+  }
+  bindDialogTabs('appset', resetAppsetPageNote);
+
+  // applyAppSetParams：从 GetAppWinParams 响应构造 appSetState（首次打开与连接方式切换共用）。
+  // opts.keepTab=true 时保留当前页签（连接切换原地刷新）；否则回画面页。
+  function applyAppSetParams(serial, pkg, v, opts) {
+    opts = opts || {};
+    var prev = appSetState;
+    var mode = (v && v.mode === 'wifi') ? 'wifi' : 'usb';
+    var cur = (v && (mode === 'wifi' ? v.wifi : v.usb)) || {};
+    var defRaw = (v && (mode === 'wifi' ? v.wifiDef : v.usbDef)) || {};
+    var isSet = mode === 'wifi' ? !!(v && v.wifiSet) : !!(v && v.usbSet);
+    // 设备默认档（v2.1.48 共享主投屏规格；缺失回退 1280/60/8；dpi 恒「自动」）。
+    // v2.1.74：size=长边数字（后端已归一化；parseInt 顺带兼容旧 WxH 文本）。
+    var def = {
+      size: parseInt(defRaw.size, 10) || 1280,
+      fps: mode === 'wifi' ? 60 : (defRaw.fps || 60),
+      bit: defRaw.bitrate || 8,
+      dpi: 0
+    };
+    var nativeFPS = (v && v.usbDef && v.usbDef.fps) || def.fps;
+    var tiers = {
+      size: nativeTiers(APPSET_FIELDS.size.fixed, def.size),
+      fps: frameRateTiers(APPSET_FIELDS.fps.fixed, nativeFPS, mode),
+      bit: SCEZAppSetState.buildTiers(def.bit, APPSET_FIELDS.bit.fixed),
+      // dpi：「自动」（0）恒排最左，其后固定档降序（与「默认档在最左」的既有习惯一致）。
+      dpi: [0].concat(SCEZAppSetState.buildTiers(null, APPSET_FIELDS.dpi.fixed))
+    };
+    function field(f) {
+      var val = f === 'size' ? (parseInt(cur.size, 10) || def.size)
+        : (f === 'fps' ? (cur.fps || def.fps)
+        : (f === 'bit' ? (cur.bitrate || def.bit) : (cur.dpi || 0)));
+      return SCEZAppSetState.infer({ val: val, base: def[f], custom: isSet, edit: false, input: '' }, tiers[f]);
+    }
+    appSetState = {
+      serial: serial, pkg: pkg,
+      name: opts.name || (prev && prev.name) || pkg,
+      identity: (v && v.identity) || (prev && prev.identity) || serial,
+      mode: mode, nativeFPS: nativeFPS,
+      ratioW: cur.ratioW ? String(cur.ratioW) : '',
+      ratioH: cur.ratioH ? String(cur.ratioH) : '',
+      flex: cur.flex === undefined ? true : !!cur.flex,
+      audio: cur.audio || 'phone',
+      perspective: !!cur.perspective,
+      perspectiveInputFps: [0.5, 1, 6, 10].indexOf(cur.perspectiveInputFps) >= 0 ? cur.perspectiveInputFps : 6,
+      // v2.1.95：编码格式（当前形态；显示生效值——应用级 ?? 设备级 ?? 默认）。
+      // own 语义：应用级已有值 或 本次点过 chip → 保存时固化；否则保存发空 =
+      // 保持未设置（重启时跟随设备档案；避免动其它参数时隐性固化编码）。
+      vcodec: (mode === 'wifi' ? v.wifiVCodec : v.usbVCodec) || 'h264',
+      acodec: (mode === 'wifi' ? v.wifiACodec : v.usbACodec) || 'opus',
+      ownVCodec: !!cur.vcodec,
+      ownACodec: !!cur.acodec,
+      // v2.1.80：ABR 锁定（当前形态那套的开关状态）
+      lockFps: !!cur.lockFps,
+      lockBitrate: !!cur.lockBitrate,
+      activeField: 'size',
+      tiers: tiers,
+      physDpi: (v && v.physDpi) || 0,
+      physLong: (v && v.physLong) || 0,
+      fields: { size: field('size'), fps: field('fps'), bit: field('bit'), dpi: field('dpi') }
+    };
+    appSetState.initial = snapshotAppSetState();
+    appSetState.touched = { display: false, audio: false, feature: false };
+    renderAppSetModal();
+    showDialogTab('appset', opts.keepTab ? currentDialogTab('appset') : 'display');
+    clearDialogDirty('appset');
+    updateAppsetDirtyTabs();
+    return appSetState;
+  }
+
   // openAppSetModal：打开窗口设置浮窗（拉档案 → 按当前形态那套初始化）。
   function openAppSetModal(serial, pkg) {
     var name = pkg;
     (openAppCards[serial] || []).forEach(function (a) { if (a.pkg === pkg) name = a.name || pkg; });
     if (typeof window.GetAppWinParams !== 'function') return;
+    ++appsetOpenToken;
     window.GetAppWinParams(serial, pkg).then(function (v) {
-      var mode = (v && v.mode === 'wifi') ? 'wifi' : 'usb';
-      var cur = (v && (mode === 'wifi' ? v.wifi : v.usb)) || {};
-      var defRaw = (v && (mode === 'wifi' ? v.wifiDef : v.usbDef)) || {};
-      var isSet = mode === 'wifi' ? !!(v && v.wifiSet) : !!(v && v.usbSet);
-      // 设备默认档（v2.1.48 共享主投屏规格；缺失回退 1280/60/8；dpi 恒「自动」）。
-      // v2.1.74：size=长边数字（后端已归一化；parseInt 顺带兼容旧 WxH 文本）。
-      var def = {
-        size: parseInt(defRaw.size, 10) || 1280,
-        fps: mode === 'wifi' ? 60 : (defRaw.fps || 60),
-        bit: defRaw.bitrate || 8,
-        dpi: 0
-      };
-      var nativeFPS = (v && v.usbDef && v.usbDef.fps) || def.fps;
-      var tiers = {
-        size: nativeTiers(APPSET_FIELDS.size.fixed, def.size),
-        fps: frameRateTiers(APPSET_FIELDS.fps.fixed, nativeFPS, mode),
-        bit: SCEZAppSetState.buildTiers(def.bit, APPSET_FIELDS.bit.fixed),
-        // dpi：「自动」（0）恒排最左，其后固定档降序（与「默认档在最左」的既有习惯一致）。
-        dpi: [0].concat(SCEZAppSetState.buildTiers(null, APPSET_FIELDS.dpi.fixed))
-      };
-      function field(f) {
-        var val = f === 'size' ? (parseInt(cur.size, 10) || def.size)
-          : (f === 'fps' ? (cur.fps || def.fps)
-          : (f === 'bit' ? (cur.bitrate || def.bit) : (cur.dpi || 0)));
-        return SCEZAppSetState.infer({ val: val, base: def[f], custom: isSet, edit: false, input: '' }, tiers[f]);
-      }
-      appSetState = {
-        serial: serial, pkg: pkg, name: name, mode: mode, nativeFPS: nativeFPS,
-        ratioW: cur.ratioW ? String(cur.ratioW) : '',
-        ratioH: cur.ratioH ? String(cur.ratioH) : '',
-        flex: cur.flex === undefined ? true : !!cur.flex,
-        audio: cur.audio || 'phone',
-        // v2.1.95：编码格式（当前形态；显示生效值——应用级 ?? 设备级 ?? 默认）。
-        // own 语义：应用级已有值 或 本次点过 chip → 保存时固化；否则保存发空 =
-        // 保持未设置（重启时跟随设备档案；避免动其它参数时隐性固化编码）。
-        vcodec: (mode === 'wifi' ? v.wifiVCodec : v.usbVCodec) || 'h264',
-        acodec: (mode === 'wifi' ? v.wifiACodec : v.usbACodec) || 'opus',
-        ownVCodec: !!cur.vcodec,
-        ownACodec: !!cur.acodec,
-        // v2.1.80：ABR 锁定（当前形态那套的开关状态）
-        lockFps: !!cur.lockFps,
-        lockBitrate: !!cur.lockBitrate,
-        activeField: 'size',
-        tiers: tiers,
-        physDpi: (v && v.physDpi) || 0,
-        physLong: (v && v.physLong) || 0,
-        fields: { size: field('size'), fps: field('fps'), bit: field('bit'), dpi: field('dpi') }
-      };
-      renderAppSetModal();
+      applyAppSetParams(serial, pkg, v, { name: name, keepTab: false });
       var m = el('appset-modal');
       m.style.display = '';
       // 淡入（同应用面板浮窗：移除→强制 reflow→加回，保证每次打开都重播）
       m.classList.remove('fade-in');
       void m.offsetWidth;
       m.classList.add('fade-in');
-      watchNativeDefaults(v.identity || serial, appSetState, true);
+      watchNativeDefaults((v && v.identity) || serial, appSetState, true);
     }).catch(function (e) {
       toast('读取窗口设置失败：' + (e && e.message ? e.message : e));
     });
+  }
+
+  // ---------- rc23-UI1：应用窗口设置跟随有线/无线切换（与主投屏 syncSpecModal 同构） ----------
+  // 弹窗打开期间，设备连接方式变化 → 140ms 淡出 → 按新模式重新拉取该应用的窗口参数 → 淡入。
+  var appsetTransition = null;
+  var appsetOpenToken = 0;
+  function clearAppSetTransition() {
+    if (appsetTransition) clearTimeout(appsetTransition.timer);
+    appsetTransition = null;
+    var card = el('appset-card');
+    if (!card) return;
+    card.inert = false;
+    card.classList.remove('param-mode-out', 'param-mode-busy');
+  }
+  function currentSerialForIdentity(st, identity, fallback) {
+    var sessions = (st && st.sessions) || [];
+    var ss = sessions.filter(function (s) { return identity && s.identity === identity; })[0];
+    if (ss && ss.serial) return ss.serial;
+    var devices = (st && st.devices) || [];
+    var dev = devices.filter(function (d) { return identity && d.identity === identity; })[0];
+    if (dev) return (dev.connType === 'wifi' && dev.wireless) ? dev.wireless : (dev.serial || dev.wireless || fallback);
+    return fallback;
+  }
+  function syncAppSetModal(st) {
+    if (!appSetState || el('appset-modal').style.display === 'none') return;
+    var state = appSetState;
+    var info = specContext(st, state.serial, state.identity);
+    if (info.conflict) {
+      clearAppSetTransition();
+      clearDialogDirty('appset');
+      el('appset-modal').style.display = 'none';
+      appSetState = null;
+      toast('设备身份已变化，请重新打开窗口设置');
+      return;
+    }
+    if (!info.mode) return;
+    if (appsetTransition && appsetTransition.state === state) {
+      appsetTransition.mode = info.mode;
+      if (appsetTransition.phase === 'out' || info.mode === state.mode) return;
+      clearAppSetTransition();
+    }
+    if (info.mode === state.mode) {
+      el('appset-mode').textContent = state.mode === 'usb' ? '有线参数' : '无线参数';
+      return;
+    }
+    // 记录新模式的目标会话序列号（有线/无线可能是不同 serial）。
+    var targetSerial = currentSerialForIdentity(st, state.identity, state.serial);
+    var focused = document.activeElement;
+    if (focused && el('appset-modal').contains(focused) && typeof focused.blur === 'function') focused.blur();
+    var slider = el('appset-audio');
+    if (slider && slider.__cancelAudioDrag) slider.__cancelAudioDrag();
+    var token = ++appsetOpenToken;
+    var task = { state: state, mode: info.mode, serial: targetSerial, phase: 'out', timer: null };
+    appsetTransition = task;
+    el('appset-save').disabled = true;
+    el('appset-card').inert = true;
+    el('appset-card').classList.add('param-mode-busy', 'param-mode-out');
+    var duration = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 140;
+    task.timer = setTimeout(function () {
+      if (appsetTransition !== task || appSetState !== state || el('appset-modal').style.display === 'none') return;
+      task.phase = 'in';
+      if (typeof window.GetAppWinParams !== 'function') { clearAppSetTransition(); return; }
+      // 目标 serial 找不到应用窗口时回退旧 serial；v.Mode 由 appWins 决定，旧窗口可能仍报旧模式，
+      // 这里按当前连接方式（task.mode）强制选套，保证胶囊/参数跟随真实连接。
+      var fetchParams = function (sr) { return window.GetAppWinParams(sr, state.pkg); };
+      fetchParams(task.serial).catch(function (err) {
+        if (task.serial !== state.serial) return fetchParams(state.serial);
+        throw err;
+      }).then(function (v) {
+        if (token !== appsetOpenToken || appsetTransition !== task || appSetState !== state ||
+            el('appset-modal').style.display === 'none') return;
+        if (v && (task.mode === 'usb' || task.mode === 'wifi') && v.mode !== task.mode) {
+          v = Object.assign({}, v, { mode: task.mode });
+        }
+        applyAppSetParams(task.serial, state.pkg, v, { name: state.name, keepTab: true });
+        el('appset-card').classList.remove('param-mode-out');
+        task.timer = setTimeout(function () {
+          if (appsetTransition !== task) return;
+          clearAppSetTransition();
+          el('appset-save').disabled = false;
+          if (appSetState) watchNativeDefaults(appSetState.serial, appSetState, true);
+        }, duration);
+      }).catch(function (e) {
+        if (appsetTransition !== task) return;
+        el('appset-card').classList.remove('param-mode-out');
+        clearAppSetTransition();
+        el('appset-save').disabled = false;
+        toast('读取窗口设置失败：' + (e && e.message ? e.message : e));
+      });
+    }, duration);
   }
 
   // setSwitchNode：绿/灰滑块开关渲染（同主设置面板 setSwitch 模式）。
@@ -1780,12 +2256,18 @@
   function renderAppSetModal() {
     if (!appSetState) return;
     var modeName = appSetState.mode === 'usb' ? '有线参数' : '无线参数';
-    el('appset-title').textContent = appSetState.name + ' · 窗口设置 · ' + modeName;
+    el('appset-title').textContent = appSetState.name + ' · 窗口设置';
+    el('appset-mode').textContent = modeName;
     setSwitchNode(el('appset-flex'), appSetState.flex);
+    setSwitchNode(el('appset-perspective'), appSetState.perspective);
+    el('appset-perspective-fps').value = String(appSetState.perspectiveInputFps);
+    el('appset-perspective-fps-row').style.display = appSetState.perspective ? '' : 'none';
     renderAudioSlider(el('appset-audio'), appSetState.audio);
     el('appset-audio-note').textContent = audioNote(appSetState.audio);
+    el('appset-audio-label').innerHTML = '声音输出 (<b>' + SCEZ_AUDIO_LABELS[appSetState.audio] + '</b>)';
     renderAppSetRows();
     updateAppsetCodecRows(); // v2.1.95：编码行刷新（静态行在 #appset-rows 外）
+    updateAppsetDirtyTabs();
   }
 
   function closeAppSetRatioError() { el('appset-ratio-error-modal').style.display = 'none'; }
@@ -1804,12 +2286,14 @@
     el('appset-vcodec-label').innerHTML = '视频编码 (<b>' + fmtVCodec(v) + '</b>)';
     el('appset-acodec-label').innerHTML = '音频编码 (<b>' + fmtACodec(a) + '</b>)';
     renderCodecChips('appset-vcodec-chips', VCODEC_OPTS, v, function (nv) {
+      appSetState.touched.display = true;
       appSetState.vcodec = nv;
       appSetState.ownVCodec = true;
       appSetState.activeField = 'vcodec'; // 联动底部说明区
       renderAppSetModal();
     }, fmtVCodec);
     renderCodecChips('appset-acodec-chips', ACODEC_OPTS, a, function (na) {
+      appSetState.touched.audio = true;
       appSetState.acodec = na;
       appSetState.ownACodec = true;
       appSetState.activeField = 'acodec'; // 联动底部说明区
@@ -1881,6 +2365,7 @@
         c.className = 'chip' + (st.val === t ? ' sel' : '');
         c.textContent = (fd.isDpi && t === 0) ? '自动' : String(t);
         c.addEventListener('click', function () {
+          appSetState.touched.display = true;
           appSetState.fields[f] = SCEZAppSetState.clickTier(appSetState.fields[f], t);
           renderAppSetModal();
         });
@@ -1895,9 +2380,12 @@
         inp.placeholder = '输入后生效';
         inp.value = st.input;
         inp.addEventListener('input', function () {
+          appSetState.touched.display = true;
           appSetState.fields[f] = SCEZAppSetState.typeCustom(appSetState.fields[f], inp.value);
+          updateAppsetDirtyTabs();
         });
         inp.addEventListener('change', function () {
+          appSetState.touched.display = true;
           appSetState.fields[f] = SCEZAppSetState.commitCustom(appSetState.fields[f], inp.value);
           renderAppSetModal();
         });
@@ -1907,6 +2395,7 @@
         cb.className = 'chip dashed';
         cb.textContent = '＋自定义';
         cb.addEventListener('click', function () {
+          appSetState.touched.display = true;
           appSetState.fields[f] = SCEZAppSetState.startCustom(appSetState.fields[f]);
           renderAppSetModal();
         });
@@ -1924,7 +2413,7 @@
         ratioW.placeholder = '宽';
         ratioW.setAttribute('aria-label', '比例宽');
         ratioW.value = appSetState.ratioW;
-        ratioW.addEventListener('input', function () { appSetState.ratioW = ratioW.value; });
+        ratioW.addEventListener('input', function () { appSetState.touched.display = true; appSetState.ratioW = ratioW.value; updateAppsetDirtyTabs(); });
         var ratioX = document.createElement('span');
         ratioX.className = 'appset-ratio-times';
         ratioX.textContent = '×';
@@ -1936,7 +2425,7 @@
         ratioH.placeholder = '高';
         ratioH.setAttribute('aria-label', '比例高');
         ratioH.value = appSetState.ratioH;
-        ratioH.addEventListener('input', function () { appSetState.ratioH = ratioH.value; });
+        ratioH.addEventListener('input', function () { appSetState.touched.display = true; appSetState.ratioH = ratioH.value; updateAppsetDirtyTabs(); });
         ratioPair.appendChild(ratioW);
         ratioPair.appendChild(ratioX);
         ratioPair.appendChild(ratioH);
@@ -1944,12 +2433,13 @@
       }
       row.addEventListener('click', function () {
         appSetState.activeField = f;
-        el('appset-note').textContent = APPSET_NOTES[f];
+        setNote('appset-note-display', APPSET_NOTES[f]);
       });
       var lockBtn = row.querySelector('.param-lock');
       if (lockBtn) {
         lockBtn.addEventListener('click', function (ev) {
           ev.stopPropagation();
+          appSetState.touched.display = true;
           // 锁定切换（独立于值；保存时随 payload 落档）
           if (f === 'fps') {
             appSetState.lockFps = !appSetState.lockFps;
@@ -1966,6 +2456,7 @@
         void btn.offsetWidth; // 重启动画
         btn.classList.add('flash');
         setTimeout(function () { btn.classList.remove('flash'); }, 220);
+        appSetState.touched.display = true;
         if (f === 'size') {
           var reset = SCEZAppSetState.resetSizeAndRatio(appSetState.fields.size);
           appSetState.fields.size = reset.size;
@@ -1978,64 +2469,108 @@
       });
       box.appendChild(row);
     });
-    el('appset-note').textContent = APPSET_NOTES[appSetState.activeField || 'size'];
+    var af = appSetState.activeField;
+    setNote('appset-note-display', APPSET_NOTES[APPSET_ORDER.indexOf(af) >= 0 ? af : 'size']);
   }
 
-  // v2.1.95：编码行点击 → 底部说明栏（照抄主弹窗 param-vcodec-row 绑定模式）。
+  // v2.1.95：编码行点击 → 底部说明栏（三页签版：视频编码在画面页，音频编码在声音页）。
   el('appset-vcodec-row').addEventListener('click', function () {
     if (!appSetState) return;
     appSetState.activeField = 'vcodec';
-    el('appset-note').textContent = APPSET_NOTES.vcodec;
+    setNote('appset-note-display', APPSET_NOTES.vcodec);
   });
   el('appset-acodec-row').addEventListener('click', function () {
     if (!appSetState) return;
     appSetState.activeField = 'acodec';
-    el('appset-note').textContent = APPSET_NOTES.acodec;
+    setNote('appset-note-audio', APPSET_NOTES.acodec);
   });
-  // 浮窗交互（顶层绑定；同参数浮窗模式）：✕ / 取消 / 点遮罩关闭。
-  el('appset-close').addEventListener('click', function () { el('appset-modal').style.display = 'none'; });
-  el('appset-cancel').addEventListener('click', function () { el('appset-modal').style.display = 'none'; });
+  // 功能页：点击开关行 / 子项 → 本页唯一说明框显示该项具体解释（rc23-UI1）。
+  function showAppsetFeatureNote(row) {
+    var note = row.getAttribute('data-note');
+    if (note) setNote('appset-note-feature', note);
+  }
+  ['appset-flex-row', 'appset-perspective-row', 'appset-perspective-fps-row'].forEach(function (id) {
+    var row = el(id);
+    if (!row) return;
+    row.addEventListener('click', function () { showAppsetFeatureNote(row); });
+    row.addEventListener('focusin', function () { showAppsetFeatureNote(row); });
+  });
+  // 浮窗交互（顶层绑定；同参数浮窗模式）：✕ / 取消 / 点遮罩关闭（丢弃全部页签草稿）。
+  function closeAppSetDialog() {
+    ++appsetOpenToken;
+    clearAppSetTransition();
+    clearDialogDirty('appset');
+    el('appset-modal').style.display = 'none';
+    appSetState = null;
+  }
+  el('appset-close').addEventListener('click', closeAppSetDialog);
+  el('appset-cancel').addEventListener('click', closeAppSetDialog);
   el('appset-modal').addEventListener('click', function (ev) {
-    if (ev.target === el('appset-modal')) el('appset-modal').style.display = 'none';
+    if (ev.target === el('appset-modal')) closeAppSetDialog();
   });
   // 开关：本地翻转 + 即渲染（保存时提交）。声音滑条同：变更即渲染（保存时提交）。
+  el('appset-perspective-fps').addEventListener('change', function () {
+    if (appSetState) {
+      appSetState.touched.feature = true;
+      appSetState.perspectiveInputFps = Number(this.value);
+    }
+    updateAppsetDirtyTabs();
+  });
+  function togglePerspective() {
+    if (!appSetState) return;
+    appSetState.touched.feature = true;
+    appSetState.perspective = !appSetState.perspective; renderAppSetModal();
+  }
+  el('appset-perspective').addEventListener('click', togglePerspective);
+  el('appset-perspective').addEventListener('keydown', function (event) {
+    if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); togglePerspective(); }
+  });
   el('appset-flex').addEventListener('click', function () {
     if (!appSetState) return;
+    appSetState.touched.feature = true;
     appSetState.flex = !appSetState.flex;
     renderAppSetModal();
   });
   bindAudioSlider(el('appset-audio'), function (v) {
     if (!appSetState) return;
+    appSetState.touched.audio = true;
     appSetState.audio = v;
     // 只刷声音行（滑条高亮/说明）——不重建面板（拖动流畅；与 param 侧同模式）
     renderAudioSlider(el('appset-audio'), appSetState.audio);
     el('appset-audio-note').textContent = audioNote(appSetState.audio);
+    el('appset-audio-label').innerHTML = '声音输出 (<b>' + SCEZ_AUDIO_LABELS[appSetState.audio] + '</b>)';
+    updateAppsetDirtyTabs();
   });
   // v2.1.78：点声音行 → 底部说明栏显示声音说明（含音量联动差异；同其它栏位交互）。
   el('appset-audio-row').addEventListener('click', function () {
     if (!appSetState) return;
     appSetState.activeField = 'audio';
-    el('appset-note').textContent = APPSET_NOTES.audio;
+    setNote('appset-note-audio', APPSET_NOTES.audio);
   });
   // v2.1.96：编码/声音行「重置」——跳默认初始值（H.264 / Opus / 手机）；
   // 编码重置=明确设置默认值（own=true，保存后固化，重开弹窗显示一致）。
   bindResetFlash('appset-vcodec-reset', function () {
     if (!appSetState) return;
+    appSetState.touched.display = true;
     appSetState.vcodec = 'h264';
     appSetState.ownVCodec = true;
     renderAppSetModal();
   });
   bindResetFlash('appset-acodec-reset', function () {
     if (!appSetState) return;
+    appSetState.touched.audio = true;
     appSetState.acodec = 'opus';
     appSetState.ownACodec = true;
     renderAppSetModal();
   });
   bindResetFlash('appset-audio-reset', function () {
     if (!appSetState) return;
+    appSetState.touched.audio = true;
     appSetState.audio = 'phone';
     renderAudioSlider(el('appset-audio'), appSetState.audio);
     el('appset-audio-note').textContent = audioNote(appSetState.audio);
+    el('appset-audio-label').innerHTML = '声音输出 (<b>' + SCEZ_AUDIO_LABELS[appSetState.audio] + '</b>)';
+    updateAppsetDirtyTabs();
   });
   // v2.1.74（主人拍板）：底部「恢复默认」按钮已删——每栏有独立「重置」，冗余。
   // 保存并重新投屏：结算四栏 + 开关 → 写档案 + 重启会话（立即反馈：先关面板+提示）。
@@ -2050,8 +2585,11 @@
     if (!ratio.ok) {
       el('appset-ratio-error-title').textContent = ratio.reason === 'incomplete' ? '初始比例未输入完成' : '初始比例不合法';
       el('appset-ratio-error-message').textContent = ratio.reason === 'incomplete'
-        ? '宽和高需要同时填写，请补全两个输入框。'
-        : '宽和高须为 1–10000 的正整数。请修改后再保存。';
+        ? '宽和高需要同时填写，请补全两个输入框'
+        : '宽和高须为 1–10000 的正整数。请修改后再保存';
+      // rc23-UI1：比例输入在画面页，出错时自动切回画面页再弹提示。
+      showDialogTab('appset', 'display');
+      resetAppsetPageNote('display');
       el('appset-ratio-error-modal').style.display = '';
       return;
     }
@@ -2059,14 +2597,18 @@
     var payload = JSON.stringify({
       mode: s.mode, size: String(rSize.value), fps: rFps.value, bitrate: rBit.value,
       ratioW: ratio.width, ratioH: ratio.height,
-      dpi: rDpi.value, flex: s.flex, audio: s.audio,
+      dpi: rDpi.value, flex: s.flex, audio: s.audio, perspective: !!s.perspective, perspectiveInputFps: s.perspectiveInputFps,
       lockFps: !!s.lockFps, lockBitrate: !!s.lockBitrate,
       // v2.1.95：编码（未持有且未改动 → 空 = 保持继承设备档案；否则固化当前值）
       vcodec: s.ownVCodec ? s.vcodec : '',
       acodec: s.ownACodec ? s.acodec : ''
     });
+    clearDialogDirty('appset');
+    ++appsetOpenToken;
+    clearAppSetTransition();
     el('appset-modal').style.display = 'none';
-    toast('已保存，正在重新投屏…');
+    appSetState = null;
+    toast('正在应用设置…');
     if (typeof window.SaveAppWinParams !== 'function') return;
     window.SaveAppWinParams(s.serial, s.pkg, payload).then(function () {
       refreshNow();
@@ -2084,7 +2626,7 @@
     if (had.length === 0) return;
     had.forEach(function (serial) {
       // v2.1.19：已添加应用卡片的设备=用户已完成选择 → 蓝灯保留（不再算"未选任何应用"）
-      if ((openAppCards[serial] || []).length > 0) return;
+      if (appCardsForDevice(logPaneDeviceKey(serial)).length > 0 || hasRecentCastLogs(serial, lastState) || appWins[serial].logFadeTimer) return;
       var w = appWins[serial];
       if (w.tab && w.tab.parentNode) w.tab.parentNode.removeChild(w.tab);
       if (w.pane && w.pane.parentNode) w.pane.parentNode.removeChild(w.pane);
@@ -2105,7 +2647,7 @@
       var w = appWins[serial];
       if (!w || (!w.tab && !w.pane)) return;              // 收编态/无页 → 不动
       if (sessions[serial]) return;                       // 有会话 → 不动
-      if ((openAppCards[serial] || []).length > 0) return; // 有卡片 → 保留
+      if (appCardsForDevice(logPaneDeviceKey(serial)).length > 0 || hasRecentCastLogs(serial, lastState) || w.logFadeTimer) return;
       if (w.tab && w.tab.parentNode) w.tab.parentNode.removeChild(w.tab);
       if (w.pane && w.pane.parentNode) w.pane.parentNode.removeChild(w.pane);
       delete appWins[serial];
@@ -2127,7 +2669,7 @@
     var w = wk ? appWins[wk] : null;
     if (!w || (!w.tab && !w.pane)) return;                // 收编态/无页 → 不动
     if (sessionKeyOf(wk)) return;                         // 有会话 → 不动
-    if ((openAppCards[dataKey] || []).length > 0) return; // 还有卡片 → 保留
+    if (appCardsForDevice(logPaneDeviceKey(wk || dataKey)).length > 0 || hasRecentCastLogs(wk, lastState) || w.logFadeTimer) return;
     if (w.tab && w.tab.parentNode) w.tab.parentNode.removeChild(w.tab);
     if (w.pane && w.pane.parentNode) w.pane.parentNode.removeChild(w.pane);
     delete appWins[wk];
@@ -2140,7 +2682,7 @@
     if (!serial) return false;
     // v2.1.52：同设备多形态键——会话/数据都经身份归一再判定。
     if (sessions[serial] || sessionKeyOf(serial)) return true;
-    if ((openAppCards[appKeyOf(serial)] || []).length > 0) return true;
+    if (appCardsForDevice(logPaneDeviceKey(serial)).length > 0 || hasRecentCastLogs(serial, lastState)) return true;
     return false;
   }
 
@@ -2159,6 +2701,7 @@
         if (!pick && castHasContent(k)) pick = k;
       });
     }
+    if (!pick) pick = Object.keys(appWins).find(function (k) { return appWins[k].pane && hasRecentCastLogs(k, lastState); });
     if (!pick) {
       activeSerial = null;
       updateTabs();
@@ -2423,10 +2966,11 @@
         // 乐观加卡（立即可见）；启动失败回滚卡片并提示。
         closeAppWinModal();
         if (!addOpenAppCard(serial, a.pkg, a.name || a.pkg)) return; // 已在运行=去重
+        var openedCard = (openAppCards[serial] || []).find(function (card) { return card.pkg === a.pkg; });
         if (typeof window.StartAppWin === 'function') {
           window.StartAppWin(serial, a.pkg, a.name || a.pkg).catch(function (e) {
             toast('打开失败：' + (e && e.message ? e.message : e));
-            removeOpenAppCard(serial, a.pkg);
+            if ((openAppCards[serial] || []).indexOf(openedCard) >= 0) removeOpenAppCard(serial, a.pkg);
           });
         }
       });
@@ -2537,6 +3081,8 @@
     var upKey = findAppKeyFor(serial, info && info.identity);
     var upW = upKey ? appWins[upKey] : null;
     if (upW && upW.tab && upW.pane) {
+      cancelLogPaneFade(upW);
+      upW.recentLogPane = false;
       var upTab = upW.tab;
       var upPane = upW.pane;
       var dot0 = upTab.querySelector('.casttab-dot');
@@ -2679,6 +3225,7 @@
     Object.keys(openAppCards).forEach(function (k) {
       if (!pick && (openAppCards[k] || []).length > 0) pick = k;
     });
+    if (!pick) pick = Object.keys(appWins).find(function (k) { return appWins[k].pane && hasRecentCastLogs(k, lastState); });
     if (pick) {
       if (!(appWins[pick] && appWins[pick].pane)) {
         ensureAppWinPane(pick); // 蓝灯页未建（如会话收编态刚退场）→ 先建页再激活
@@ -2750,7 +3297,9 @@
     // 凭空出现，观感是"整页淡出再淡入"；主人实测）。
     // v2.1.52：数据键归一（同设备多形态：卡片数据键可能≠会话键）。
     var dataKey = appKeyOf(s.serial);
-    var keepAsAppWin = (openAppCards[dataKey] || []).length > 0;
+    var deviceKey = logPaneDeviceKey(s.serial);
+    var keepAsAppWin = !otherActiveMainCast(s.serial, lastState) &&
+      (appCardsForDevice(deviceKey).length > 0 || hasRecentCastLogs(s.serial, lastState));
     s.fading = true;
     if (keepAsAppWin) {
       fadeSessionOnlyParts(s.pane, true);
@@ -2758,9 +3307,12 @@
       s.pane.classList.add('fading'); // 无卡片：整页淡出（原行为）
       s.tab.classList.add('fading');
     }
-    setTimeout(function () {
+    s.fadeTimer = setTimeout(function () {
+      s.fadeTimer = null;
       if (!s.fading) return; // 重启复活：淡出已被取消
       if (sessions[s.serial] !== s) return;
+      keepAsAppWin = !otherActiveMainCast(s.serial, lastState) &&
+        (appCardsForDevice(deviceKey).length > 0 || hasRecentCastLogs(s.serial, lastState));
       var wasActive = (activeSerial === s.serial);
       delete sessions[s.serial];
       if (keepAsAppWin) {
@@ -2785,11 +3337,15 @@
         if (!w.identity) w.identity = s.identity || deviceIdentityOf(dataKey);
         w.tab = s.tab;
         w.pane = s.pane; // 复用同一 pane（卡片 DOM 原地保留，不重建）
+        w.recentLogPane = hasRecentCastLogs(dataKey, lastState);
+        s.tab.classList.remove('fading');
+        s.pane.classList.remove('fading');
         s.tab.setAttribute('data-key', dataKey); // 拖拽排序键随 castOrder 迁移（对称升级）
         // castOrder：会话键 → 数据键（原位；对称升级时的迁移）。
         var oi3 = castOrder.indexOf(s.serial);
         if (oi3 >= 0) castOrder[oi3] = dataKey;
-        if (wasActive) activateAppWinTab(dataKey);
+        if (wasActive || !activeSerial) activateAppWinTab(dataKey);
+        renderLogMods(w.pane, dataKey, lastState);
       } else {
         s.pane.remove();
         s.tab.remove();
@@ -2811,6 +3367,8 @@
   }
 
   function cancelFade(s) {
+    clearTimeout(s.fadeTimer);
+    s.fadeTimer = null;
     s.fading = false;
     s.tab.classList.remove('fading');
     s.pane.classList.remove('fading');
@@ -2838,6 +3396,7 @@
       var s = sessions[serial];
       var k = known[serial];
       if (k) {
+        if (k.identity && s.identity !== k.identity) { s.identity = k.identity; renderOpenAppCards(serial); }
         // 设备名随档案富化更新时同步标签标题
         var nm = s.tab.querySelector('.casttab-name');
         var want = k.devName || serial;
@@ -2848,6 +3407,12 @@
         renderSessionPane(s, k, st);
       } else {
         // bat 已退出（关窗/停止）：标签淡出消失
+        if (otherActiveMainCast(serial, st)) {
+          var logs = s.pane.querySelector('.logmods');
+          if (logs) logs.style.display = 'none';
+        } else {
+          renderLogMods(s.pane, serial, st);
+        }
         startFade(s);
       }
     });
@@ -2861,6 +3426,7 @@
       var ak = known[activeSerial];
       if (!ak) activeSerial = null;
     }
+    syncRecentCastLogPanes(st);
     if (!activeSerial) activateFirstActive();
     // v2.1.81：蓝灯态 pane（无对应会话）的日志模块组渲染——会话态已由
     // renderSessionPane 处理（互斥；变形/升级路径下一轮自动走到对应分支）。
@@ -2980,7 +3546,8 @@
   // 顺延顶上；主投屏后加入自动插队第一（下一轮渲染即对齐）。
   // 容器 .logmods 动态 ensure（幂等）：会话 pane / 蓝灯 pane / 「蓝灯↔会话」原地
   // 变形三路共用——修复 v2.1.52 升级路径漏绑交互导致的「日志打不开」。
-  var logModOpen = {}; // 开合状态：来源键 → bool（cast:<serial> / app:<serial>#<pkg>）
+  var logModOpen = {}; // 开合状态按设备身份和应用保存。
+  var logFadeMs = 340; // Match the device tab's 300 ms transition plus a frame margin.
 
   function ensureLogMods(pane) {
     // v2.1.83：单例化——历史残留的多容器先清理（防叠印）
@@ -2995,36 +3562,150 @@
     return box;
   }
 
-  // sameDeviceKey：日志归属归一（快照的 serial / appWins 键 / 会话键可能是同设备不同形态）。
-  function sameDeviceKey(a, b) {
-    if (a === b) return true;
-    if (!a || !b) return false;
-    try { return appKeyOf(a) === appKeyOf(b); } catch (e) { return false; }
+  function logDeviceKey(source) {
+    return source.identity || source.serial;
+  }
+
+  function logPaneDeviceKey(serial) {
+    var pane = sessions[serial] || appWins[serial];
+    return (pane && pane.identity) || deviceIdentityOf(serial) || serial;
+  }
+
+  function hasRecentCastLogs(serial, st) {
+    var device = logPaneDeviceKey(serial);
+    return !!st && (st.recentCastLogs || []).some(function (log) { return logDeviceKey(log) === device; });
+  }
+
+  function otherActiveMainCast(serial, st) {
+    var device = logPaneDeviceKey(serial);
+    return !!st && (st.sessions || []).some(function (s) {
+      return s.active && s.serial !== serial && logDeviceKey(s) === device;
+    });
+  }
+
+  function cancelLogPaneFade(w) {
+    if (!w.logFadeTimer) return;
+    clearTimeout(w.logFadeTimer);
+    w.logFadeTimer = null;
+    if (w.tab) w.tab.classList.remove('fading');
+    if (w.pane) w.pane.classList.remove('log-pane-fading');
+  }
+
+  function logPaneHasLiveContent(key, st) {
+    var device = logPaneDeviceKey(key);
+    return (st.appWins || []).some(function (win) { return logDeviceKey(win) === device; }) ||
+      appCardsForDevice(logPaneDeviceKey(key)).length > 0 || appWinModalSerial === key || !!sessionKeyOf(key);
+  }
+
+  function syncRecentCastLogPanes(st) {
+    (st.recentCastLogs || []).forEach(function (log) {
+      var device = logDeviceKey(log);
+      // The main pane is reused while it fades into a log-only pane.
+      if (Object.keys(sessions).some(function (k) { return logPaneDeviceKey(k) === device; })) return;
+      var key = Object.keys(appWins).find(function (k) { return logPaneDeviceKey(k) === device; }) || device;
+      var w = appWins[key] || (appWins[key] = {
+        name: log.deviceName || log.serial, identity: log.identity || '', tab: null, pane: null, pollLeft: 0
+      });
+      cancelLogPaneFade(w);
+      w.recentLogPane = true;
+      ensureAppWinPane(key);
+    });
+
+    Object.keys(appWins).forEach(function (key) {
+      var w = appWins[key];
+      if (!w.recentLogPane || hasRecentCastLogs(key, st)) return;
+      if (logPaneHasLiveContent(key, st)) {
+        cancelLogPaneFade(w);
+        w.recentLogPane = false;
+        return;
+      }
+      if (w.logFadeTimer) return;
+      if (w.tab) w.tab.classList.add('fading');
+      if (w.pane) w.pane.classList.add('log-pane-fading');
+      w.logFadeTimer = setTimeout(function () {
+        if (appWins[key] !== w) return;
+        if (hasRecentCastLogs(key, lastState) || logPaneHasLiveContent(key, lastState)) {
+          cancelLogPaneFade(w);
+          return;
+        }
+        if (w.tab) w.tab.remove();
+        if (w.pane) w.pane.remove();
+        delete appWins[key];
+        var orderIndex = castOrder.indexOf(key);
+        if (orderIndex >= 0) castOrder.splice(orderIndex, 1);
+        if (activeSerial === key) {
+          activeSerial = null;
+          activateFirstActive();
+        }
+        updateTabs();
+      }, logFadeMs);
+    });
+  }
+
+  function updateLogBox(box) {
+    var children = Array.from(box.children);
+    box.classList.toggle('has-open', children.some(function (m) { return m.classList.contains('open'); }));
+    box.classList.toggle('logmods-fading', children.length > 0 && children.every(function (m) { return !!m.logFadeTimer; }));
+    box.style.display = children.length ? '' : 'none';
   }
 
   function renderLogMods(pane, serial, st) {
     if (!pane || !st) return;
     var box = ensureLogMods(pane);
+    box.__serial = serial;
+    var device = logPaneDeviceKey(serial);
+    var byID = Object.create(null);
     var srcs = [];
-    // ① 主投屏输出（仅活跃会话；无主投屏时此源缺席 → 应用屏顺延顶上）
-    (st.sessions || []).forEach(function (k) {
-      if (!k || !k.active || !k.cast) return;
-      if (!sameDeviceKey(k.serial, serial)) return;
-      srcs.push({ id: 'cast:' + k.serial, title: '主投屏输出', log: k.cast.log || [] });
+    function add(source, pkg, log, closed) {
+      if (logDeviceKey(source) !== device) return;
+      var id = JSON.stringify([device, pkg]);
+      var old = byID[id];
+      if (old && closed) return; // A reopening always takes the existing panel.
+      var title = pkg ? '「' + (source.name || pkg) + '」输出（虚拟屏）' : '主投屏输出';
+      if (closed) title += ' · 已结束';
+      if (old) {
+        old.title = title;
+        old.log = log;
+        return;
+      }
+      var item = { id: id, pkg: pkg, title: title, log: log, order: srcs.length };
+      byID[id] = item;
+      srcs.push(item);
+    }
+    (st.sessions || []).forEach(function (s) {
+      if (s && s.active && s.cast) add(s, '', s.cast.log || [], false);
     });
-    // ② 应用窗口输出（虚拟屏）——快照数组顺序=开启顺序（Go 侧按 startedAt 排好）
     (st.appWins || []).forEach(function (w) {
-      if (!w) return;
-      if (!sameDeviceKey(w.serial, serial)) return;
-      srcs.push({ id: 'app:' + w.serial + '#' + w.pkg, title: '「' + (w.name || w.pkg) + '」输出（虚拟屏）', log: w.log || [] });
+      if (w) add(w, w.pkg, w.log || [], false);
+    });
+    (st.recentCastLogs || []).forEach(function (log) {
+      add(log, log.pkg || '', log.log || [], true);
+    });
+    var positions = Object.create(null);
+    Array.prototype.forEach.call(box.children, function (m, index) { positions[m.__id] = index; });
+    srcs.sort(function (a, b) {
+      if (!a.pkg || !b.pkg) return Number(!!a.pkg) - Number(!!b.pkg);
+      var ap = positions[a.id], bp = positions[b.id];
+      if (ap === undefined) ap = box.children.length + a.order;
+      if (bp === undefined) bp = box.children.length + b.order;
+      return ap - bp;
     });
     // ---- 结构同步：按 srcs 顺序复用/新建模块 DOM（appendChild 移动即排序）----
     var alive = {};
     srcs.forEach(function (s) { alive[s.id] = true; });
     Array.prototype.slice.call(box.children).forEach(function (m) {
-      if (!alive[m.__id]) box.removeChild(m);
+      if (alive[m.__id] || m.logFadeTimer) return;
+      m.classList.add('logmod-fading');
+      m.logFadeTimer = setTimeout(function () {
+        m.logFadeTimer = null;
+        if (m.parentNode === box) {
+          box.removeChild(m);
+          updateLogBox(box);
+        }
+      }, logFadeMs);
     });
-    srcs.forEach(function (s, i) {
+    var cursor = box.firstElementChild;
+    srcs.forEach(function (s) {
       var m = null;
       Array.prototype.some.call(box.children, function (c) {
         if (c.__id === s.id) { m = c; return true; }
@@ -3039,14 +3720,21 @@
           '<div class="logmod-body"></div>';
         m.querySelector('.logmod-head').addEventListener('click', function () {
           logModOpen[s.id] = !logModOpen[s.id];
-          renderLogMods(pane, serial, lastState); // 立即重绘（最近快照）
+          renderLogMods(pane, box.__serial, lastState); // pane may have changed transport keys
         });
         var body0 = m.querySelector('.logmod-body');
         body0.addEventListener('scroll', function () {
           body0.__follow = body0.scrollTop + body0.clientHeight >= body0.scrollHeight - 24;
         });
       }
-      if (box.children[i] !== m) box.insertBefore(m, box.children[i] || null);
+      if (m.logFadeTimer) {
+        clearTimeout(m.logFadeTimer);
+        m.logFadeTimer = null;
+        m.classList.remove('logmod-fading');
+      }
+      while (cursor && !alive[cursor.__id]) cursor = cursor.nextElementSibling;
+      if (cursor !== m) box.insertBefore(m, cursor);
+      cursor = m.nextElementSibling;
       // 标题（应用名可能变）
       var t = m.querySelector('.logmod-title');
       if (t.textContent !== s.title) t.textContent = s.title;
@@ -3054,33 +3742,28 @@
       var open = !!logModOpen[s.id];
       m.classList.toggle('open', open);
       m.querySelector('.logmod-caret').textContent = open ? '▾' : '▸';
-      // 内容键控更新（行数+末行：后端 60 行截断后行数恒 60，仅比行数会冻结）
+      // 显示后端保留的所有行。行数和末行相同也可能换掉了中间内容。
       var body = m.querySelector('.logmod-body');
-      var logKey = String(s.log.length) + '\u0000' + (s.log.length ? s.log[s.log.length - 1] : '');
-      if (body.getAttribute('data-n') !== logKey) {
+      var previousLines = body.__logLines;
+      if (open && (!previousLines || previousLines.length !== s.log.length ||
+          s.log.some(function (line, index) { return line !== previousLines[index]; }))) {
         var prev = body.scrollTop;
         var follow = body.__follow !== false; // 默认跟随（滚底）
-        body.setAttribute('data-n', logKey);
-        body.innerHTML = '';
-        s.log.slice(-40).forEach(function (l) {
+        var content = document.createDocumentFragment();
+        s.log.forEach(function (l) {
           var d = document.createElement('div');
           d.className = 'log-line';
           d.textContent = l;
-          body.appendChild(d);
+          content.appendChild(d);
         });
+        body.textContent = '';
+        body.appendChild(content);
+        body.__logLines = s.log;
         if (follow) body.scrollTop = body.scrollHeight;
         else body.scrollTop = prev; // 重建重置滚动：还原用户阅读位置
       }
     });
-    // v2.1.82：容器态切换——存在展开模块时吃剩余空间（从下方扩展、上方不动）；
-    // 全折叠=紧凑内容高度（条数多时列表可滚轮滚动浏览）。
-    var anyOpen = false;
-    for (var oi = 0; oi < srcs.length; oi++) {
-      if (logModOpen[srcs[oi].id]) { anyOpen = true; break; }
-    }
-    box.classList.toggle('has-open', anyOpen);
-    // 无来源 → 整组隐藏（如主投屏结束、应用屏也已退出的空窗）
-    box.style.display = srcs.length ? '' : 'none';
+    updateLogBox(box);
   }
 
   function describeCast(c) {
@@ -3113,7 +3796,7 @@
         out.push('<div class="spec">长边 ' + spec.maxSize + '</div>');
       }
     }
-    if (spec && spec.fps) out.push('<div class="spec">' + spec.fps + ' fps</div>');
+    if (spec && spec.fps) out.push('<div class="spec">' + spec.fps + ' FPS</div>');
     if (spec && spec.mbps) out.push('<div class="spec">' + spec.mbps + ' Mbps</div>');
     if (spec && spec.legacy) out.push('<div class="spec">老设备兼容档</div>');
     if (spec && spec.vcodec) out.push('<div class="spec">' + esc(fmtVCodec(spec.vcodec)) + '</div>');
@@ -3168,10 +3851,11 @@
       return;
     }
     var nd = st.newDevice;
+    // 同一 transport 的名称可能在上线后才富化，或被用户改名。
+    el('newdev-name').textContent = nd.name || nd.serial;
+    el('newdev-tag').textContent = nd.connType === 'usb' ? '（USB）' : (nd.connType === 'wifi' ? '（无线）' : '');
     if (popupSerial !== nd.serial) {
       popupSerial = nd.serial;
-      el('newdev-name').textContent = nd.name || nd.serial;
-      el('newdev-tag').textContent = nd.connType === 'usb' ? '（USB）' : (nd.connType === 'wifi' ? '（无线）' : '');
       p.style.display = '';
     }
   }
@@ -3204,6 +3888,8 @@
   var pairMaskFadeTimer = null; // gui53：配对弹窗 mask 淡出 timer（防快速开关竞态）
   var pairSuccessShown = false;
   var pairBusy = false;
+  var pairSubmitPending = false;
+  var pairSubmitToken = 0;
   var pairFailed = false;
   var pairQrLast = null;
   var pairQrAutoRefreshKey = null; // fix7：每次到期自动刷新只触发一次，直到后端换新码
@@ -3224,7 +3910,7 @@
 
   function pairCodeValue() {
     var inp = pairCodeInput();
-    return inp ? inp.value.replace(/\D/g, '').slice(0, 6) : '';
+    return inp ? inp.value.trim() : '';
   }
 
   function pairClearCode() {
@@ -3254,17 +3940,33 @@
     pairCtx.connPort = pairAddrPort(p.addr || '');
     pairCtx.name = p.name || '无线调试设备';
     pairCtx.addr = p.addr || '';
+    pairCtx.directAddr = p.directAddr || '';
   }
 
   // 每次快照渲染时同步 mDNS 待配对列表到配对上下文；无目标时清空自动发现态。
   // 配对/连接/校验/失败阶段保留当前上下文，避免 mDNS 待配对卡在配对流程中短暂消失时打乱展示。
   function pairSyncFromState(st) {
     if (!pairCtx || !st) return;
+    pairCtx.searching = !!st.pendingSearching;
     if (pairCtx.manual) return;
     var ps = st.pairStatus || null;
-    // 配对/连接/校验/失败阶段都保留当前上下文，只有空闲态才跟随 mDNS 快照更新。
+    // 操作中固定目标；失败后允许同一主机补齐 mDNS 身份和端口，保留用户输入。
     var pairing = pairBusy || (ps && ps.phase !== 'idle');
-    if (pairing) return;
+    if (pairing) {
+      if (!pairBusy && ps && ps.phase === 'failed') {
+        var candidates = st.pending || [];
+        var target = candidates.filter(function (p) { return p.key === pairCtx.key; });
+        if (!target.length && pairCtx.ip) {
+          target = candidates.filter(function (p) { return p.ip === pairCtx.ip; });
+        }
+        if (target.length === 1) {
+          pairCtx.pending = candidates.slice();
+          pairCtx.idx = candidates.indexOf(target[0]);
+          pairApplyPending(target[0]);
+        }
+      }
+      return;
+    }
     var list = (st.pending || []).slice();
     pairCtx.pending = list;
     if (!list.length) {
@@ -3274,6 +3976,7 @@
       pairCtx.connPort = '';
       pairCtx.name = '';
       pairCtx.addr = '';
+      pairCtx.directAddr = '';
       pairCtx.idx = 0;
       return;
     }
@@ -3283,6 +3986,10 @@
         idx = i;
         break;
       }
+    }
+    if (idx < 0 && pairCtx.ip) {
+      var sameHost = list.filter(function (p) { return p.ip === pairCtx.ip; });
+      if (sameHost.length === 1) idx = list.indexOf(sameHost[0]);
     }
     if (idx < 0) {
       pairCtx.idx = 0;
@@ -3309,7 +4016,7 @@
       ips[i].classList.add('pre');
     }
     var portEl = el('pair-port-seg');
-    var port = String(pairCtx.pairPort || '').replace(/\D/g, '');
+    var port = String(pairCtx.directAddr ? '5555' : (pairCtx.pairPort || '')).replace(/\D/g, '');
     portEl.value = port;
     portEl.classList.add('pre');
   }
@@ -3329,15 +4036,17 @@
 
   function pairStepsData(ps, allDone) {
     var first = pairFirstLabel(ps);
+    var active = ps && ps.phase !== 'idle' && ps.phase !== 'failed';
+    var action = (active ? ps.direct : pairDirectAction()) ? '连接' : '配对';
     if (allDone) {
-      return [{ label: first, state: 'ok' }, { label: '配对', state: 'ok' }, { label: '完成', state: 'ok' }];
+      return [{ label: first, state: 'ok' }, { label: action, state: 'ok' }, { label: '完成', state: 'ok' }];
     }
     var phase = ps ? ps.phase : 'idle';
     if (!ps || phase === 'idle') {
-      return [{ label: first, state: 'cur' }, { label: '配对', state: 'none' }, { label: '完成', state: 'none' }];
+      return [{ label: first, state: 'cur' }, { label: action, state: 'none' }, { label: '完成', state: 'none' }];
     }
     if (phase === 'failed') {
-      return [{ label: first, state: 'ok' }, { label: '配对', state: 'none' }, { label: '完成', state: 'none' }];
+      return [{ label: first, state: 'ok' }, { label: action, state: 'none' }, { label: '完成', state: 'none' }];
     }
     var pairStep = pairFindStep(ps, 'pair');
     var connectStep = pairFindStep(ps, 'connect');
@@ -3358,7 +4067,7 @@
     } else if (connectStep) {
       s3 = connectStep.ok ? 'ok' : 'cur';
     }
-    return [{ label: first, state: 'ok' }, { label: '配对', state: s2 }, { label: '完成', state: s3 }];
+    return [{ label: first, state: 'ok' }, { label: action, state: s2 }, { label: '完成', state: s3 }];
   }
 
   function pairRenderStepsInto(id, ps, allDone) {
@@ -3405,11 +4114,18 @@
 
   function pairAutoRefreshQr() {
     if (pairBusy || pairSuccessShown || typeof window.PairConnect !== 'function') return;
+    var token = pairSubmitToken;
+    function failed() {
+      if (pairOpen && token === pairSubmitToken) toast(PairUI.formatError('二维码刷新失败\n请点击二维码重试'), 'pair-error');
+    }
+    function completed() {
+      if (pairOpen && token === pairSubmitToken) refreshNow();
+    }
     try {
       var pc = PairConnect('__qr_refresh__', '', '', '', '');
-      if (pc && typeof pc.catch === 'function') pc.catch(function () {});
-    } catch (e) { /* 忽略 */ }
-    refreshNow();
+      if (pc && typeof pc.then === 'function') pc.then(completed, failed);
+      else completed();
+    } catch (e) { failed(); }
   }
 
   function pairRenderQr(ps) {
@@ -3456,19 +4172,14 @@
   }
 
   function pairFailText(ps) {
-    if (!ps) return '连接失败，请确认设备和电脑处于局域网关系';
-    var code = ps.errCode || '';
-    var text = ps.errText || '';
-    if (code === 'connect-failed') return '连接失败，请确认设备和电脑处于局域网关系';
-    if (code) return PairUI.errText(code, text);
-    if (text) return text;
-    return '连接失败，请确认设备和电脑处于局域网关系';
+    if (!ps) return PairUI.errText('connect-failed');
+    return PairUI.errText(ps.errCode || '', ps.errText || PairUI.errText('connect-failed'));
   }
 
   function pairShowFail(msg) {
     pairFailed = true;
     el('pair-fail').style.display = '';
-    el('pair-fail').textContent = msg || '连接失败，请确认设备和电脑处于局域网关系';
+    el('pair-fail').textContent = PairUI.formatError(msg || PairUI.errText('connect-failed'));
     el('pair-code-box').classList.add('err');
     el('pair-seg-box').classList.add('err');
     el('pair-go').classList.remove('primary');
@@ -3486,7 +4197,34 @@
     el('pair-go').classList.remove('danger');
   }
 
-  function pairSetBusy(busy) {
+  function pairDirectAction() {
+    if (!pairCtx) return false;
+    var port = pairCtx.manual ? el('pair-port-seg').value : '';
+    return PairUI.directAction(pairCtx.manual, port, pairCtx.directAddr, pairCodeValue());
+  }
+
+  function pairRenderAction(ps) {
+    var direct = pairBusy && ps ? !!ps.direct : pairDirectAction();
+    var inp = pairCodeInput();
+    if (inp) {
+      inp.placeholder = direct ? '免配对码，首次连接可能需要授权' : '000 000';
+      inp.classList.toggle('direct-hint', direct);
+    }
+    el('pair-go').textContent = pairBusy ? (direct ? '连接中…' : '配对中…') :
+      (direct ? '连接' : (pairFailed ? '重新配对' : '配对'));
+  }
+
+  function pairInputChanged() {
+    if (pairFailed) {
+      pairClearFail();
+      pairSetBusy(false);
+    }
+    pairRenderAction();
+    pairRenderFound(null);
+    pairRenderStepsInto('pair-steps', null, false);
+  }
+
+  function pairSetBusy(busy, ps) {
     pairBusy = busy;
     pairCodeInputs().concat(pairSegInputs()).forEach(function (inp) { inp.disabled = busy; });
     var noTarget = !busy && pairCtx && !pairCtx.manual && (!pairCtx.key || !(pairCtx.pending && pairCtx.pending.length));
@@ -3497,14 +4235,10 @@
     el('pair-back-auto').classList.toggle('dim', busy);
     el('pair-qr-area').classList.toggle('busy', busy);
     if (busy) {
-      el('pair-go').textContent = '配对中…';
       el('pair-go').classList.add('primary');
       el('pair-go').classList.remove('danger');
-    } else if (pairFailed) {
-      el('pair-go').textContent = '重新配对';
-    } else {
-      el('pair-go').textContent = '配对';
     }
+    pairRenderAction(ps);
   }
 
   function pairRenderFound(ps) {
@@ -3531,20 +4265,23 @@
       pairApplyPending(list[0]);
     }
     if (!n || !pairCtx.key) {
-      nameEl.textContent = '未发现待配对设备';
-      addrEl.textContent = '请确认手机已打开无线调试，且与电脑同一网络';
+      nameEl.textContent = pairCtx.searching ? '正在搜索新设备…' : '未发现待配对设备';
+      addrEl.textContent = pairCtx.searching ? '正在搜索局域网内的 5555 和无线调试设备' : '请确认设备已开启 TCP/IP 5555 或无线调试，且与电脑同一网络';
       el('pair-swap').style.display = 'none';
       el('pair-go').disabled = true;
       return;
     }
     nameEl.textContent = '已发现 ' + n + ' 台新设备 · 当前：' + pairCtx.name;
     var phase = ps ? ps.phase : 'idle';
+    var active = phase === 'pairing' || phase === 'connecting' || phase === 'verifying';
+    var direct = active ? !!ps.direct : pairDirectAction();
+    if (direct && tagEl) tagEl.textContent = '也可输入无线调试配对码';
     var ipText = pairCtx.ip || String(pairCtx.addr || '').replace(/:\d+$/, '');
-    var sub = ipText + ' · ';
+    var sub = ipText + (direct ? ':5555 · ' : ' · ');
     if (phase === 'pairing' || phase === 'connecting' || phase === 'verifying') {
-      sub += (ps.mode === 'qr') ? '已扫码，正在配对…' : '正在配对…';
+      sub += ps.direct ? '正在连接…' : ((ps.mode === 'qr') ? '已扫码，正在配对…' : '正在配对…');
     } else {
-      sub += pairCtx.pairPort ? '配对端口已自动获取' : '请打开设备的配对码页面';
+      sub += direct ? (ps && ps.errCode === 'adb-unauthorized' ? '等待设备允许调试授权' : '端口可达，连接时验证授权') : (pairCtx.pairPort ? '配对端口已自动获取' : '请打开设备的配对码页面');
     }
     addrEl.textContent = sub;
     el('pair-swap').style.display = n > 1 ? '' : 'none';
@@ -3564,6 +4301,7 @@
       pairSyncFromState(lastState);
     }
     pairRenderFound(lastState ? lastState.pairStatus : null);
+    pairRenderAction();
   }
 
   function pairIdleLike(ps) {
@@ -3579,7 +4317,7 @@
     } else {
       pairClearFail();
     }
-    pairSetBusy(busy);
+    pairSetBusy(busy, ps);
     pairRenderFound(ps);
     pairRenderStepsInto('pair-steps', ps, false);
     pairRenderQr(ps);
@@ -3596,7 +4334,7 @@
     el('pair-head').style.display = 'none';
     el('pair-success').style.display = '';
     var nm = (ps.device && (ps.device.name || ps.device.serial)) || ps.name || (pairCtx && pairCtx.name) || '设备';
-    el('pair-success-title').textContent = '配对成功，' + nm + ' 已添加';
+    el('pair-success-title').textContent = (ps.direct ? '连接成功，' : '配对成功，') + nm + ' 已添加';
     var hero = el('pair-success-hero');
     var steps = el('pair-success-steps');
     hero.classList.remove('anim-hero');
@@ -3615,7 +4353,7 @@
 
   // 快照轮询渲染配对状态（只在弹窗打开时展示；idle 也渲染，以刷新二维码/步骤）
   function renderPairStatus(st) {
-    if (!pairOpen || !pairCtx) return;
+    if (!pairOpen || !pairCtx || pairSubmitPending) return;
     var ps = st.pairStatus || null;
     if (ps && ps.phase === 'success') {
       renderPairSuccess(ps);
@@ -3631,6 +4369,8 @@
   }
 
   function closePairModal() {
+    pairSubmitToken++;
+    pairSubmitPending = false;
     pairOpen = false;
     pairCtx = null;
     pairSuccessShown = false;
@@ -3672,6 +4412,8 @@
   // gui51 常驻入口：有 mDNS 待配对设备则默认第一台；无设备也保持自动发现态，
   // 显示「未发现待配对设备」提示，不再默认跳手动填写。
   function openPairModal(p) {
+    pairSubmitToken++;
+    pairSubmitPending = false;
     var pending = (lastState && lastState.pending) || [];
     var idx = 0;
     var target = null;
@@ -3691,6 +4433,7 @@
       connPort: target ? pairAddrPort(target.addr || '') : '',
       name: target ? (target.name || '无线调试设备') : '',
       addr: target ? (target.addr || '') : '',
+      directAddr: target ? (target.directAddr || '') : '',
       pending: pending,
       idx: idx,
       manual: false // 默认自动发现态（与有无待配对设备无关）
@@ -3759,8 +4502,9 @@
     var inp = pairCodeInput();
     if (!inp) return;
     inp.addEventListener('input', function () {
-      var v = inp.value.replace(/\D/g, '').slice(0, 6);
+      var v = inp.value.replace(/\s/g, '').slice(0, 6);
       if (v !== inp.value) inp.value = v;
+      pairInputChanged();
       if (pairFailed) {
         pairClearFail();
         pairSetBusy(false);
@@ -3777,7 +4521,8 @@
       ev.preventDefault();
       var cd = ev.clipboardData || window.clipboardData;
       var text = cd ? (cd.getData('text') || '') : '';
-      inp.value = text.replace(/\D/g, '').slice(0, 6);
+      inp.value = text.replace(/\s/g, '').slice(0, 6);
+      pairInputChanged();
       if (pairFailed) {
         pairClearFail();
         pairSetBusy(false);
@@ -3820,9 +4565,10 @@
       inp.addEventListener('focus', function () { inp.select(); });
     });
     port.addEventListener('input', function () {
-      var v = port.value.replace(/\D/g, '');
+      var v = port.value.replace(/\s/g, '');
       if (v !== port.value) port.value = v;
       port.classList.toggle('pre', !port.value);
+      pairInputChanged();
       if (pairFailed) {
         pairClearFail();
         pairSetBusy(false);
@@ -3843,23 +4589,20 @@
     if (!pairCtx || pairBusy) return;
     if (!pairCtx.manual && (!pairCtx.key || !(pairCtx.pending && pairCtx.pending.length))) return;
     var code = pairCodeValue();
-    if (!PairUI.validCode(code)) {
-      toast('请输入 6 位数字配对码');
-      return;
-    }
+    var direct = pairDirectAction();
     var manual = pairCtx.manual;
     var devKey = manual ? '' : pairCtx.key;
     var ip, pairPort, connPort;
     if (manual) {
       ip = pairManualIp();
       pairPort = el('pair-port-seg').value;
-      connPort = pairCtx.connPort || '';
+      connPort = ''; // Never reuse a different auto-discovered host's TLS port.
       if (!PairUI.validIp(ip)) {
-        toast('请输入正确的 IP 地址（四段，0-255）');
+        toast(PairUI.formatError('IP 地址格式不正确\n请输入四段 0–255 的数字'), 'pair-error');
         return;
       }
       if (!PairUI.validPort(pairPort)) {
-        toast('请输入正确的端口（1-65535）');
+        toast(PairUI.formatError('端口格式不正确\n请输入 1–65535 的端口号'), 'pair-error');
         return;
       }
     } else {
@@ -3867,8 +4610,18 @@
       pairPort = '';
       connPort = '';
     }
+    if (!direct && !PairUI.validCode(code)) {
+      toast(PairUI.formatError('配对码格式不正确\n请输入手机显示的 6 位数字配对码'), 'pair-error');
+      return;
+    }
+    var submitToken = ++pairSubmitToken;
+    pairSubmitPending = true;
     pairSetBusy(true);
+    function currentSubmission() {
+      return submitToken === pairSubmitToken && pairOpen && pairCtx;
+    }
     if (typeof window.PairConnect !== 'function') {
+      pairSubmitPending = false;
       pairSetBusy(false);
       return;
     }
@@ -3876,17 +4629,24 @@
       var pc = PairConnect(devKey, ip, pairPort, connPort, code);
       if (pc && typeof pc.then === 'function') {
         pc.then(function () {
+          if (!currentSubmission()) return;
+          pairSubmitPending = false;
           refreshNow();
         }).catch(function (e) {
-          toast('配对失败：' + (e && e.message ? e.message : e));
+          if (!currentSubmission()) return;
+          pairSubmitPending = false;
+          toast(PairUI.formatError('配对失败：' + (e && e.message ? e.message : e)), 'pair-error');
           pairSetBusy(false);
           refreshNow();
         });
       } else {
+        pairSubmitPending = false;
         refreshNow();
       }
     } catch (e) {
-      toast('配对失败：' + (e && e.message ? e.message : e));
+      if (!currentSubmission()) return;
+      pairSubmitPending = false;
+      toast(PairUI.formatError('配对失败：' + (e && e.message ? e.message : e)), 'pair-error');
       pairSetBusy(false);
     }
   });
@@ -3898,13 +4658,9 @@
     var next = (pairCtx.idx + 1) % list.length;
     var p = list[next];
     pairCtx.idx = next;
-    pairCtx.key = p.key;
-    pairCtx.ip = p.ip || '';
-    pairCtx.pairPort = p.pairPort || '';
-    pairCtx.connPort = pairAddrPort(p.addr);
-    pairCtx.name = p.name || '无线调试设备';
-    pairCtx.addr = p.addr || '';
+    pairApplyPending(p);
     pairClearCode();
+    pairRenderAction();
     pairClearFail();
     pairPrefillAddress();
     if (lastState) pairRenderForm(pairIdleLike(lastState.pairStatus || null), lastState);
@@ -3928,12 +4684,7 @@
   });
 
   el('pair-qr-area').addEventListener('click', function () {
-    if (pairBusy || typeof window.PairConnect !== 'function') return;
-    try {
-      var pc = PairConnect('__qr_refresh__', '', '', '', '');
-      if (pc && typeof pc.catch === 'function') pc.catch(function () {});
-    } catch (e) { /* 忽略 */ }
-    refreshNow();
+    pairAutoRefreshQr();
   });
 
   el('pair-close').addEventListener('click', function () { closePairModal(); refreshNow(); });
@@ -3967,6 +4718,19 @@
   var updateConfirm = false;
   var updateLocalError = '';
   function updateVisible(id, yes) { el(id).style.display = yes ? '' : 'none'; }
+  // rc23-UI1：白光独立整轨扫过，宽度与绿色填充共用 .25s 过渡，永不越过已下载区域。
+  function renderUpdateGlint(m) {
+    var track = el('update-progress-track');
+    if (!track) return;
+    var glint = el('update-progress-glint');
+    var pct = (m.percent === null || m.percent === undefined) ? null : Math.max(0, Math.min(100, Number(m.percent)));
+    track.classList.toggle('is-downloading', pct !== null && !!m.animateProgress);
+    track.classList.toggle('is-indeterminate', pct === null);
+    if (glint) {
+      if (pct === null) glint.style.width = '0%';
+      else glint.style.width = pct.toFixed(2) + '%';
+    }
+  }
   function renderUpdate(s) {
     updateState = s; var info = s.info || {}, m = window.SCEZUpdateUI.model(s);
     var latestKey = (info.latest || '').replace(/^v/, '');
@@ -3987,6 +4751,7 @@
     el('update-progress-bar').classList.toggle('is-downloading', !!m.animateProgress);
     if (m.percent === null) el('update-progress-bar').removeAttribute('value');
     else el('update-progress-bar').value = m.percent;
+    renderUpdateGlint(m);
     el('update-progress-text').textContent = m.detail;
     updateVisible('update-download', m.download && !updateConfirm);
     el('update-download').textContent = m.downloadText;
@@ -4070,15 +4835,17 @@
   // 结构：{serial, devName, mode, profile:{usb,wifi},
   //        fields:{usb:{res,fps,bit},wifi:{...}}（每栏 SCEZParamState 纯状态机）, activeField}
   var paramState = null;
+  var paramOpenToken = 0;
+  var paramTransition = null;
 
   var PARAM_FIELDS = {
     res: { label: '分辨率档', unit: '', tiers: [2560, 1920, 1080] },
-    fps: { label: '刷新率上限', unit: ' fps', tiers: [120, 90, 60] },
+    fps: { label: '帧率上限', unit: ' FPS', tiers: [120, 90, 60] },
     bit: { label: '码率上限', unit: ' Mbps', tiers: [120, 80, 60, 40, 15] }
   };
   var PARAM_NOTES = {
     res: '分辨率说明：长边档位/自定义长边，短边按设备比例自动计算（如 2136x3200 → 2400x1602），不会裁切',
-    fps: '刷新率说明：低于现有档位时上级档自动忽略（80fps → 80/60/30）；高于现有上限替换上限（200 → 200/90/60/30，级数不变）',
+    fps: '帧率说明：低于现有档位时上级档自动忽略（80 FPS → 80/60/30）；高于现有上限替换上限（200 → 200/90/60/30，级数不变）',
     bit: '码率说明：同理（55M → 55/40/15；150M → 150/80/60/40/15，级数不变）',
     audio: '声音说明：手机＝只在手机出声（不传输到电脑）；电脑＝只在电脑出声（手机静音；手机音量键同步控制投屏音量）；两边＝电脑与手机同时出声（需 Android 13+；两边音量相互独立——投屏音量请用电脑调）',
     vcodec: '视频编码说明：H.264 兼容性最好（默认）；H.265 同画质更省带宽；AV1、VP8、VP9 多数设备仅有软编码器，可能不流畅——可用性取决于设备端编码器',
@@ -4265,10 +5032,66 @@
   // 与应用屏滑条手感不一致的根因）。
   function updateParamAudioRow(state) {
     var cur = (state && state.audio && state.audio[state.mode]) || 'pc';
-    el('param-audio-label').innerHTML = '声音 (<b>' + SCEZ_AUDIO_LABELS[cur] + '</b>)';
+    el('param-audio-label').innerHTML = '声音输出 (<b>' + SCEZ_AUDIO_LABELS[cur] + '</b>)';
     renderAudioSlider(el('param-audio-slider'), cur);
     el('param-audio-note').textContent = audioNote(cur);
   }
+
+  // ---------- rc23-UI1：主投屏三页签脏标记 / 每页说明框 ----------
+  function paramEffectiveFieldFor(state, mode, f) {
+    var st = state.fields[mode] && state.fields[mode][f];
+    if (!st) return 0;
+    var raw = String(st.input == null ? '' : st.input).trim();
+    if (st.edit && raw !== '' && /^\d+$/.test(raw)) return +raw;
+    return st.val;
+  }
+  function snapshotParamMode(state, mode) {
+    var p = state.profile[mode] || {};
+    return {
+      res: paramEffectiveFieldFor(state, mode, 'res'),
+      fps: paramEffectiveFieldFor(state, mode, 'fps'),
+      bit: paramEffectiveFieldFor(state, mode, 'bit'),
+      audio: state.audio[mode] || 'pc',
+      vcodec: state.vcodec[mode] || 'h264',
+      acodec: state.acodec[mode] || 'opus',
+      lockFps: !!p.lockFps,
+      lockBitrate: !!p.lockBitrate
+    };
+  }
+  function updateParamDirtyTabs() {
+    if (!paramState || !paramState.initial || (paramState.mode !== 'usb' && paramState.mode !== 'wifi')) return;
+    var s = paramState, i = s.initial[s.mode], touch = s.touched || {};
+    var p = s.profile[s.mode] || {};
+    setTabDirty('param', 'display', !!touch.display && (
+      paramEffectiveFieldFor(s, s.mode, 'res') !== i.res ||
+      paramEffectiveFieldFor(s, s.mode, 'fps') !== i.fps ||
+      paramEffectiveFieldFor(s, s.mode, 'bit') !== i.bit ||
+      (s.vcodec[s.mode] || 'h264') !== i.vcodec ||
+      !!p.lockFps !== i.lockFps || !!p.lockBitrate !== i.lockBitrate));
+    setTabDirty('param', 'audio', !!touch.audio && (
+      (s.audio[s.mode] || 'pc') !== i.audio ||
+      (s.acodec[s.mode] || 'opus') !== i.acodec));
+    // 功能页只有“即时生效”的 root 自动修复，不计未保存草稿。
+    setTabDirty('param', 'feature', false);
+  }
+  function resetParamPageNote(name) {
+    var af = paramState && paramState.activeField;
+    if (name === 'display') {
+      setNote('param-note-display', PARAM_NOTES[['res', 'fps', 'bit', 'vcodec'].indexOf(af) >= 0 ? af : 'res']);
+    } else if (name === 'audio') {
+      setNote('param-note-audio', PARAM_NOTES[af === 'acodec' ? 'acodec' : 'audio']);
+    } else {
+      setNote('param-note-feature', PARAM_FEATURE_NOTE_DEFAULT);
+    }
+  }
+  function refreshParamNotes() { resetParamPageNote('display'); resetParamPageNote('audio'); }
+  bindDialogTabs('param', resetParamPageNote);
+  (function bindParamFeatureNote() {
+    var assist = document.querySelector('#param-page-feature .param-assist');
+    if (assist) assist.addEventListener('click', function () {
+      setNote('param-note-feature', assist.getAttribute('data-note') || PARAM_FEATURE_NOTE_DEFAULT);
+    });
+  })();
 
   // v2.1.91：编码格式行（视频/音频）——chip 单选 + 局部刷新。
   function renderCodecChips(boxId, opts, cur, onPick, fmt) {
@@ -4285,16 +5108,21 @@
   }
   function updateParamCodecRows(state) {
     if (!state) return;
+    var renderMode = state.mode;
     var v = state.vcodec[state.mode] || 'h264';
     var a = state.acodec[state.mode] || 'opus';
     el('param-vcodec-label').innerHTML = '视频编码 (<b>' + fmtVCodec(v) + '</b>)';
     el('param-acodec-label').innerHTML = '音频编码 (<b>' + fmtACodec(a) + '</b>)';
     renderCodecChips('param-vcodec-chips', VCODEC_OPTS, v, function (nv) {
+      if (state.mode !== renderMode) return;
+      state.touched.display = true;
       state.vcodec[state.mode] = nv;
       state.activeField = 'vcodec'; // v2.1.92：联动底部说明区
       renderParamModal();
     }, fmtVCodec);
     renderCodecChips('param-acodec-chips', ACODEC_OPTS, a, function (na) {
+      if (state.mode !== renderMode) return;
+      state.touched.audio = true;
       state.acodec[state.mode] = na;
       state.activeField = 'acodec'; // v2.1.92：联动底部说明区
       renderParamModal();
@@ -4303,7 +5131,8 @@
 
   // 三栏档位渲染（浮窗用；redraw=字段变更后的重绘回调）：
   // 档位大→左排、＋自定义固定最右、点击就地变输入框（空值=不传）、重置=回 bat 基线
-  function renderParamRows(state, box, noteEl, redraw) {
+  function renderParamRows(state, box, redraw) {
+    var renderMode = state.mode;
     box.innerHTML = '';
     Object.keys(PARAM_FIELDS).forEach(function (f) {
       var fd = PARAM_FIELDS[f];
@@ -4336,6 +5165,8 @@
         c.textContent = String(t);
         // 修复：点击标准档位 = 清除该栏自定义（输入框消失；值=该档）
         c.addEventListener('click', function () {
+          if (state.mode !== renderMode) return;
+          state.touched.display = true;
           applyField(state, f, SCEZParamState.clickTier(st, t));
           if (redraw) redraw();
         });
@@ -4350,10 +5181,15 @@
         inp.placeholder = '输入后生效';
         inp.value = st.input;
         inp.addEventListener('input', function () {
+          if (state.mode !== renderMode) return;
+          state.touched.display = true;
           var st2 = curField(state, f);
           state.fields[state.mode][f] = SCEZParamState.typeCustom(st2, inp.value);
+          updateParamDirtyTabs();
         });
         inp.addEventListener('change', function () {
+          if (state.mode !== renderMode) return;
+          state.touched.display = true;
           applyField(state, f, SCEZParamState.commitCustom(curField(state, f), curField(state, f).input));
           if (redraw) redraw();
         });
@@ -4363,6 +5199,7 @@
         cb.className = 'chip dashed';
         cb.textContent = '＋自定义';
         cb.addEventListener('click', function () {
+          if (state.mode !== renderMode) return;
           applyField(state, f, SCEZParamState.startCustom(curField(state, f)));
           if (redraw) redraw();
         });
@@ -4370,13 +5207,16 @@
       }
 
       row.addEventListener('click', function () {
+        if (state.mode !== renderMode) return;
         state.activeField = f;
-        noteEl.textContent = PARAM_NOTES[f];
+        refreshParamNotes();
       });
       var lockBtn = row.querySelector('.param-lock');
       if (lockBtn) {
         lockBtn.addEventListener('click', function (ev) {
           ev.stopPropagation();
+          if (state.mode !== renderMode) return;
+          state.touched.display = true;
           // 锁定切换：独立于值（重置只管值，锁管"不被自动调整"的开关）
           if (f === 'fps') {
             p.lockFps = !p.lockFps;
@@ -4388,6 +5228,8 @@
       }
       row.querySelector('.param-reset').addEventListener('click', function (ev) {
         ev.stopPropagation();
+        if (state.mode !== renderMode) return;
+        state.touched.display = true;
         // 重置=回 bat 基准默认（本栏）；常可用 + 点击动画反馈
         var btn = ev.currentTarget;
         btn.classList.remove('flash');
@@ -4402,27 +5244,130 @@
     // v2.1.78：声音档位行（静态 DOM——此处只刷新；拖动时绝不重建，避免滑条指针链断掉）。
     updateParamAudioRow(state);
     updateParamCodecRows(state); // v2.1.91：编码格式行刷新
-    noteEl.textContent = PARAM_NOTES[state.activeField] || PARAM_NOTES.res; // v2.1.92：未知栏位兜底
+    refreshParamNotes();
   }
 
-  // ---------- 参数浮窗（投屏中快捷调参；按当前投屏模式自动定位，保持现状） ----------
+  // Resolve by session identity before falling back to device topology. A session
+  // serial is its original key and can remain wireless after switching to USB.
+  function specContext(st, serial, identity) {
+    st = st || {};
+    var ss = (st.sessions || []).filter(function (s) {
+      return s.serial === serial && (!identity || !s.identity || s.identity === identity);
+    })[0];
+    if (!ss && identity) ss = (st.sessions || []).filter(function (s) { return s.identity === identity; })[0];
+    var id = identity || (ss && ss.identity) || '';
+    var ds = st.devices || [];
+    var device = ds.filter(function (d) {
+      return id ? d.identity === id : (d.serial === serial || d.wireless === serial);
+    })[0];
+    if (!id && device) id = device.identity || '';
+    if (!ss && id) ss = (st.sessions || []).filter(function (s) { return s.identity === id; })[0];
+    var profile = (st.profiles || []).filter(function (p) {
+      return id ? p.key === id : (p.key === serial || (p.serials || []).indexOf(serial) >= 0 || (p.addrs || []).indexOf(serial) >= 0);
+    })[0];
+    var cast = (ss && ss.cast) || (st.cast && st.cast.serial === serial ? st.cast : {});
+    function valid(mode) { return mode === 'usb' || mode === 'wifi' ? mode : ''; }
+    function network(key) { return /^(?:\d{1,3}\.){3}\d{1,3}:\d+$|^\[[^\]]+\]:\d+$|\._tcp(?:\.local)?\.?$/.test(key || ''); }
+    var deviceMode = device && device.state === 'device' && !device.connecting ? valid(device.connType) : '';
+    var mode = valid(ss && ss.mode) || valid(cast.mode);
+    if ((cast.active === false || (ss && ss.active === false)) && deviceMode) mode = deviceMode;
+    if (!mode && cast.spec && typeof cast.spec.wired === 'boolean') mode = cast.spec.wired ? 'usb' : 'wifi';
+    if (!mode && cast.transportSerial) {
+      var transport = ds.filter(function (d) { return d.serial === cast.transportSerial || d.wireless === cast.transportSerial; })[0];
+      mode = valid(transport && transport.connType) || (network(cast.transportSerial) ? 'wifi' : '');
+    }
+    if (!mode) mode = deviceMode;
+    var addressFallback = !mode && network(serial);
+    if (addressFallback) mode = 'wifi';
+    var reused = identity && !ss && ds.some(function (d) {
+      return (d.serial === serial || d.wireless === serial) && d.identity && d.identity !== identity;
+    });
+    return { mode: mode, identity: id, conflict: !!reused, addressFallback: addressFallback,
+      name: (profile && profile.name) || (device && device.name) || (ss && ss.devName) || serial };
+  }
+
+  function clearParamTransition() {
+    if (paramTransition) clearTimeout(paramTransition.timer);
+    paramTransition = null;
+    el('param-card').inert = false;
+    el('param-card').classList.remove('param-mode-out', 'param-mode-busy');
+  }
+
+  function closeSpecModal() {
+    ++paramOpenToken;
+    clearParamTransition();
+    clearDialogDirty('param');
+    var slider = el('param-audio-slider');
+    if (slider.__cancelAudioDrag) slider.__cancelAudioDrag();
+    el('param-modal').style.display = 'none';
+    paramState = null;
+  }
+
+  function syncSpecModal(st) {
+    if (!paramState || el('param-modal').style.display === 'none') return;
+    var state = paramState;
+    var info = specContext(st, state.serial, state.identity);
+    if (info.conflict) {
+      closeSpecModal();
+      toast('设备身份已变化，请重新打开规格参数');
+      return;
+    }
+    if (!state.identity) state.identity = info.identity;
+    if (info.name !== state.serial || !state.devName) state.devName = info.name;
+    // An original IP key is only a startup hint, never evidence of a new route.
+    if (!info.mode || (state.mode && info.addressFallback)) return;
+    if (paramTransition && paramTransition.state === state) {
+      paramTransition.mode = info.mode;
+      if (paramTransition.phase === 'out' || info.mode === state.mode) return;
+      clearParamTransition();
+    }
+    if (info.mode === state.mode) {
+      el('param-title').textContent = state.devName;
+      el('param-mode').textContent = state.mode === 'usb' ? '有线模式' : '无线模式';
+      return;
+    }
+    // Commit the old mode's focused input before replacing its DOM.
+    var focused = document.activeElement;
+    if (focused && el('param-modal').contains(focused) && typeof focused.blur === 'function') focused.blur();
+    var slider = el('param-audio-slider');
+    if (slider.__cancelAudioDrag) slider.__cancelAudioDrag();
+    var task = { state: state, mode: info.mode, phase: 'out', timer: null };
+    paramTransition = task;
+    el('param-save').disabled = true;
+    el('param-card').inert = true;
+    el('param-card').classList.add('param-mode-busy', 'param-mode-out');
+    var duration = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 140;
+    task.timer = setTimeout(function () {
+      if (paramTransition !== task || paramState !== state || el('param-modal').style.display === 'none') return;
+      state.mode = task.mode;
+      task.phase = 'in';
+      renderParamModal();
+      el('param-card').classList.remove('param-mode-out');
+      task.timer = setTimeout(function () {
+        if (paramTransition !== task || paramState !== state) return;
+        clearParamTransition();
+        el('param-save').disabled = state.mode !== 'usb' && state.mode !== 'wifi';
+        syncSpecModal(lastState);
+      }, duration);
+    }, duration);
+  }
+
+  // ---------- 参数浮窗（按当前会话自动定位；打开期间继续跟随连接切换） ----------
   function openSpecModal(serial) {
-    var name = serial;
-    var mode = 'usb';
-    if (lastState) {
-      var ss = (lastState.sessions || []).filter(function (s) { return s.serial === serial; })[0];
-      if (ss && ss.devName) name = ss.devName;
-      if (ss && ss.mode) mode = ss.mode;
-      if (!mode && ss && ss.cast && ss.cast.mode) mode = ss.cast.mode;
-      if (!mode && lastState.cast && lastState.cast.serial === serial && lastState.cast.mode) {
-        mode = lastState.cast.mode;
-      }
-    }
-    if (sessions[serial] && name === serial) {
-      name = sessions[serial].tab.querySelector('.casttab-name').textContent;
-    }
+    closeSpecModal();
+    var token = paramOpenToken;
+    var initial = specContext(lastState, serial, sessions[serial] && sessions[serial].identity);
     GetProfile(serial).then(function (p) {
-      paramState = makeParamState(serial, name, mode, p);
+      if (token !== paramOpenToken) return;
+      var current = specContext(lastState, serial, initial.identity);
+      if (current.conflict) return;
+      var mode = current.addressFallback && initial.mode && !initial.addressFallback ? initial.mode : current.mode;
+      paramState = makeParamState(serial, current.name, mode, p);
+      paramState.identity = current.identity;
+      paramState.initial = { usb: snapshotParamMode(paramState, 'usb'), wifi: snapshotParamMode(paramState, 'wifi') };
+      paramState.touched = { display: false, audio: false, feature: false };
+      showDialogTab('param', 'display');
+      clearDialogDirty('param');
       var rootState = paramState, rootBox = el('param-root-repair');
       rootBox.checked = false;
       rootBox.disabled = true;
@@ -4438,7 +5383,7 @@
       el('param-modal').style.display = '';
       watchNativeDefaults(serial, paramState, false);
     }).catch(function (e) {
-      toast('读取参数失败：' + (e && e.message ? e.message : e));
+      if (token === paramOpenToken) toast('读取参数失败：' + (e && e.message ? e.message : e));
     });
   }
 
@@ -4458,58 +5403,75 @@
   });
   function renderParamModal() {
     if (!paramState) return;
-    var modeName = paramState.mode === 'usb' ? '有线模式' : '无线模式';
-    el('param-title').textContent = paramState.devName + ' · ' + modeName + ' · 自定义参数';
-    // 只读展示当前模式（浮窗按当前投屏模式自动定位，不可手动切换）
-    el('param-mode').textContent = '当前投屏模式：' + modeName;
-    renderParamRows(paramState, el('param-rows'), el('param-note'), renderParamModal);
+    var ready = paramState.mode === 'usb' || paramState.mode === 'wifi';
+    el('param-title').textContent = paramState.devName || '投屏参数';
+    el('param-mode').textContent = ready ? (paramState.mode === 'usb' ? '有线模式' : '无线模式') : '确认中';
+    // 连接方式未确认：三页统一占位、保存禁用（rc23-UI1 与 rc23 行为一致）。
+    el('param-tabs').style.display = ready ? '' : 'none';
+    el('param-pending').style.display = ready ? 'none' : '';
+    el('param-save').disabled = !ready || !!paramTransition;
+    if (!ready) {
+      showAllDialogPages('param', false);
+      return;
+    }
+    renderParamRows(paramState, el('param-rows'), renderParamModal);
+    showDialogTab('param', currentDialogTab('param'));
+    updateParamDirtyTabs();
   }
 
   // v2.1.78：声音滑条（静态元素一次性绑定）——拖动只刷新本行，不重建面板（手感与
   // 应用屏滑条一致；此前的动态重建版本拖动会断链）。
   bindAudioSlider(el('param-audio-slider'), function (v) {
-    if (!paramState) return;
+    if (!paramState || paramTransition || !paramState.audio[paramState.mode]) return;
+    paramState.touched.audio = true;
     paramState.audio[paramState.mode] = v;
     updateParamAudioRow(paramState);
+    updateParamDirtyTabs();
   });
   el('param-audio-row').addEventListener('click', function () {
     if (!paramState) return;
     paramState.activeField = 'audio';
-    el('param-note').textContent = PARAM_NOTES.audio;
+    setNote('param-note-audio', PARAM_NOTES.audio);
   });
   el('param-vcodec-row').addEventListener('click', function () {
     if (!paramState) return;
     paramState.activeField = 'vcodec';
-    el('param-note').textContent = PARAM_NOTES.vcodec;
+    setNote('param-note-display', PARAM_NOTES.vcodec);
   });
   el('param-acodec-row').addEventListener('click', function () {
     if (!paramState) return;
     paramState.activeField = 'acodec';
-    el('param-note').textContent = PARAM_NOTES.acodec;
+    setNote('param-note-audio', PARAM_NOTES.acodec);
   });
   // v2.1.96：编码/声音行「重置」——跳默认初始值（H.264 / Opus / 电脑）。
   bindResetFlash('param-vcodec-reset', function () {
-    if (!paramState) return;
+    if (!paramState || paramTransition || !paramState.vcodec[paramState.mode]) return;
+    paramState.touched.display = true;
     paramState.vcodec[paramState.mode] = 'h264';
     renderParamModal();
   });
   bindResetFlash('param-acodec-reset', function () {
-    if (!paramState) return;
+    if (!paramState || paramTransition || !paramState.acodec[paramState.mode]) return;
+    paramState.touched.audio = true;
     paramState.acodec[paramState.mode] = 'opus';
     renderParamModal();
   });
   bindResetFlash('param-audio-reset', function () {
-    if (!paramState) return;
+    if (!paramState || paramTransition || !paramState.audio[paramState.mode]) return;
+    paramState.touched.audio = true;
     paramState.audio[paramState.mode] = 'pc';
     updateParamAudioRow(paramState);
+    updateParamDirtyTabs();
   });
-  el('param-cancel').addEventListener('click', function () { el('param-modal').style.display = 'none'; });
-  el('param-close').addEventListener('click', function () { el('param-modal').style.display = 'none'; });
+  el('param-cancel').addEventListener('click', closeSpecModal);
+  el('param-close').addEventListener('click', closeSpecModal);
   el('param-modal').addEventListener('click', function (ev) {
-    if (ev.target === el('param-modal')) el('param-modal').style.display = 'none';
+    if (ev.target === el('param-modal')) closeSpecModal();
   });
   el('param-save').addEventListener('click', function () {
-    if (!paramState) return;
+    syncSpecModal(lastState);
+    if (!paramState || paramTransition || (paramState.mode !== 'usb' && paramState.mode !== 'wifi')) return;
+    var savingState = paramState;
     var p = curParam(paramState);
     var base = baselineOf(paramState, p);
     // 每栏独立结算（纯函数 SCEZParamState.settle）：
@@ -4526,9 +5488,9 @@
     // 立即反馈：先关面板 + 提示（不等 SaveProfileAndRestart 全流程完成——
     // 后端 RestartCast 要等杀树/重启/设备上线，挂在其 Promise 后关面板会"晚关"）；
     // 保存失败时面板已关：仅错误 toast（参数未生效，用户可重新打开浮窗重试）。
-    el('param-modal').style.display = 'none';
+    closeSpecModal();
     toast('已保存，正在以新参数重新投屏…');
-    SaveProfileAndRestart(paramState.serial, paramState.mode, r.value, s2.value, b.value, custom, paramState.audio[paramState.mode], !!p.lockFps, !!p.lockBitrate, paramState.vcodec[paramState.mode], paramState.acodec[paramState.mode]).then(function () {
+    SaveProfileAndRestart(savingState.serial, savingState.mode, r.value, s2.value, b.value, custom, savingState.audio[savingState.mode], !!p.lockFps, !!p.lockBitrate, savingState.vcodec[savingState.mode], savingState.acodec[savingState.mode]).then(function () {
       refreshNow();
     }).catch(function (e) {
       toast('保存失败：' + (e && e.message ? e.message : e));
@@ -4546,7 +5508,7 @@
   // ---------- 设置面板（右上角齿轮；两个开关即时保存，重启后保持） ----------
   // Go 侧 settings.json 是权威值：每次快照回家；面板打开时按它渲染开关状态。
   // 点击开关先本地翻转（即时反馈）再调 SetSettings 落盘，失败提示（快照下一轮会纠正）。
-  var settingsState = { showParamOverlay: true, closeToTray: false, keepDeviceAwake: true, videoSmoothing: false, videoSmoothingFrames: 2, otherAppWinSystemDecorations: true, notificationDefault: true, notificationPreview: true, notificationDevices: {}, notificationCopyMinutes: 1440 };
+  var settingsState = { showParamOverlay: true, closeToTray: false, keepDeviceAwake: true, autoBlackoutMainCast: true, videoSmoothing: false, videoSmoothingFrames: 2, otherAppWinSystemDecorations: true, notificationDefault: true, notificationPreview: true, notificationDevices: {}, notificationCopyMinutes: 1440 };
   var notificationDraft = null;
   // ---------- Device notification policies (rc.9 settings migrate in the backend) ----------
   function notificationPolicyFor(identity) {
@@ -4854,6 +5816,10 @@
     setSwitch(el('set-overlay'), settingsState.showParamOverlay);
     setSwitch(el('set-tray'), settingsState.closeToTray);
     setSwitch(el('set-keep-awake'), settingsState.keepDeviceAwake);
+    setSwitch(el('set-auto-blackout'), settingsState.autoBlackoutMainCast);
+    el('set-auto-blackout').setAttribute('aria-disabled', String(autoBlackoutSaving));
+    setSwitch(el('set-force-perspective-key'), settingsState.forcePerspectiveColorKey);
+    el('set-force-perspective-key').setAttribute('aria-disabled', String(forcePerspectiveKeySaving));
     setSwitch(el('set-smoothing'), settingsState.videoSmoothing);
     [1, 2].forEach(function (frames) {
       var button = el(frames === 1 ? 'set-smoothing-one' : 'set-smoothing-two');
@@ -4869,6 +5835,12 @@
     settingsState.showParamOverlay = !!st.settings.showParamOverlay;
     settingsState.closeToTray = !!st.settings.closeToTray;
     settingsState.keepDeviceAwake = st.settings.keepDeviceAwake !== false;
+    if (!autoBlackoutSaving) {
+      settingsState.autoBlackoutMainCast = st.settings.autoBlackoutMainCast !== false;
+    }
+    if (!forcePerspectiveKeySaving) {
+      settingsState.forcePerspectiveColorKey = st.settings.forcePerspectiveColorKey === true;
+    }
     if (!smoothingSaving) {
       settingsState.videoSmoothing = st.settings.videoSmoothing === true;
       settingsState.videoSmoothingFrames = st.settings.videoSmoothingFrames === 1 ? 1 : 2;
@@ -4929,6 +5901,52 @@
     });
   });
 
+  var autoBlackoutSaving = false;
+  function toggleAutoBlackout() {
+    if (autoBlackoutSaving) return;
+    var previous = settingsState.autoBlackoutMainCast;
+    settingsState.autoBlackoutMainCast = !previous;
+    autoBlackoutSaving = true;
+    renderSettings();
+    SetAutoBlackoutMainCast(!previous).catch(function (e) {
+      settingsState.autoBlackoutMainCast = previous;
+      toast('设置保存失败：' + (e && e.message ? e.message : e));
+    }).finally(function () {
+      autoBlackoutSaving = false;
+      renderSettings();
+    });
+  }
+  el('set-auto-blackout').addEventListener('click', toggleAutoBlackout);
+  el('set-auto-blackout').addEventListener('keydown', function (ev) {
+    if (ev.key === ' ' || ev.key === 'Enter') {
+      ev.preventDefault();
+      toggleAutoBlackout();
+    }
+  });
+
+  var forcePerspectiveKeySaving = false;
+  function toggleForcePerspectiveColorKey() {
+    if (forcePerspectiveKeySaving) return;
+    var previous = !!settingsState.forcePerspectiveColorKey;
+    settingsState.forcePerspectiveColorKey = !previous;
+    forcePerspectiveKeySaving = true;
+    renderSettings();
+    SetForcePerspectiveColorKey(!previous).catch(function (e) {
+      settingsState.forcePerspectiveColorKey = previous;
+      toast('设置保存失败：' + (e && e.message ? e.message : e));
+    }).finally(function () {
+      forcePerspectiveKeySaving = false;
+      renderSettings();
+    });
+  }
+  el('set-force-perspective-key').addEventListener('click', toggleForcePerspectiveColorKey);
+  el('set-force-perspective-key').addEventListener('keydown', function (ev) {
+    if (ev.key === ' ' || ev.key === 'Enter') {
+      ev.preventDefault();
+      toggleForcePerspectiveColorKey();
+    }
+  });
+
   var smoothingSaving = false;
   function toggleVideoSmoothing() {
     if (smoothingSaving) return;
@@ -4974,24 +5992,45 @@
   el('set-smoothing-two').addEventListener('click', function () { selectVideoSmoothingFrames(2); });
 
   var lastProfileSaveError = '';
+  var nextStateRequest = 0;
+  var appliedStateRequest = 0;
   // ---------- 轮询主循环 ----------
   function refreshNow() {
     tickAppWins(); // 二期：应用面板数据轮询（枚举未完成时重拉；独立于快照 diff）
+    var pairPollToken = pairSubmitToken;
+    var pairPollReady = !pairSubmitPending;
+    var stateRequest = ++nextStateRequest;
     GetState().then(function (st) {
+      if (stateRequest < appliedStateRequest) return;
+      appliedStateRequest = stateRequest;
       lastState = st;
+      syncSpecModal(st);
+      syncAppSetModal(st);
       if (st.profileSaveError && st.profileSaveError !== lastProfileSaveError) toast('设备档案保存失败，当前连接可继续使用：' + st.profileSaveError);
       lastProfileSaveError = st.profileSaveError || '';
+      // 运行期能力学习：系统把扫码页拦成 BlockedAppStreamingActivity 时后端下发一次性提示，
+      // 同时快照里该设备 wechatScan 变 false → 入口自动消失。
+      var scanNotice = st.weChatScanNotice || '';
+      if (scanNotice && scanNotice !== lastWeChatScanNotice) { lastWeChatScanNotice = scanNotice; toast(scanNotice); }
+      else if (!scanNotice) { lastWeChatScanNotice = ''; }
       syncSettings(st);
       syncAppWins(st.appWins || []);
       appLaunchDialog.sync(st.appWins || []);
+      cameraPermissionDialog.sync((st.appWins || []).filter(function (w) { return w.cameraPermissionID > 0; }).map(function (w) {
+        return Object.assign({}, w, {notificationWindow: false, launchFailureID: w.cameraPermissionID, phase: 'app-camera-permission'});
+      }));
       var j = JSON.stringify(st);
-      if (j !== lastJson) {
+      var changed = j !== lastJson;
+      if (changed) {
         lastJson = j;
         renderDevices(st);
         renderSessions(st);
         renderNewDevice(st);
-        renderPairStatus(st);
       }
+      // Local busy changes are not part of snapshot JSON. A second immediate
+      // failure can equal the first snapshot and still must unlock the button.
+      // Ignore responses requested before this submission was acknowledged.
+      if ((changed || pairBusy) && pairPollReady && pairPollToken === pairSubmitToken) renderPairStatus(st);
       syncAppEntryMasks();
     }).catch(function (e) {
       toast('桥接异常：' + (e && e.message ? e.message : e));
@@ -5002,9 +6041,14 @@
   // 档案地址分层 connect 立刻执行，不等 15s 节流）；点击即时反馈"正在扫描"。
   el('btn-refresh').addEventListener('click', function () {
     toast('正在扫描设备…');
+    var stateRequest = ++nextStateRequest;
     ForceDiscover().then(function (st) {
+      if (stateRequest < appliedStateRequest) return;
+      appliedStateRequest = stateRequest;
       lastState = st;
       lastJson = JSON.stringify(st);
+      syncSpecModal(st);
+      syncAppSetModal(st);
       renderDevices(st);
       renderSessions(st);
       renderNewDevice(st);

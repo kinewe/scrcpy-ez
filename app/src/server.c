@@ -22,10 +22,8 @@
 # include <unistd.h> // gethostname
 #endif
 
-#define SC_SERVER_FILENAME "scrcpy-server"
 
 #define SC_SERVER_PATH_DEFAULT PREFIX "/share/scrcpy/" SC_SERVER_FILENAME
-#define SC_DEVICE_SERVER_PATH "/data/local/tmp/scrcpy-server.jar"
 
 #define SC_ADB_PORT_DEFAULT 5555
 #define SC_SOCKET_NAME_PREFIX "scrcpy_"
@@ -315,6 +313,13 @@ execute_server(struct sc_server *server,
     } while(0)
 
     ADD_PARAM("scid=%08x", params->scid);
+    if (params->perspective_camera) {
+        VALIDATE_STRING(params->perspective_package);
+        ADD_PARAM("perspective_camera=true");
+        // Negotiate the additional camera-state event. Old clients never receive it.
+        ADD_PARAM("camera_eviction_notice=true");
+        ADD_PARAM("perspective_package=%s", params->perspective_package);
+    }
 
     // scrcpy-ez: 控制端名称（电脑主机名）——设备端通知显示"谁在投屏"（v2.1.75+）；
     // 取不到则跳过（server 回退设备名）。
@@ -470,6 +475,9 @@ execute_server(struct sc_server *server,
         // By default, clipboard_autosync is true
         ADD_PARAM("clipboard_autosync=false");
     }
+    if (params->clipboard_image_limit) {
+        ADD_PARAM("clipboard_image_limit=%u", params->clipboard_image_limit);
+    }
     if (!params->downsize_on_error) {
         // By default, downsize_on_error is true
         ADD_PARAM("downsize_on_error=false");
@@ -485,6 +493,8 @@ execute_server(struct sc_server *server,
     if (params->new_display) {
         VALIDATE_STRING(params->new_display);
         ADD_PARAM("new_display=%s", params->new_display);
+        const char *follow_main = getenv("SCEZ_VD_FOLLOW_MAIN_ORIENTATION");
+        if (follow_main && !strcmp(follow_main, "1")) ADD_PARAM("vd_follow_main_orientation=true");
         const char *reuse_app = getenv("SCEZ_REUSE_APP_TASK");
         if (reuse_app && !strcmp(reuse_app, "1")) {
             ADD_PARAM("reuse_app_task=true");
@@ -492,10 +502,20 @@ execute_server(struct sc_server *server,
     }
     if (params->flex_display) {
         ADD_PARAM("flex_display=true");
+        const char *native_ui_match = getenv("SCEZ_NATIVE_UI_PIXEL_MATCH");
+        if (native_ui_match && !strcmp(native_ui_match, "1")) {
+            ADD_PARAM("native_ui_pixel_match=true");
+        }
         // ez distinguishes automatic GUI density from explicitly fixed DPI.
         const char *auto_dpi = getenv("SCEZ_VD_AUTO_DPI");
         if (auto_dpi && !strcmp(auto_dpi, "1")) {
             ADD_PARAM("flex_display_auto_dpi=true");
+            const char *preserve_ui = getenv("SCEZ_VD_PRESERVE_UI");
+            // Camera policy must not change the application's logical canvas.
+            // The desktop camera stream is independent of the display's DPI.
+            if (!preserve_ui || strcmp(preserve_ui, "0")) {
+                ADD_PARAM("flex_display_preserve_ui=true");
+            }
         }
     }
     if (params->ignore_video_encoder_constraints) {
@@ -653,6 +673,7 @@ sc_server_init(struct sc_server *server, const struct sc_server_params *params,
     server->video_socket = SC_SOCKET_NONE;
     server->audio_socket = SC_SOCKET_NONE;
     server->control_socket = SC_SOCKET_NONE;
+    server->perspective_socket = SC_SOCKET_NONE;
 
     sc_adb_tunnel_init(&server->tunnel);
 
@@ -743,6 +764,7 @@ sc_server_connect_to(struct sc_server *server, struct sc_server_info *info) {
     sc_socket video_socket = SC_SOCKET_NONE;
     sc_socket audio_socket = SC_SOCKET_NONE;
     sc_socket control_socket = SC_SOCKET_NONE;
+    sc_socket perspective_socket = SC_SOCKET_NONE;
 
     // scrcpy-ez: connect watchdog（仅 reverse 模式需要 —— forward 模式已有
     // 重试上限；reverse 模式的 accept 没有任何超时，端口被另一实例占用时
@@ -790,6 +812,11 @@ sc_server_connect_to(struct sc_server *server, struct sc_server_info *info) {
             if (control_socket == SC_SOCKET_NONE) {
                 goto fail;
             }
+        }
+
+        if (server->params.perspective_camera) {
+            perspective_socket = net_accept_intr(&server->intr, tunnel->server_socket);
+            if (perspective_socket == SC_SOCKET_NONE) { goto fail; }
         }
 
         // 全部连接已到齐 —— 立即解除看门狗（成功路径；失败路径由 fail 兜底）
@@ -851,6 +878,14 @@ sc_server_connect_to(struct sc_server *server, struct sc_server_info *info) {
         }
     }
 
+    if (server->params.perspective_camera && tunnel->forward) {
+        perspective_socket = net_socket();
+        uint32_t host = server->params.tunnel_host ? server->params.tunnel_host : IPV4_LOCALHOST;
+        uint16_t port = server->params.tunnel_port ? server->params.tunnel_port : tunnel->local_port;
+        if (perspective_socket == SC_SOCKET_NONE || !net_connect_intr(&server->intr, perspective_socket, host, port)) { goto fail; }
+    }
+    if (perspective_socket != SC_SOCKET_NONE) { net_set_tcp_nodelay(perspective_socket, true); }
+
     if (control_socket != SC_SOCKET_NONE) {
         // Disable Nagle's algorithm for the control socket
         // (it only impacts the sending side, so it is useless to set it
@@ -880,6 +915,7 @@ sc_server_connect_to(struct sc_server *server, struct sc_server_info *info) {
     server->video_socket = video_socket;
     server->audio_socket = audio_socket;
     server->control_socket = control_socket;
+    server->perspective_socket = perspective_socket;
 
     return true;
 
@@ -905,6 +941,8 @@ fail:
             LOGW("Could not close control socket");
         }
     }
+
+    if (perspective_socket != SC_SOCKET_NONE) { net_close(perspective_socket); }
 
     if (tunnel->enabled) {
         // Always leave this function with tunnel disabled
@@ -1290,6 +1328,8 @@ run_server(void *data) {
         net_interrupt(server->audio_socket);
     }
 
+    if (server->perspective_socket != SC_SOCKET_NONE) { net_interrupt(server->perspective_socket); }
+
     if (server->control_socket != SC_SOCKET_NONE) {
         // There is no control_socket if --no-control is set
         net_interrupt(server->control_socket);
@@ -1297,7 +1337,10 @@ run_server(void *data) {
 
     // Give some delay for the server to terminate properly
 #define WATCHDOG_DELAY SC_TICK_FROM_SEC(1)
-    sc_tick deadline = sc_tick_now() + WATCHDOG_DELAY;
+    // Allow the Android server to release the display, close the camera and
+    // virtual device, then finish association cleanup before ADB disconnects.
+    sc_tick delay = params->perspective_camera ? SC_TICK_FROM_SEC(20) : WATCHDOG_DELAY;
+    sc_tick deadline = sc_tick_now() + delay;
     bool terminated = sc_process_observer_timedwait(&observer, deadline);
 
     // After this delay, kill the server if it's not dead already.
@@ -1365,6 +1408,7 @@ sc_server_destroy(struct sc_server *server) {
     }
 
     free(server->serial);
+    if (server->perspective_socket != SC_SOCKET_NONE) { net_close(server->perspective_socket); }
     free(server->device_socket_name);
     sc_intr_destroy(&server->intr);
     sc_cond_destroy(&server->cond_stopped);

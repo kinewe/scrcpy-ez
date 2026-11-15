@@ -22,9 +22,10 @@ import (
 // Device 是设备列表中的一个条目。
 // 同一台设备的 USB 与无线 transport 合并为一栏：Serial/ConnType 取 USB 优先，
 // Wireless 保存配对的无线地址（IP:port）；仅无线时 Serial 即 IP:port、Wireless 为空。
-// Res/FPS 是设备原生参数（wm size/peak_refresh_rate），统一大数字在前（宽≥高，
-// 不做方向检测——主人拍板）；WirelessRes 是按 bat 无线档（--max-size 1920）
-// 等比换算的无线投屏分辨率（同样宽≥高），仅无线卡片展示（无线固定 60fps）。
+// Manager enriches raw transports with native Res/FPS. App display projection
+// replaces these with effective per-mode casting specifications. Physical
+// measurements must come from the raw snapshot or native-display cache, never
+// from projected cards. Dimensions use the larger side first.
 type Device struct {
 	Serial        string `json:"serial"`
 	State         string `json:"state"`    // device / unauthorized / offline
@@ -38,10 +39,10 @@ type Device struct {
 	StableSerial  string `json:"stableSerial,omitempty"`  // 已确认完整短号；空值不会清除档案身份
 	Wireless      string `json:"wireless"`                // 同设备无线地址（USB+无线并存时），否则为空
 	WirelessIP    string `json:"wirelessIP"`              // 前端副行显示用无线地址（档案 active 排序取；无 active 为空）
-	WirelessRes   string `json:"wirelessRes"`             // 无线投屏分辨率（长边 1920 等比换算），未知为空
+	WirelessRes   string `json:"wirelessRes"`             // 无线投屏规格，宽≥高，未知为空
 	Battery       int    `json:"battery"`                 // 0 表示未知
-	Res           string `json:"res"`                     // 原生分辨率，宽≥高（大数字在前），未知为空
-	FPS           int    `json:"fps"`                     // 0 表示未知
+	Res           string `json:"res"`                     // 原始 transport 为原生尺寸；展示卡为该模式投屏规格
+	FPS           int    `json:"fps"`                     // 原始 transport 为设备能力；展示卡为投屏 FPS 上限，0=未知
 	// Tls = 该设备有 TLS 无线形态可用（档案 mode=tls 地址 / mDNS tls 服务在播）。
 	// WirelessForm = 档案记录的最新无线形态（tls/tcpip/空），前端"已入档"副行标注用。
 	Tls          bool   `json:"tls"`
@@ -58,10 +59,16 @@ type Device struct {
 	// AppBusy = 该设备完全无图标缓存、正在首次读取。按不可变 identity 填充，
 	// 完成或固定 8s 后解除；普通列表检测/差分补图不禁用入口。
 	AppBusy bool `json:"appBusy,omitempty"`
+	// WeChatScan = 该设备具备微信「扫一扫」直达接口：com.tencent.mm 的
+	// ShortCutDispatchActivity 能接收动态快捷方式分发 Intent（RC29 扫一扫直达所用）。
+	// 未安装微信 / 版本无该 Activity → false，前端据此隐藏「微信扫一扫」按钮。
+	WeChatScan bool `json:"wechatScan,omitempty"`
 }
 
 type cachedSpec struct {
-	mu           sync.Mutex // refresh and track can enrich the same device concurrently
+	mu           sync.Mutex      // refresh and track can enrich the same device concurrently
+	connection   connectionToken // raw server/transport generation; prevents address-reuse cache leakage
+	unscoped     bool            // queried before the event stream supplied a connection token
 	identity     string
 	name         string
 	marketname   string
@@ -71,8 +78,10 @@ type cachedSpec struct {
 	battery      int
 	res          string
 	fps          int
+	weChatScan   bool
 	specAt       time.Time
 	batAt        time.Time
+	weChatScanAt time.Time
 }
 
 // Manager 缓存每台设备的重查询结果（市场名永不过期，电量/规格带 TTL），
@@ -85,6 +94,9 @@ type Manager struct {
 	configPath       string
 	mu               sync.Mutex
 	cache            map[string]*cachedSpec
+	enrichSlots      chan struct{}
+	mdnsRefreshMu    sync.Mutex
+	mdnsRefresh      *mdnsRefreshRequests
 
 	connectMu   sync.Mutex
 	lastConnect time.Time
@@ -99,7 +111,8 @@ type Manager struct {
 	// 缺省路径与生产完全一致）。
 	srvKillFn  func(ctx context.Context) error
 	srvStartFn func(ctx context.Context) error
-	srvCheckFn func(ctx context.Context) string
+	srvCheckFn func(ctx context.Context) ServerCheck
+	srvCommand func(context.Context, ...string) (string, error)
 }
 
 func (m *Manager) EventHub() *deviceevents.Hub {
@@ -108,10 +121,12 @@ func (m *Manager) EventHub() *deviceevents.Hub {
 }
 
 const (
-	batteryTTL   = 15 * time.Second
-	specTTL      = 60 * time.Second
-	connectTTL   = 30 * time.Second // 无线自恢复 connect 的最小间隔
-	connectLimit = 5 * time.Second  // 单次 connect 超时
+	batteryTTL = 15 * time.Second
+	specTTL    = 60 * time.Second
+	// 微信「扫一扫」直达能力：包管理器解析结果（安装/版本不会频繁变），慢刷新即可。
+	weChatScanTTL = 2 * time.Minute
+	connectTTL    = 30 * time.Second // 无线自恢复 connect 的最小间隔
+	connectLimit  = 5 * time.Second  // 单次 connect 超时
 )
 
 func New(adbPath, configPath string) *Manager {
@@ -119,6 +134,9 @@ func New(adbPath, configPath string) *Manager {
 }
 
 func (m *Manager) run(ctx context.Context, args ...string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if m.runFn != nil {
 		return m.runFn(ctx, args...)
 	}
@@ -147,8 +165,18 @@ func (m *Manager) Pair(ctx context.Context, ip, port, code string) (string, erro
 	}
 	c := exec.CommandContext(ctx, m.adbPath, "pair", ip+":"+port, code)
 	HideConsole(c)
-	out, err := c.Output()
+	out, err := c.CombinedOutput()
 	return string(out), err
+}
+
+// TransportState preserves ADB's authorization diagnostic, including stderr.
+func (m *Manager) TransportState(ctx context.Context, addr string) (string, error) {
+	out, err := m.run(ctx, "-s", addr, "get-state")
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		out += "\n" + string(exitErr.Stderr)
+	}
+	return strings.TrimSpace(out), err
 }
 
 // Getprop 查询设备属性（shell getprop），供配对接入后的身份/市场名验证。
@@ -207,26 +235,22 @@ func (m *Manager) Tcpip(ctx context.Context, serial, port string) error {
 func PairErrKind(out string) string {
 	s := strings.TrimSpace(out)
 	switch {
-	case strings.HasPrefix(s, "Successfully paired to "):
-		return ""
 	case strings.Contains(s, "Wrong password"):
 		return "code"
 	case strings.Contains(s, "Unable to start pairing client"):
 		return "port"
 	case strings.Contains(s, "parse address"):
 		return "addr"
-	default:
-		return "other"
 	}
+	// Combined stdout/stderr can start with ADB daemon startup diagnostics.
+	// Accept a success line, while rejecting "Failed: Successfully paired ...".
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "Successfully paired to ") {
+			return ""
+		}
+	}
+	return "other"
 }
-
-// --- v2.1.77：5037 抢庄（旧版 adb server 抢占时夺回，确保 37 坐庄） ---
-//
-// 背景：别的软件自带的旧版 adb（≤30.x，如 Iriun Webcam 29.0.1）开机自启抢占 5037
-// 后，37 client 的 mdns/pair 等新服务被应答 "unknown host service"——原生 TLS
-// （无线调试）永远开不上来。方案（主人拍板）：检测归属 → 不完整才抢庄。
-// 先例：flect 的 "Restart ADB" 按钮（kill-server），生态已证明该动作正当；
-// ez 只是自动化 + 条件化 + 带快速重试保护（压空窗、循环重试、抢后天然保庄）。
 
 var (
 	// takeoverRounds：抢庄最大轮数（拍板：3 轮——单轮失败率 <1%，3 轮全败 ≈ 百万分之一）。
@@ -248,33 +272,6 @@ func (m *Manager) runCombined(ctx context.Context, args ...string) (string, erro
 	return buf.String(), err
 }
 
-// CheckServer 执行 `adb mdns check`（默认 5037）并返回合并输出，供归属判据使用。
-// 该命令是 server 的"版本指纹"探针：5037 无 server 时命令会自动 fork 一个本版（37）
-// server → 输出正常版本串 → 自动判"完整"（交给 37 坐庄）。
-func (m *Manager) CheckServer(ctx context.Context) string {
-	if m.srvCheckFn != nil {
-		return m.srvCheckFn(ctx)
-	}
-	out, _ := m.runCombined(ctx, "mdns", "check")
-	return out
-}
-
-// ServerHealthy 是 5037 归属判据（纯函数）：输出含 "unknown host service" → false，
-// 即 5037 上坐着 ≤30.x 的旧版 server（37 client 的 mdns 服务名它不认识）；
-// 其它任何应答（37 版本串 [adb discovery 0.0.0] / 31–36 的 mdns daemon unavailable /
-// mdns discovery disabled）= true——pair/TLS 不依赖 mDNS 功能，31–36 算"完整"；
-// 空输出（命令没跑起来）判 true：保守不动。
-func ServerHealthy(out string) bool {
-	return !strings.Contains(out, "unknown host service")
-}
-
-// ServerIs37 是"37 坐庄"判据（纯函数，抢庄验证的唯一判据）：
-// mdns check 输出含 "adb discovery" → true（实测 37 输出
-// "mdns daemon version [adb discovery 0.0.0]"，只有 37 的 mdns daemon 报这个版本串）。
-func ServerIs37(out string) bool {
-	return strings.Contains(out, "adb discovery")
-}
-
 // KillServer 执行 `adb kill-server`（抢庄动作：清掉当前坐庄者，含旧版）。
 func (m *Manager) KillServer(ctx context.Context) error {
 	if m.srvKillFn != nil {
@@ -284,7 +281,7 @@ func (m *Manager) KillServer(ctx context.Context) error {
 	return err
 }
 
-// StartServer 执行 `adb start-server`（抢庄动作：fork 本版 37；5037 已有 server
+// StartServer 执行 `adb start-server`（抢庄动作：启动自带服务；5037 已有 server
 // 时只复用——被抢回的判定交给随后的 CheckServer 验证）。
 func (m *Manager) StartServer(ctx context.Context) error {
 	if m.srvStartFn != nil {
@@ -294,12 +291,8 @@ func (m *Manager) StartServer(ctx context.Context) error {
 	return err
 }
 
-// TakeoverServer 抢庄（v2.1.77 核心算法）：把 5037 从"不完整 server（≤29）"手中
-// 夺回并确保 37 坐庄。算法（拍板）：kill-server → 快速重试 start-server（~150ms/次）
-// → 验证 37 指纹（mdns check 含 "adb discovery"）→ 最多 3 轮。
-// 返回最后一次 mdns check 输出与错误（成功=nil；全败/超时=非 nil，调用方记日志）。
-// 只在"归属检测判不完整"时调用——完整（≥30）环境零动作、绝不走到这里。
-// 投屏在场也不跳过（跳过 = 原生 TLS 永远开不上来；投屏短暂断流由 bat 自愈重连兜底）。
+// TakeoverServer restarts shared ADB and verifies the replacement with the
+// same capability check used before restarting it.
 func (m *Manager) TakeoverServer(ctx context.Context) (string, error) {
 	var last string
 	for round := 0; round < takeoverRounds; round++ {
@@ -314,12 +307,12 @@ func (m *Manager) TakeoverServer(ctx context.Context) (string, error) {
 			}
 			// 抢跑：fork 我们的 37（若 5037 已有对手坐庄，start 只是复用——由验证判出）。
 			_ = m.StartServer(ctx)
-			last = m.CheckServer(ctx)
-			if ServerIs37(last) {
+			check := m.CheckServer(ctx)
+			last = check.Detail
+			if check.State == ServerCompatible {
 				return last, nil
 			}
-			// 被对手抢回（unknown host service）→ 本轮放弃，下一轮重 kill 再抢。
-			if !ServerHealthy(last) {
+			if check.State == ServerIncompatible {
 				break
 			}
 			select {
@@ -329,7 +322,7 @@ func (m *Manager) TakeoverServer(ctx context.Context) (string, error) {
 			}
 		}
 	}
-	return last, errors.New("抢庄失败：未能在 5037 上取得 37 坐庄")
+	return last, errors.New("无法在 5037 上启动并验证兼容的 ADB 服务")
 }
 
 // RecoverIfEmpty 在设备列表为空时尝试按 config.txt 记忆地址 connect 一次。
@@ -408,6 +401,10 @@ func (m *Manager) List(ctx context.Context) ([]Device, error) {
 // devicesFromOutput 从 `adb devices -l` 文本输出构建合并设备列表。
 // track-devices 的列表块与 devices -l 同格式，track 解析复用同一套构建逻辑。
 func (m *Manager) devicesFromOutput(ctx context.Context, out string) []Device {
+	return m.devicesFromOutputProgress(ctx, out, nil)
+}
+
+func (m *Manager) deviceGroups(out string) [][]RawDevice {
 	raw := ParseDevicesL(out)
 	// Group only confirmed transports; model/name grouping loses same-model phones.
 	idx := map[string]int{}
@@ -426,18 +423,7 @@ func (m *Manager) devicesFromOutput(ctx context.Context, out string) []Device {
 			groups = append(groups, []RawDevice{r})
 		}
 	}
-	devs := make([]Device, 0, len(groups))
-	for _, g := range groups {
-		d := m.buildDevice(ctx, g)
-		d.StableSerial = StableSerial(d.Serial)
-		if m.identityResolver != nil {
-			if key, stable := m.identityResolver(d.Serial); key != "" {
-				d.Identity, d.StableSerial = key, stable
-			}
-		}
-		devs = append(devs, d)
-	}
-	return devs
+	return groups
 }
 
 // buildDevice 把一组同 model（或单个无 model）的 transport 条目合并为一台设备。
@@ -505,25 +491,14 @@ func mergeDevice(a *Device, b Device) {
 }
 
 func (m *Manager) enrich(ctx context.Context, d *Device) {
-	identity := IdentityKey("", "", "", d.Serial)
-	if m.identityResolver != nil {
-		if confirmed, _ := m.identityResolver(d.Serial); confirmed != "" {
-			identity = confirmed
-		} else if strings.HasPrefix(identity, "pending:") {
-			identity = "" // a missing broadcast must not repeatedly invalidate a known owner
-		}
-	}
-	m.mu.Lock()
-	c, ok := m.cache[d.Serial]
-	if !ok || identity != "" && c.identity != identity {
-		c = &cachedSpec{identity: identity}
-		m.cache[d.Serial] = c
-		d.Name = "" // failed enrichment of a new owner must not retain an old display name
-	}
-	m.mu.Unlock()
-
+	c := m.cacheFor(ctx, d)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	release, ok := m.acquireEnrichment(ctx)
+	if !ok {
+		return
+	}
+	defer release()
 	now := time.Now()
 	if c.name != "" {
 		// 市场名补采（多会话竞态自愈）：首次 getprop 失败用 man+model 兜底缓存后，
@@ -560,7 +535,9 @@ func (m *Manager) enrich(ctx context.Context, d *Device) {
 			c.model, _ = m.run(ctx, "-s", d.Serial, "shell", "getprop", "ro.product.model")
 			c.model = strings.TrimSpace(c.model)
 		}
-		c.at = now
+		if ctx.Err() == nil {
+			c.at = now
+		}
 		if c.name != "" {
 			d.Name = c.name
 		}
@@ -574,9 +551,19 @@ func (m *Manager) enrich(ctx context.Context, d *Device) {
 		if v, err := m.run(ctx, "-s", d.Serial, "shell", "dumpsys", "battery"); err == nil {
 			c.battery = ParseBatteryLevel(v)
 		}
-		c.batAt = now
+		if ctx.Err() == nil {
+			c.batAt = now
+		}
 	}
 	d.Battery = c.battery
+
+	if now.Sub(c.weChatScanAt) > weChatScanTTL {
+		c.weChatScan = m.hasWeChatScan(ctx, d.Serial)
+		if ctx.Err() == nil {
+			c.weChatScanAt = now
+		}
+	}
+	d.WeChatScan = c.weChatScan
 
 	if now.Sub(c.specAt) > specTTL {
 		if v, err := m.run(ctx, "-s", d.Serial, "shell", "wm", "size"); err == nil {
@@ -587,7 +574,9 @@ func (m *Manager) enrich(ctx context.Context, d *Device) {
 		if v, err := m.run(ctx, "-s", d.Serial, "shell", "settings", "get", "system", "peak_refresh_rate"); err == nil {
 			c.fps = ParsePeakRefresh(v)
 		}
-		c.specAt = now
+		if ctx.Err() == nil {
+			c.specAt = now
+		}
 	}
 	// 分辨率统一大数字在前（宽≥高），不做方向检测（主人拍板：减少不兼容）
 	d.Res = SortWideFirst(c.res)

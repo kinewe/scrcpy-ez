@@ -44,8 +44,26 @@ ok('errText conn-port 含手动填写', P.errText('conn-port').indexOf('手动�
 ok('errText timeout 含网络', P.errText('timeout').indexOf('同一网络') >= 0);
 // gui55：配对已连接但读不到设备序列号（不得静默残缺入档）
 ok('errText serial 含序列号', P.errText('serial').indexOf('序列号') >= 0);
+ok('未授权明确提示允许调试与配对码', P.errText('adb-unauthorized').includes('允许') && P.errText('adb-unauthorized').includes('配对码'));
 ok('errText 未知码回落 fallback', P.errText('unknown-x', '自定义文案') === '自定义文案');
 ok('errText 未知码默认文案', P.errText('unknown-x').length > 0);
+
+// Both the inline failure and pairing-only toast use this formatter. Sentence
+// breaks must be intentional; dots in endpoint addresses and files stay intact.
+for (const code of ['pair-code', 'pair-port', 'conn-port', 'connect-failed', 'adb-unauthorized', 'timeout', 'addr-invalid', 'serial', 'runtime-missing', 'internal']) {
+  const text = P.formatError(P.errText(code));
+  const lines = text.split('\n');
+  ok(code + ' 两行且无句号结尾', lines.length === 2 && lines.every(line => line.length > 0 && !/[。．.]$/.test(line)));
+  eq(code + ' 格式重复处理稳定', P.formatError(text), text);
+}
+eq('按句分行', P.formatError('配对失败。请检查后重试。'), '配对失败\n请检查后重试');
+eq('单句按分句分行', P.formatError('地址不正确，请重新输入。'), '地址不正确\n请重新输入');
+eq('保留 IP 端口与文件名', P.formatError('连接 192.0.2.159:5555 失败。请检查 adb.exe。'), '连接 192.0.2.159:5555 失败\n请检查 adb.exe');
+eq('保留英文文件名与版本号', P.formatError('Missing adb.exe in v2.4.2. Retry.'), 'Missing adb.exe in v2.4.2\nRetry');
+eq('换行与末尾句号归一', P.formatError(' 错误。\r\n 建议. '), '错误\n建议');
+eq('多句合为两行', P.formatError('错误。先检查。再重试。'), '错误\n先检查，再重试');
+eq('单个无标点错误仍有两行', P.formatError('读取失败'), '读取失败\n请检查后重试');
+eq('空错误使用默认两行提示', P.formatError('   '), P.errText('internal'));
 
 // --- stepLabel ---
 eq('stepLabel pair', P.stepLabel('pair'), '配对设备（输入 6 位配对码）');

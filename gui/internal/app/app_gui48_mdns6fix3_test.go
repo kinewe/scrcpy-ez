@@ -8,10 +8,11 @@ import (
 	"scrcpy-ez/gui/internal/discovery"
 )
 
-// gui48-mdns6fix3：App 尊重 A 层事件 diff（force emit 落地翻 active）。
+// App respects forced Added events, but still verifies the responding endpoint.
 
 func TestGui48Mdns6fix3ForceAddedTurnsActive(t *testing.T) {
 	a, _ := newTestApp()
+	installMdnsVerificationFakes(t, a)
 	gui31K80Profiles(a)
 	a.applyTrackUpdate(nil)
 
@@ -20,15 +21,16 @@ func TestGui48Mdns6fix3ForceAddedTurnsActive(t *testing.T) {
 	a.profiles.MarkAddrStale(fixtureArchiveKey(a.profiles, "REDMI K80"), svc.Addr)
 	a.applyMdnsSnapshot([]discovery.MdnsService{svc}, true, nil, nil)
 
-	// A 层 QU 应答强制 emit：Snapshot 与上一份相同，但 Added=全量。
+	// QU 应答强制 emit：Snapshot 不变，Added 仅含实际应答的服务。
 	a.onMdnsTrackEvents(context.Background(), adb.MdnsTrackEvents{
 		Snapshot: []discovery.MdnsService{svc},
 		Added:    []discovery.MdnsService{svc},
 		Removed:  nil,
 		First:    false,
 	})
+	waitMdnsVerified(t, a, fixtureArchiveKey(a.profiles, "REDMI K80"), svc.Addr)
 	if mdnsTlsAddrStale(a, "REDMI K80", svc.Addr) {
-		t.Fatal("A 层 Added=全量（force emit）应驱动 applyMdnsServiceAdded 翻回 active")
+		t.Fatal("forced Added should restore active after endpoint verification")
 	}
 }
 

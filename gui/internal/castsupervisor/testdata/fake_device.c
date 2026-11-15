@@ -44,7 +44,8 @@ int main(int argc, char **argv) {
             } else if (strstr(script, "SCEZ_ROOT_PROBE=ok")) puts("SCEZ_ROOT_PROBE=ok");
         } else if (strstr(line, "ro.serialno")) {
             if (argc > 2 && !strcmp(argv[2], "USB_A") && getenv("SCEZ_TEST_ID_DELAY")) Sleep(400);
-            puts(id);
+            if (strstr(line, "ro.build.version.sdk")) printf("serial=%s\nboot=\nsdk=34\n", id);
+            else puts(id);
         } else if (strstr(line, "ro.product.marketname")) puts("SAME_MODEL");
         else if (strstr(line, "ro.product.model")) puts("SAME_MODEL");
         else if (strstr(line, "ro.build.version.sdk")) puts("34");
@@ -64,10 +65,24 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
         record("SCEZ_TEST_ARGS_LOG", argv[i]);
         record("SCEZ_TEST_ARGS_LOG", "\n");
+        if (getenv("SCEZ_START_APP") && !strcmp(getenv("SCEZ_START_APP"), "com.tencent.mm:scan")) {
+            record("SCEZ_TEST_SCANNER_ARGS_LOG", argv[i]);
+            record("SCEZ_TEST_SCANNER_ARGS_LOG", "\n");
+        }
     }
     char line[512];
     snprintf(line, sizeof(line), "START %s %lu\n", serial, GetCurrentProcessId());
     record("SCEZ_TEST_CAST_LOG", line);
+    const char *camera = getenv("SCEZ_PERSPECTIVE_CAMERA");
+    if (getenv("SCEZ_TEST_PERSPECTIVE_UNAVAILABLE") && (!camera || strcmp(camera, "0"))) {
+        puts("SCRCPY_EZ_READY");
+        puts("[server] ERROR: SCRCPY_EZ_PERSPECTIVE_UNAVAILABLE: camera service did not respond");
+        fflush(stdout);
+        return 1;
+    }
+    if (camera && !strcmp(camera, "0")) {
+        record("SCEZ_TEST_CAST_LOG", "CAMERA fallback\n");
+    }
     const char *forced = getenv("SCEZ_TEST_CLIENT_RC");
     if (forced) { record("SCEZ_TEST_CAST_LOG", "EXIT failure\n"); return atoi(forced); }
     const char *stop_name = getenv("SCEZ_EVENT_STOP_NAME");

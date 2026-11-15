@@ -508,7 +508,8 @@ sc_clipboard_sync_receive_image(const char *mime, const uint8_t *data, size_t si
 }
 
 bool
-sc_clipboard_sync_get_image(uint8_t **data, size_t *size, char **mime) {
+sc_clipboard_sync_get_image(uint8_t **data, size_t *size, char **mime,
+                            size_t limit, bool *oversized) {
     bool ok = false;
     if (!open_clipboard()) { return false; }
     HANDLE h = GetClipboardData(image_format);
@@ -517,15 +518,19 @@ sc_clipboard_sync_get_image(uint8_t **data, size_t *size, char **mime) {
     if (m && m->magic == SYNC_MAGIC && m->kind == 2 && m->size > 0
             && m->size <= IMAGE_LIMIT && m->size <= total - sizeof(*m)
             && memchr(m->mime, 0, sizeof(m->mime))) {
-        *data = malloc(m->size);
-        *mime = strdup(m->mime);
-        if (*data && *mime) {
-            *size = m->size;
-            memcpy(*data, (const uint8_t *) m + sizeof(*m), *size);
-            ok = true;
+        if (limit && m->size > limit) {
+            *oversized = true;
         } else {
-            free(*data);
-            free(*mime);
+            *data = malloc(m->size);
+            *mime = strdup(m->mime);
+            if (*data && *mime) {
+                *size = m->size;
+                memcpy(*data, (const uint8_t *) m + sizeof(*m), *size);
+                ok = true;
+            } else {
+                free(*data);
+                free(*mime);
+            }
         }
     }
     if (m) { GlobalUnlock(h); }

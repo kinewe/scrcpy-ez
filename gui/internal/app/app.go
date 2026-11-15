@@ -30,6 +30,7 @@ import (
 	"scrcpy-ez/gui/internal/deviceevents"
 	"scrcpy-ez/gui/internal/discovery"
 	"scrcpy-ez/gui/internal/notifications"
+	"scrcpy-ez/gui/internal/parallel"
 	"scrcpy-ez/gui/internal/rootrepair"
 	"scrcpy-ez/gui/internal/wirelessconnect"
 )
@@ -76,7 +77,7 @@ type CastState struct {
 	TransportSerial string            `json:"transportSerial,omitempty"`
 	WaitingInput    bool              `json:"waitingInput"` // 仅展示：bat 在等待菜单选择
 	Prompt          bridge.PromptKind `json:"prompt"`
-	Log             []string          `json:"log"`      // 最近 60 行原始输出（每会话独立缓冲）
+	Log             []string          `json:"log"`      // 最近 160 行原始输出（每会话独立缓冲）
 	ExitCode        int               `json:"exitCode"` // -1 = 运行中
 	ExitText        string            `json:"exitText"`
 	LastError       string            `json:"lastError"`
@@ -139,13 +140,14 @@ type ProfileItem struct {
 // mDNS 广播 _adb-tls-connect._tcp 且档案无此 identity 的新设备——
 // 前端橙点卡片 + 橙色"配对"按钮；配对成功入档后消失（转正常设备卡）。
 type PendingDevice struct {
-	Key      string `json:"key"`      // 卡片键 = tls 地址 ip:port
-	Name     string `json:"name"`     // 展示名：tls 服务名剥出的 serial；未知则"无线调试设备"
-	IP       string `json:"ip"`       // 设备 IP
-	Addr     string `json:"addr"`     // 连接地址 ip:tls端口（自动发现，无需填写）
-	PairPort string `json:"pairPort"` // 配对端口（_adb-tls-pairing 同 GUID 服务；无则空=需手动）
-	Guid     string `json:"guid"`     // tls 服务实例名（adb-<serial>-XXXXXX，配对端口自动匹配用）
-	Serial   string `json:"serial"`   // 服务名剥出的真 serial（入档用）
+	Key        string `json:"key"`                  // 卡片键 = tls 地址 ip:port
+	Name       string `json:"name"`                 // 展示名：tls 服务名剥出的 serial；未知则"无线调试设备"
+	IP         string `json:"ip"`                   // 设备 IP
+	Addr       string `json:"addr"`                 // 连接地址 ip:tls端口（自动发现，无需填写）
+	PairPort   string `json:"pairPort"`             // 配对端口（_adb-tls-pairing 同 GUID 服务；无则空=需手动）
+	Guid       string `json:"guid"`                 // tls 服务实例名（adb-<serial>-XXXXXX，配对端口自动匹配用）
+	Serial     string `json:"serial"`               // 服务名剥出的真 serial（入档用）
+	DirectAddr string `json:"directAddr,omitempty"` // 已通过 TCP 探测的 ip:5555；空码时才可直连
 }
 
 // PairStep 是配对向导的单步状态（前端 ①②③ 步骤条）。
@@ -159,8 +161,9 @@ type PairStep struct {
 // 配对流程：pair（adb pair）→ connect（adb connect ip:tls端口）→ verify
 // （getprop 验证 marketname）→ 成功入档（mode=tls）。失败带分类码（前端映射文案）。
 type PairStatus struct {
-	Phase   string      `json:"phase"`          // idle / pairing / connecting / verifying / success / failed
-	Mode    string      `json:"mode,omitempty"` // gui50：auto / manual / qr（配对路线）
+	Phase   string      `json:"phase"`            // idle / pairing / connecting / verifying / success / failed
+	Mode    string      `json:"mode,omitempty"`   // gui50：auto / manual / qr（配对路线）
+	Direct  bool        `json:"direct,omitempty"` // empty-code TCP/IP connection, never adb pair
 	Key     string      `json:"key,omitempty"`
 	Name    string      `json:"name,omitempty"`
 	Addr    string      `json:"addr,omitempty"`
@@ -182,9 +185,11 @@ const (
 	PairErrPort     = "pair-port"
 	PairErrConnPort = "conn-port"
 	PairErrConnect  = "connect-failed"
+	PairErrAuth     = "adb-unauthorized"
 	PairErrTimeout  = "timeout"
 	PairErrAddr     = "addr-invalid"
 	PairErrInternal = "internal"
+	PairErrRuntime  = "runtime-missing"
 	// PairErrSerial：配对已连接但读不到设备序列号（gui55"不得静默残缺入档"的可见报错）。
 	PairErrSerial    = "serial"
 	PairPhaseIdle    = "idle"
@@ -226,6 +231,7 @@ type Snapshot struct {
 	AdbFailing       bool            `json:"adbFailing"` // 真空期去抖：adbOK 仍为 true 但当前有连续失败（前端展示"刷新中"软提示，不亮红条）
 	Devices          []adb.Device    `json:"devices"`
 	Pending          []PendingDevice `json:"pending"` // 待配对设备卡（mDNS tls 服务发现、档案无此 identity）
+	PendingSearching bool            `json:"pendingSearching,omitempty"`
 	Discovery        DiscoveryStatus `json:"discovery"`
 	Cast             CastState       `json:"cast"`
 	Sessions         []Session       `json:"sessions"`   // 标签栏会话列表（按 StartCast 时间排序）
@@ -234,15 +240,19 @@ type Snapshot struct {
 	NewDevice        *NewDeviceInfo  `json:"newDevice"`  // 新设备弹窗（非 nil = 需要弹）
 	PairStatus       *PairStatus     `json:"pairStatus"` // 无线调试配对向导状态（非 idle = 前端弹窗展示步骤/结果）
 	// AppWins 应用窗口列表（二期 Step 3；后端=真相源，前端据此校准卡片）。
-	AppWins []AppWinItem `json:"appWins"`
+	AppWins        []AppWinItem    `json:"appWins"`
+	RecentCastLogs []RecentCastLog `json:"recentCastLogs,omitempty"`
 	// Settings 全局设置（设置面板两个开关；独立 settings.json 持久化）。
 	// 前端每次快照刷新拿到当前值，设置面板按它渲染开关状态。
 	Settings           Settings               `json:"settings"`
 	NotificationStatus []notifications.Status `json:"notificationStatus,omitempty"`
+	// WeChatScanNotice = 一次性前端提示（系统拦截扫一扫窗口时下发，提示重试；
+	// 前端按值去重，只在变化时 toast）。
+	WeChatScanNotice string `json:"weChatScanNotice,omitempty"`
 }
 
 // sessionState 是一个投屏会话的全部后端状态（map[serial]*sessionState 的一个值）。
-// 每个会话独立：runner/bat 环境、事件分发、规格解析、日志缓冲（60 行截断）、
+// 每个会话独立：runner/bat 环境、事件分发、规格解析、日志缓冲、
 // 无输出计时、重启闩锁、参数覆盖。
 type sessionState struct {
 	cast       CastState
@@ -316,10 +326,15 @@ type App struct {
 	// physCache=设备物理参数（等比 dpi 输入，wm size/density 长 TTL）；
 	// physMu 独立小锁：查询 adb 时不占 a.mu。
 	appWins            map[string]*appWinState
-	appLaunchNoticeSeq uint64 // protected by mu; distinguishes failed launch attempts
-	physMu             sync.Mutex
-	physCache          map[string]devPhys
-	physBusy           map[string]bool
+	recentCastLogs     map[castLogKey]RecentCastLog // protected by mu
+	appLaunchNoticeSeq uint64                       // protected by mu; distinguishes failed launch attempts
+	// 微信扫一扫直达的一次性提示（系统拦截时提示重试；成功实证入档是静默的）。
+	// 由 a.mu 保护。
+	weChatScanNotice string
+	physMu           sync.Mutex
+	physCache        map[string]devPhys
+	physBusy         map[string]bool
+	physVersion      uint64 // physMu: display-relevant physical metadata changes
 
 	// 应用列表（二期 Step 1）：按设备 identity 缓存（USB/无线切换不重枚举）；
 	// busy=在跑防重；lastReady=就绪边沿检测（commitDisplay 末尾触发）。
@@ -342,8 +357,18 @@ type App struct {
 	// profiles=设备档案（identity 唯一化，全局共享只读）；
 	// 无线探测（mDNS + 并行 connect）：disc=adb 探测器；lastDisc=探测节流时间戳；
 	// discStatus=最近一次探测结果（Snapshot.Discovery 输出）。
-	rootRepair *rootrepair.Coordinator
-	profiles   *ProfileStore
+	rootRepair            *rootrepair.Coordinator
+	profiles              *ProfileStore
+	displayMu             sync.Mutex
+	displayProfileVersion uint64       // displayMu
+	displayPhysVersion    uint64       // displayMu
+	displayInitialized    bool         // displayMu
+	displayBase           []adb.Device // displayMu: validated inputs, never decorated cards
+	channelCheckMu        sync.Mutex
+	channelChecks         map[string]context.CancelFunc // one bounded job per identity/address
+	channelRechecks       map[string]func()             // latest fresh signal received during an in-flight check
+	channelCheckWG        sync.WaitGroup
+	channelChecksClosing  bool
 	// settings=全局设置（设置面板两个开关：参数控件默认可见性 / 关闭窗口最小化到
 	// 托盘）。与设备档案分文件存放（settings.json），互不干扰；自带锁，可被
 	// UI 线程（窗口过程读"关闭是否最小化"）与 JS 绑定并发读取。
@@ -355,7 +380,9 @@ type App struct {
 	notificationOpenMu  sync.Mutex
 	wirelessConnector   *wirelessconnect.Coordinator
 	wirelessConnectMu   sync.Mutex
-	wirelessStartupDone chan struct{}
+	discoveryDevices    map[string]bool // only these identities wait for an explicit discovery job
+	learningWork        parallel.Limiter
+	learningWG          sync.WaitGroup // Add is fenced by mu/notificationClosing before shutdown Wait
 	disc                *discovery.Connector
 	lastDisc            time.Time
 	discBusy            bool // 探测 in-flight 标记（gui22 防抖）：runDiscovery 期间 true，ForceDiscover 幂等
@@ -374,13 +401,19 @@ type App struct {
 	mdnsProbeSeq map[string]int64
 
 	// 待配对设备卡（mDNS tls 服务 → 档案无此 identity）与配对向导状态机。
-	pending         []PendingDevice
-	pair            *PairStatus
-	pairQR          *pairQRState
-	pairOps         pairOps
-	pairFastConnect bool // fix6：生产开启 connect 先行快路径；测试默认关，新测试显式开
-	// v2.1.77：5037 归属检测 + 抢庄（启动钩子 + 配对流程第二道检测共用）。
-	srvOps srvOps
+	pending               []PendingDevice
+	pair                  *PairStatus
+	pairQR                *pairQRState
+	pairOps               pairOps
+	pendingTcpip          map[string]*pendingTcpipProbe     // a.mu protects discovery probe results
+	pendingProbeRunning   int                               // includes probes for IPs removed while the dial was running
+	wirelessTcpipLearning map[string]*wirelessTcpipLearning // a.mu: one job per online transition
+	pendingLAN            *pendingLANSearch
+	pendingLANOps         pendingLANOps
+	// Serialize ownership checks from startup, pairing, and ADB reconnects.
+	srvOwnershipMu     sync.Mutex
+	srvForwardDeferred bool // guarded by srvOwnershipMu
+	srvOps             srvOps
 
 	// 新设备弹窗状态机（轮 B）
 	popup *popupState
@@ -390,15 +423,16 @@ type App struct {
 	// serial 集（teachMu 保护；track 回调 goroutine 与校准/RefreshNow 可能并发
 	// 调用——必须独立锁，不能用 a.mu 拿住整个 adb 调用段）。
 	// 学习期的 adbd 暂时消失不结束周期；周期退出后再拔插才重建。
-	teachOps        teachOps
-	teachMu         sync.Mutex
-	taughtTcpip     map[string]bool
-	usbLearning     map[string]*usbLearningState // serial → 当前插线学习周期（teachMu）
-	lastUSB         []adb.Device                 // 原始 USB 条目，独立于主卡归并（applyTrackMu）
-	lastUSBToken    map[string]deviceevents.Transport
-	lastUSBEpoch    uint64
-	plugLearned     map[string]bool
-	plugStableReady map[string]bool
+	teachOps         teachOps
+	teachMu          sync.Mutex
+	taughtTcpip      map[string]bool
+	usbLearning      map[string]*usbLearningState // serial → 当前插线学习周期（teachMu）
+	lastUSB          []adb.Device                 // 原始 USB 条目，独立于主卡归并（applyTrackMu）
+	lastUSBToken     map[string]deviceevents.Transport
+	lastUSBEpoch     uint64
+	lastChannelToken map[string]deviceevents.Transport // raw wireless endpoints, before card folding (applyTrackMu)
+	plugLearned      map[string]bool
+	plugStableReady  map[string]bool
 	// 「插线进行中」（gui47-fix F2'）：plugging[identity]=检测到插线的时刻。
 	// 事件驱动状态机：USB added（offline/unauthorized/device 均算）置位；
 	// 无线已落盘且 USB 稳定 2s 提前清除，首次 device 后 10s 强制清除。
@@ -471,20 +505,22 @@ type pairQRState struct {
 type pairOps struct {
 	pairFn     func(ctx context.Context, ip, port, code string) (string, error)
 	connectFn  func(ctx context.Context, addr string) (string, error)
+	stateFn    func(ctx context.Context, addr string) (string, error)
 	getpropFn  func(ctx context.Context, serial, prop string) (string, error)
 	mdnsScanFn func(ctx context.Context, maxWait time.Duration) ([]discovery.MdnsService, error)
 	tcpipFn    func(ctx context.Context, serial, port string) error // gui52-fix8：无线配对开启 5555（幂等检测）
 	// serialFn 直读设备序列号（gui55：adb get-serialno）——配对学习保底来源，
 	// 也是"纯探测写档前验身"的判据来源。addr 可以是 USB serial 或 ip:port。
 	serialFn func(ctx context.Context, addr string) (string, error)
+	probeFn  func(ctx context.Context, addr string) bool
 }
 
 // srvOps 是 5037 归属检测 + 抢庄的 adb 操作注入点（v2.1.77）：
 // 生产挂 adb 实现；测试 App（Version=="test"）不挂（旧用例零影响），
 // 新测试显式注入 fake 验证"检测 → 条件抢庄"链路。
 type srvOps struct {
-	checkFn    func(ctx context.Context) string          // 5037 归属检测（`adb mdns check` 合并输出）
-	takeoverFn func(ctx context.Context) (string, error) // 完整抢庄（kill + 快速重试 + 验证 37）
+	checkFn    func(ctx context.Context) adb.ServerCheck
+	takeoverFn func(ctx context.Context) (string, error)
 }
 
 // 无输出提示：非投屏中阶段 40s 无任何 bat 新输出行 → 状态区显示
@@ -632,11 +668,16 @@ func New(cfg Config) *App {
 	// 需要它的用例显式注入 fake。
 	if cfg.Version != "test" {
 		a.pairOps.serialFn = a.adb.GetSerialNo
+		a.pairOps.stateFn = a.adb.TransportState
 	}
-	// gui52-fix7：配对成功后的 tcpip 5555 开启/connect 学习已整体移除（mdns 权威）。
-	// fix6：生产开启 connect 先行快路径；旧单测默认保持 pair-first 语义，
-	// 新 fix6 单测显式开启验证快路径。
-	a.pairFastConnect = cfg.Version != "test"
+	// Unknown mDNS hosts get a bounded, pure TCP probe for the empty-code route.
+	if cfg.Version != "test" {
+		a.pairOps.probeFn = a.disc.TcpProbe
+		a.pendingLANOps = pendingLANOps{networks: adb.LanIPv4Networks, probe: discovery.ProbeADB5555,
+			refreshMdns: func(ctx context.Context, target discovery.LANProbeTarget) bool {
+				return a.adb.RequestMdnsRefresh(ctx, adb.MdnsRefreshTarget{IP: ipOfAddr(target.Addr), Source: target.Source})
+			}}
+	}
 	// gui52-fix8：无线配对成功后开启设备 tcpip 5555（与插线学习一致）；
 	// Version==\"test\" 不挂，避免旧配对单测触达真实 adb（新测试显式注入 fake）。
 	if cfg.Version != "test" {
@@ -691,6 +732,14 @@ func (a *App) SetOtherAppWinSystemDecorations(enabled bool) error {
 
 func (a *App) SetKeepDeviceAwake(enabled bool) error {
 	return a.settings.SetKeepDeviceAwake(enabled)
+}
+
+func (a *App) SetAutoBlackoutMainCast(enabled bool) error {
+	return a.settings.SetAutoBlackoutMainCast(enabled)
+}
+
+func (a *App) SetForcePerspectiveColorKey(enabled bool) error {
+	return a.settings.SetForcePerspectiveColorKey(enabled)
 }
 
 func (a *App) SetVideoSmoothing(enabled bool) error {
@@ -761,12 +810,18 @@ func (a *App) StartDevicePolling(ctx context.Context) {
 	a.startRootRepair(ctx)
 	a.startWirelessConnect(ctx)
 	a.startNotificationEvents(ctx)
-	endpoint, token, err := deviceevents.Serve(ctx, a.adb.EventHub())
+	hub := a.adb.EventHub()
+	endpoint, token, err := deviceevents.Serve(ctx, hub)
 	if err == nil {
 		os.Setenv("SCEZ_EVENT_ENDPOINT", endpoint)
 		os.Setenv("SCEZ_EVENT_TOKEN", token)
 	} else {
 		bridge.DebugLog("[app] event broker unavailable: %v", err)
+	}
+	// Raw snapshots arrive before property queries, even with no devices attached.
+	if a.srvOps.checkFn != nil && a.srvOps.takeoverFn != nil {
+		events := hub.Subscribe(ctx)
+		go a.guard("srv-ownership-reconnect", func() { a.watchServerReconnects(ctx, events) })
 	}
 	// track-devices 长连：设备列表变化由事件流驱动（替代 2s 轮询数据源）。
 	go a.guard("device-track-loop", func() {
@@ -821,8 +876,37 @@ func (a *App) StartDevicePolling(ctx context.Context) {
 	// 冷启动 5555 搜索（仅一次，与冷启动 mDNS 查询并行）：每台档案设备的
 	// 5555 地址并行 connect（≈2s 级），成功入档 active，失败不动。
 	go a.guard("mdns-cold-search-5555", func() {
-		defer close(a.wirelessStartupDone)
 		a.coldSearch5555(ctx)
+	})
+
+	// Stored endpoints need independent verification even if no mDNS/transport
+	// event arrives (for example, wireless debugging was disabled before launch).
+	go a.guard("wireless-channel-checks", func() {
+		a.waitSrvReady(ctx)
+		a.checkProfileChannels(ctx, "", nil)
+		tick := time.NewTicker(channelCheckInterval)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				a.checkProfileChannels(ctx, "", nil)
+			}
+		}
+	})
+	go a.guard("wireless-channel-recovery", func() {
+		a.waitSrvReady(ctx)
+		tick := time.NewTicker(channelRecoveryInterval)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				a.checkProfileChannelsFiltered(ctx, "", a.mdnsSnapshot(), true)
+			}
+		}
 	})
 }
 
@@ -830,7 +914,7 @@ func (a *App) StartDevicePolling(ctx context.Context) {
 // 应用广播 added/removed（档案 active/stale、待配对卡、TLS 标副行）。
 func (a *App) onMdnsTrackEvents(ctx context.Context, ev adb.MdnsTrackEvents) {
 	// fix3 自动配对需要“真正新增”的 pairing 服务，不能直接用 ev.Added：
-	// QU 强制 emit 时 ev.Added=全量快照，稳定老 pairing 也会混入。
+	// QU 心跳可包含已有 pairing 服务，因此只对真正新增的 pairing 自动配对。
 	// 这里在 applyMdnsSnapshot 更新前取上一份快照，用本地 diff 得到本次新增。
 	var prev []discovery.MdnsService
 	firstLike := ev.First
@@ -848,7 +932,7 @@ func (a *App) onMdnsTrackEvents(ctx context.Context, ev adb.MdnsTrackEvents) {
 		a.applyMdnsServiceAdded(&added[i])
 	}
 	for i := range removed {
-		// Goodbye/门铃确认已等价探测：立即按服务类型分形态打 stale。
+		// 候选消失只触发该通道的连接与身份核验，不直接宣告离线。
 		a.onMdnsDropped(mdnsServiceDropKey(removed[i]), removed[i])
 	}
 	if ev.First {
@@ -862,7 +946,7 @@ func (a *App) onMdnsTrackEvents(ctx context.Context, ev adb.MdnsTrackEvents) {
 
 // applyMdnsSnapshot 用一份完整 mdns 快照更新事件维护的 a.mdns（mdnsMu 保护）。
 // 非首块优先采用 A 层已算好的 evAdded/evRemoved（含 QU 强制 emit 场景：
-// 快照内容未变但 Added=全量——必须据此翻 active）；两者皆空时回退本地 diff。
+// 快照内容未变但 Added=本次实际应答服务）；两者皆空时回退本地 diff。
 func (a *App) applyMdnsSnapshot(snapshot []discovery.MdnsService, first bool, evAdded, evRemoved []discovery.MdnsService) (added, removed []discovery.MdnsService) {
 	a.mdnsMu.Lock()
 	prev := append([]discovery.MdnsService(nil), a.mdns...)
@@ -882,7 +966,9 @@ func (a *App) applyMdnsSnapshot(snapshot []discovery.MdnsService, first bool, ev
 	return added, removed
 }
 
-// applyMdnsServiceAdded 广播 added → 档案 AddrSuccess 入档 active（已 stale 则翻 active）。
+// applyMdnsServiceAdded treats an announcement/QU reply as an endpoint candidate.
+// A record can outlive its listener, so only that endpoint's authenticated check
+// may write active. Keep all network work off the mDNS callback/read loop.
 func (a *App) applyMdnsServiceAdded(s *discovery.MdnsService) {
 	if s == nil || s.Addr == "" {
 		return
@@ -898,11 +984,13 @@ func (a *App) applyMdnsServiceAdded(s *discovery.MdnsService) {
 	if id == "" {
 		return // 档案无此 identity：待配对卡由 buildPending 从快照构建
 	}
-	// 广播匹配负责：入档 active（AddrSuccess）、清 stale 翻 active、
-	// 形态升级（wirelessForm/tlsGuid）——与旧 MatchMdnsModes 同口径。
-	a.profiles.MatchMdnsModes([]MdnsMatch{{Name: s.Name, Addr: s.Addr, Mode: s.Mode}})
-	// gui52fix3：广播建档后事件驱动合卡（mDNS 建立身份档的同时吸收过渡孤儿）。
-	a.profiles.CleanOrphanIPPort()
+	service := *s
+	go a.guard("mdns-channel-check", func() {
+		a.refreshChannel(context.Background(), id, service.Addr, service.Mode, SerialFromServiceName(service.Name), service.Name)
+		if a.profiles.CleanOrphanIPPort() {
+			a.rebuildCurrentDisplay("mDNS验身后合卡")
+		}
+	})
 }
 
 // mdnsServiceIdentity 解析 mdns 服务所属档案 identity（服务名 serial 优先，其次 addr）。
@@ -947,10 +1035,8 @@ func (a *App) reapplyDisplay(src ...string) {
 		source = src[0]
 	}
 	bridge.DebugLog("[app] reapplyDisplay：来源=%s（%s）", source, time.Now().Format("15:04:05.000"))
-	a.mu.RLock()
-	base := append([]adb.Device(nil), a.lastTrack...)
-	a.mu.RUnlock()
-	a.commitDisplay(base, "reapplyDisplay:"+source)
+	base := a.rebuildCurrentDisplay("reapplyDisplay:" + source)
+	a.maybeLearnWirelessTcpip(base)
 }
 
 // mdnsProbeKind 区分 Goodbye 探测与 90s 静默问询（两种来源共用同一条
@@ -978,43 +1064,54 @@ func (a *App) mdnsProbeLatest(addr string, seq int64) bool {
 	return a.mdnsProbeSeq[addr] == seq
 }
 
-// startMdnsProbe 异步发起「主人拍板」TCP 探测（2s 级，不阻塞 A 层事件链）。
-// 结果即定论：通 → AddrSuccess(active，允许翻回)；不通 → MarkAddrStale。
+// startMdnsProbe 异步核验该地址的 TCP、ADB 连接与设备身份，不阻塞 mDNS 事件链。
+// 仅身份一致的成功结果写 active；失败只更新对应通道。
 // 写状态前校验发起序号仍是最新（后发者胜）；过期结果直接丢弃、不落库。
 func (a *App) startMdnsProbe(id, addr string, kind mdnsProbeKind) {
 	disc := a.disc
 	seq := a.mdnsProbeNext(addr)
+	mode := a.profiles.AddrMode(addr)
+	if mode == "" {
+		mode = addrEntryClass(AddrEntry{Addr: addr})
+	}
+	observation := a.profiles.observeChannel(id, mode)
+	ctx, finish, accepted := a.beginChannelCheck(context.Background(), fmt.Sprintf("mdns|%s|%s|%d", id, addr, seq))
+	if !accepted {
+		return
+	}
 	go func() {
+		defer finish()
 		ok := false
 		if disc != nil {
-			ok = disc.TcpProbe(context.Background(), addr)
+			ok = disc.TcpProbe(ctx, addr)
 		}
 		if !a.mdnsProbeLatest(addr, seq) {
 			return // 已有更新的探测发起：本结果过期，不写状态
 		}
-		// gui55：探测通 ≠ 档案所属设备在线（只有 IP 可达）——写 active 前先验身
-		// （直读设备自报序列号与档案身份比对）。
-		switch kind {
-		case mdnsProbeKindGoodbye:
-			if ok {
-				a.probeMarkActiveCurrent(context.Background(), id, addr, "", "mdns Goodbye 探测", true)
-			} else if a.profiles.MarkAddrStale(id, addr) {
-				bridge.DebugLog("[app] mdns Goodbye：%s/%s → 对应形态打 stale", id, addr)
-			}
-		case mdnsProbeKindIdle:
-			if ok {
-				a.probeMarkActiveCurrent(context.Background(), id, addr, "", "mdns 静默问询", true)
-			} else if a.profiles.MarkAddrStale(id, addr) {
-				bridge.DebugLog("[app] mdns 静默问询（不通，stale）：%s/%s", id, addr)
-			}
+		serial := ""
+		if ok {
+			ok, serial = a.probeOwnerOK(ctx, id, addr)
 		}
-		a.reapplyDisplay("mdns探测结果")
+		if !a.mdnsProbeLatest(addr, seq) || ctx.Err() == context.Canceled {
+			return
+		}
+		if a.profiles.finishChannelCheck(id, addr, mode, serial, "", observation, ok && ctx.Err() == nil) {
+			if ok && kind == mdnsProbeKindGoodbye {
+				name := id
+				if entry, exists := a.profiles.Entry(id); exists && entry.Marketname != "" {
+					name = entry.Marketname
+				}
+				bridge.DebugLog("[app] mdns Goodbye 探测：%s/%s 验身通过", name, addr)
+			}
+			bridge.DebugLog("[app] mdns 通道复核：%s/%s active=%v kind=%d", id, addr, ok, kind)
+			a.rebuildCurrentDisplay("mdns探测结果")
+		}
 	}()
 }
 
 // onMdnsDropped 响应 Goodbye（TTL=0）事件（gui48-mdns8 主人拍板）：
-// IP:port 地址先做一次纯 TCP 探测再定——通=active（硬事实，含翻回），
-// 不通=stale；令牌/非 IP:port 条目保持原 stale 语义（不探测）。
+// IP:port 地址通过 TCP、ADB 与身份复核后再更新 active/stale。
+// 令牌/非 IP:port 条目保持原 stale 语义（不探测）。
 func (a *App) onMdnsDropped(key string, s discovery.MdnsService) {
 	_ = key
 	id := a.mdnsServiceIdentity(&s)
@@ -1058,8 +1155,8 @@ func mdnsServiceDropKey(s discovery.MdnsService) string {
 	return "name:" + s.Name
 }
 
-// reconcileMdnsSnapshot 执行一次 `adb mdns services` 快照对账（RefreshNow /
-// 60s 校准触发；不是 15s 扫描轮询）。
+// reconcileMdnsSnapshot retains the explicit scan/reconcile helper. Production
+// periodic channel checks use stored endpoints and do not trust this cache.
 func (a *App) reconcileMdnsSnapshot(ctx context.Context) {
 	a.mu.RLock()
 	adbOK := a.adbOK
@@ -1072,24 +1169,15 @@ func (a *App) reconcileMdnsSnapshot(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	// gui55：对账不只更新快照——adb server 的 mDNS 扫描结果同样走事件管线
-	// （added → 写档/按 IP 认领；removed → 分形态打 stale）。
-	// 现场依据：自建监听在 Windows 防火墙下可能完全收不到组播（自检 limited），
-	// 此时"广播认不了亲"就必须由 60s 对账兜底——原来这里只刷新显示、不写档，
-	// 于是设备即使在广播，档案也永远补不上（K80 残缺档案的现场成因之一）。
+	// Retain the candidate snapshot for discovery, but never replay cached
+	// entries as fresh presence events.
 	added, removed := a.applyMdnsSnapshot(svcs, false, nil, nil)
 	bridge.DebugLog("[app] mdns 快照对账：services=%d added=%d removed=%d svcs=%v",
 		len(svcs), len(added), len(removed), mdnsBrief(svcs))
-	// gui55 现场实测：不能只按 diff 写档——事件链可能在"快照已更新、但 added 为空"
-	// 的情况下把新广播吞掉（K80 重启 adbd 后：23:49 对账 services=1 added=0，
-	// 档案因此永远补不上短号）。对账属于兜底通道，一律按全量快照补写；
-	// MatchMdnsModes 幂等，只有真变化才落盘。
-	for i := range svcs {
-		a.applyMdnsServiceAdded(&svcs[i])
-	}
-	for i := range removed {
-		a.onMdnsDropped(mdnsServiceDropKey(removed[i]), removed[i])
-	}
+	// adb mdns services can retain a closed TLS service indefinitely. Verify
+	// both archived channels and snapshot candidates independently, including
+	// when diff is empty or another transport still keeps the device online.
+	a.checkProfileChannels(ctx, "", svcs)
 	a.reapplyDisplay("mdns快照对账")
 }
 
@@ -1374,6 +1462,9 @@ func (a *App) healAdbServer(ctx context.Context) {
 // 也要放行读取（后续重试机制仍在），不让首屏读取被永久阻塞。
 const srvWaitMax = 12 * time.Second
 
+// Avoid repeated automatic restarts if another application keeps replacing ADB.
+const srvReconnectCooldown = 10 * time.Second
+
 // StartServerOwnershipCheck 是 GUI 启动钩子（v2.1.77，异步、不阻塞首屏）：
 // 检测 5037 归属——完整（≥30，含"无 server 时自动 fork 37"）零动作；
 // 不完整（≤29 旧版坐庄）→ 抢庄夺回。投屏在场也不跳过（跳过 = 原生 TLS 永远
@@ -1396,7 +1487,7 @@ func (a *App) StartServerOwnershipCheck() {
 				close(ch)
 			}
 		}()
-		a.ensureServerOwner("启动")
+		a.ensureServerOwner(context.Background(), "启动", false)
 	})
 }
 
@@ -1423,28 +1514,83 @@ func (a *App) waitSrvReady(ctx context.Context) {
 	}
 }
 
-// ensureServerOwner 检测 5037 归属并条件抢庄（v2.1.77 核心动作；调用点=启动钩子
-// 与配对流程第二道检测）。判据：mdns check 输出含 "unknown host service" = 不完整
-// （≤29 旧版坐庄）→ 抢庄；其它任何应答 = 完整（≥30）→ 零动作。
-// reason 进日志（"启动" / "配对"）；全程失败静默（只记日志，不阻断调用方）。
-func (a *App) ensureServerOwner(reason string) {
+func (a *App) watchServerReconnects(ctx context.Context, events <-chan deviceevents.Snapshot) {
+	var epoch uint64
+	var checkedOnline bool
+	var retryAfter time.Time
+	a.waitSrvReady(ctx)
+	for s := range events {
+		if ctx.Err() != nil {
+			return
+		}
+		if !s.Available || s.Epoch < epoch || s.Epoch == 0 {
+			continue
+		}
+		newEpoch := s.Epoch > epoch
+		if newEpoch {
+			epoch = s.Epoch
+			checkedOnline = false
+		}
+		online := false
+		for _, transport := range s.Transports {
+			if transport.State == "device" {
+				online = true
+				break
+			}
+		}
+		// Startup covers the first stream. Recheck within an epoch only when
+		// an online device can now satisfy a previously deferred forward probe.
+		deferredOnly := epoch == 1 || !newEpoch
+		if deferredOnly && (!online || checkedOnline) {
+			continue
+		}
+		checkedOnline = online
+		if delay := time.Until(retryAfter); delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+		if a.ensureServerOwner(ctx, "ADB 设备事件", deferredOnly) {
+			retryAfter = time.Now().Add(srvReconnectCooldown)
+		}
+	}
+}
+
+// ensureServerOwner returns whether it attempted a takeover. The caller supplies
+// a lifetime for the check; in particular the reconnect watcher stops on exit.
+func (a *App) ensureServerOwner(parent context.Context, reason string, deferredOnly bool) bool {
 	if a.srvOps.checkFn == nil || a.srvOps.takeoverFn == nil {
-		return // 测试 App 未挂真实 adb
+		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), srvTakeoverTimeout)
+	a.srvOwnershipMu.Lock()
+	defer a.srvOwnershipMu.Unlock()
+	if parent.Err() != nil || (deferredOnly && !a.srvForwardDeferred) {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(parent, srvTakeoverTimeout)
 	defer cancel()
-	out := a.srvOps.checkFn(ctx)
-	if adb.ServerHealthy(out) {
-		bridge.DebugLog("[app] 5037 归属检测（%s）：完整（≥30），零动作（%q）", reason, strings.TrimSpace(out))
-		return
+	check := a.srvOps.checkFn(ctx)
+	if ctx.Err() != nil {
+		return false
 	}
-	bridge.DebugLog("[app] 5037 归属检测（%s）：旧版 server 坐庄（≤29）（%q）→ 抢庄", reason, strings.TrimSpace(out))
+	a.srvForwardDeferred = check.ForwardDeferred
+	if check.State != adb.ServerIncompatible {
+		bridge.DebugLog("[app] 5037 兼容性检查（%s）：保留当前服务（%s）", reason, check.Detail)
+		return false
+	}
+	bridge.DebugLog("[app] 5037 兼容性检查（%s）：%s，重新启动共享 ADB", reason, check.Detail)
 	out2, err := a.srvOps.takeoverFn(ctx)
 	if err != nil {
 		bridge.DebugLog("[app] 抢庄失败（%s）：%v；最后输出 %q", reason, err, strings.TrimSpace(out2))
-		return
+		return true
 	}
-	bridge.DebugLog("[app] 抢庄成功（%s）：37 已坐庄（%q）", reason, strings.TrimSpace(out2))
+	bridge.DebugLog("[app] 抢庄成功（%s）：%s", reason, out2)
+	a.srvForwardDeferred = true // The new service may still be enumerating devices.
+	return true
 }
 
 // refreshSessionTransports 刷新投屏会话的实际 transport/TLS 显示（gui43）。
@@ -1588,10 +1734,18 @@ func (a *App) DeleteDevices(keys []string) error {
 			continue
 		}
 		legacyIcons := a.legacyIconsDirFor(key)
+		a.applyTrackMu.Lock()
 		e, ok := a.profiles.RemoveDevice(key)
 		if !ok {
+			a.applyTrackMu.Unlock()
 			continue
 		}
+		// Fence late asynchronous USB learning before releasing the topology lock.
+		a.markDeletedAll(key, e)
+		a.teachMu.Lock()
+		a.stopUsbLearningLocked(key)
+		a.teachMu.Unlock()
+		a.applyTrackMu.Unlock()
 		if _, overridden := a.settings.Get().NotificationDevices[key]; overridden {
 			_ = a.settings.SetNotificationDevice(key, "inherit")
 		}
@@ -1602,7 +1756,6 @@ func (a *App) DeleteDevices(keys []string) error {
 			}
 			a.adbDisconnectAddr(addr)
 		}
-		a.markDeletedAll(key, e)
 		// v2.1.48：级联清理该设备名下全部数据——图标缓存目录（文件系统）+ 列表
 		// 内存缓存；档案条目（Apps 列表 + AppParams 虚拟屏参数）随 RemoveDevice
 		// 一并删除（AppParams 挂在 DeviceEntry 上）。
@@ -1952,6 +2105,7 @@ func (a *App) applyTrackUpdateLocked(ctx context.Context, devs, usb []adb.Device
 	// 探测触发：档案中设备不在线且档案有 addrs → mDNS+并行 connect（15s 节流）
 	// 显示层提交
 	a.commitDisplay(devs, "applyTrackUpdate")
+	a.maybeLearnWirelessTcpip(devs)
 	for _, job := range identityJobs {
 		go a.learnWirelessIdentity(job)
 	}
@@ -1968,6 +2122,31 @@ func (a *App) commitDisplay(devs []adb.Device, src ...string) {
 	if len(src) > 0 && src[0] != "" {
 		source = src[0]
 	}
+	projected := func() []adb.Device {
+		a.displayMu.Lock()
+		defer a.displayMu.Unlock()
+		return a.projectDisplayLocked(devs, source)
+	}()
+	a.afterDisplayCommit(projected)
+}
+
+func (a *App) rebuildCurrentDisplay(source string) []adb.Device {
+	var base []adb.Device
+	projected := func() []adb.Device {
+		a.displayMu.Lock()
+		defer a.displayMu.Unlock()
+		a.mu.RLock()
+		base = append([]adb.Device(nil), a.lastTrack...)
+		a.mu.RUnlock()
+		return a.projectDisplayLocked(base, source)
+	}()
+	a.afterDisplayCommit(projected)
+	return base
+}
+
+func (a *App) projectDisplayLocked(devs []adb.Device, source string) []adb.Device {
+	a.displayBase = append([]adb.Device(nil), devs...)
+	devs = append([]adb.Device(nil), devs...)
 	a.teachMu.Lock()
 	plugN := len(a.plugging)
 	a.teachMu.Unlock()
@@ -1975,6 +2154,8 @@ func (a *App) commitDisplay(devs []adb.Device, src ...string) {
 	// 都必须基于干净档案。否则「孤儿键还在档」时 applyProfileNames 会给该
 	// transport 卡套上孤儿键的 IP 名（36475 一闪），孤儿随后删除但名字已设置。
 	a.profiles.CleanOrphanIPPort()
+	version := a.profiles.displayVersion()
+	physVersion := a.physicalDisplayVersion()
 	bridge.DebugLog("[app] 显示提交：%s（插线遮罩活跃=%d，%s）", source, plugN, time.Now().Format("15:04:05.000"))
 	a.annotateDeviceIdentities(devs)
 	applyProfileNames(devs, a.profiles)
@@ -2002,10 +2183,19 @@ func (a *App) commitDisplay(devs []adb.Device, src ...string) {
 	bridge.DebugLog("[app] 显示提交摘要：%s", sb.String())
 
 	a.mu.Lock()
+	a.devices = devs
+	a.mu.Unlock()
+	a.displayProfileVersion = version
+	a.displayPhysVersion = physVersion
+	a.displayInitialized = true
+	return devs
+}
+
+func (a *App) afterDisplayCommit(devs []adb.Device) {
+	a.mu.Lock()
 	a.adbOK = true
 	a.adbFail = 0
 	a.adbHealTried = false
-	a.devices = devs
 	a.mu.Unlock()
 	a.reconcileNotifications()
 
@@ -2384,41 +2574,22 @@ func (a *App) cancelDrop(d *adb.Device) {
 	a.dropMu.Unlock()
 }
 
-// onDropped 是 removed 防抖后的掉线处理（gui48-mdns4）：设备流确认缺席即可；
-// 不打 stale、不探测——各地址状态由 mDNS 层 gone 事件按服务类型分形态写入档案
-// （Goodbye/门铃确认等价于已探测）。设备级离线卡由「全部地址 stale + 设备流无
-// device 条目」的档案状态自然判定。
-//
-// gui48-teachfix4：removed 只保留设备流层面的自然处理，**不再干预遮罩**——
-// 「拔线确认」清遮罩路径已删除（adbd 重启断档实测可达 3.45s~5s，2s 防抖无法
-// 与真拔线区分，曾造成误杀+闪烁）。真拔线由 10s 兜底超时自然呈现档案态。
+// onDropped rechecks both wireless channels after the device-level debounce.
+// Each endpoint owns its result; USB/another wireless channel cannot mask it.
+// Plug/unplug shields remain owned by their existing state machines.
 func (a *App) onDropped(id string) {
 	a.dropMu.Lock()
 	delete(a.dropTimers, id)
 	a.dropMu.Unlock()
+	key := a.profiles.ResolveKey(id)
+	if key == "" {
+		return
+	}
 
-	a.mu.RLock()
-	present := false
-	var track []adb.Device
-	track = append(track, a.lastTrack...)
-	for i := range track {
-		d := &track[i]
-		if d.Serial == id || a.identityOf(d) == id {
-			present = true
-			break
-		}
-	}
-	a.mu.RUnlock()
-	if present {
-		return // 防抖期间设备再现：取消掉线
-	}
-	bridge.DebugLog("[app] removed 防抖确认：%s 设备流缺席；地址 stale 交由 mDNS gone 事件分形态处理", id)
-	// gui52fix4：不依赖组播——对档案 active 地址做一轮 connect 验尸
-	// （硬事实：通=保持 active，不通=stale）。异步执行防阻塞防抖回调。
+	// A remaining 5555/TLS/USB transport does not prove the removed channel is
+	// alive. Recheck both addresses; each result updates only its own channel.
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		a.probeProfileActiveAddrs(ctx, id)
+		a.checkProfileChannels(context.Background(), key, nil)
 	}()
 }
 
@@ -2664,9 +2835,7 @@ func (a *App) maybeTeachTcpip(ctx context.Context, devs []adb.Device) {
 	}
 	a.teachMu.Unlock()
 
-	for _, serial := range toCheck {
-		_ = a.teachTcpipSerial(ctx, serial)
-	}
+	parallel.For(ctx, len(toCheck), parallel.Devices, func(i int) { _ = a.teachTcpipSerial(ctx, toCheck[i]) })
 }
 
 // maybeTeachTcpipEvent 是事件驱动的插线学习入口（gui48-teachfix）：
@@ -3767,10 +3936,7 @@ func (a *App) shieldPairing(devs []adb.Device) []adb.Device {
 // 用当前权威设备流（lastTrack）重跑 commitDisplay 并推送到 a.devices——拔线后
 // 设备流无事件也不等 60s 校准，前端下一轮 700ms 轮询即看到档案态。
 func (a *App) refreshDisplayForPlug() {
-	a.mu.RLock()
-	base := append([]adb.Device(nil), a.lastTrack...)
-	a.mu.RUnlock()
-	a.commitDisplay(base, "遮罩刷新")
+	a.rebuildCurrentDisplay("遮罩刷新")
 }
 
 // inUsbFirstSeenWindow 判定该 identity 当前是否处于插线进行中（gui47-fix：
@@ -3871,11 +4037,7 @@ func (a *App) runDiscovery(ctx context.Context, cands map[string][]AddrEntry) {
 		}
 	}
 
-	type groupPlan struct {
-		identity string
-		tiers    [][]string
-		addrs    []string
-	}
+	type groupPlan = wirelessDiscoveryPlan
 	plans := make([]*groupPlan, 0, len(identities))
 	for _, id := range identities {
 		tiers := [][]string{{}, {}}
@@ -3926,82 +4088,7 @@ func (a *App) runDiscovery(ctx context.Context, cands map[string][]AddrEntry) {
 		return
 	}
 
-	// 3. 组间并行 connect：每组内 ConnectTiers（discovery 包零改动），
-	// 组间互不取消——每台设备都有哨兵。
-	type groupResult struct {
-		plan *groupPlan
-		addr string
-		ok   bool
-	}
-	results := make([]groupResult, len(plans))
-	var wg sync.WaitGroup
-	for i, p := range plans {
-		wg.Add(1)
-		go func(i int, p *groupPlan) {
-			defer wg.Done()
-			if a.disc == nil {
-				results[i] = groupResult{plan: p}
-				return
-			}
-			gctx, gcancel := context.WithTimeout(ctx, discoveryWindow)
-			defer gcancel()
-			addr, ok := a.disc.ConnectTiers(gctx, p.tiers, connectTimeout, discoveryWindow)
-			results[i] = groupResult{plan: p, addr: addr, ok: ok}
-		}(i, p)
-	}
-	wg.Wait()
-
-	// 4. 结果汇总：每组独立成功/失败。成功组只写成功地址，失败组只记本组失败。
-	st := DiscoveryStatus{Tried: tried, LastTry: time.Now().Unix()}
-	anyOK := false
-	for i := range results {
-		r := &results[i]
-		if r.ok {
-			mode := ""
-			if modeOf := a.profiles.AddrMode(r.addr); modeOf == ModeTls {
-				mode = ModeTls
-			}
-			if mode == "" {
-				for _, t := range r.plan.tiers[0] {
-					if t == r.addr {
-						mode = ModeTls
-						break
-					}
-				}
-			}
-			if mode == "" && isTlsFormAddr(r.addr) {
-				mode = ModeTls
-			}
-			// gui41 单记忆：成功/失败按 identity 写档案（广播/归档可能已把
-			// 同一形态旧地址删除，直接以 addr 为 key 会 no-op）。
-			// gui55：纯探测写 active 前验身（直读设备序列号核对档案身份）——
-			// 只有 IP 可达不算"我们的设备在线"。
-			if a.probeMarkActive(ctx, r.plan.identity, r.addr, mode, "无线探测") {
-				if !anyOK {
-					anyOK = true
-					st.Found = r.addr
-				}
-			}
-		} else {
-			for _, ad := range r.plan.addrs {
-				a.profiles.AddrFail(r.plan.identity, ad)
-				// gui48-mdns4fix2：connect 失败 1 次即 stale（只打失败地址，分形态平等）。
-				if a.profiles.MarkAddrStale(r.plan.identity, ad) {
-					bridge.DebugLog("[app] 无线探测失败：%s → 打 stale（1 次即 stale）", ad)
-				}
-			}
-			bridge.DebugLog("[app] 无线探测未找到：尝试 %d 个地址（tls %d / 其他 %d）",
-				len(r.plan.addrs), len(r.plan.tiers[0]), len(r.plan.tiers[1]))
-		}
-	}
-	if anyOK {
-		st.Status = "found"
-	} else {
-		st.Status = "notfound"
-	}
-	a.mu.Lock()
-	a.discStatus = st
-	a.mu.Unlock()
+	a.runDiscoveryPlans(ctx, plans, tried)
 }
 
 // decorateTls 设备卡 TLS 形态标注 + 副行 IP 实时化（gui12 C，gui26 实时化）：
@@ -4068,12 +4155,12 @@ func (a *App) mdns9DecorateCard(d *adb.Device, key string, e DeviceEntry) {
 			d.Serial = disp
 		}
 	}
-	// gui48-mdns10：投屏规格从档案档位现算（与 IP/TLS 同源原则）——
-	// 档案 wifi/usb 档是权威语义，覆盖 adb 富化值，杜绝 60s 粘滞过期空白。
-	mdns10DecorateSpecs(d, e)
+	// Use the same effective mode profile as the settings panel, including native
+	// defaults. Stored raw defaults can predate native-display support.
+	a.decorateCardSpecs(d, key, e)
 }
 
-// mdns10DecorateSpecs 用档案档位（profiles.wifi / profiles.usb，含自定义）现算
+// mdns10DecorateSpecs 用已经计算好的生效档位（含原生默认/自定义）现算
 // 卡片规格字段：无线卡 → WirelessRes+FPS（长边按设备宽高比换算）；有线卡 →
 // Res+FPS（usb 档）。原生宽高比优先取档案持久化的 e.Res，缺失时用 adb 富化
 // d.Res / d.WirelessRes（含宽高比）兜底；全部缺失按 16:9 兜底。Battery 仍保持
@@ -4156,13 +4243,13 @@ func (a *App) buildPending(devs []adb.Device) {
 	var out []PendingDevice
 	seen := map[string]bool{}
 	for _, s := range svcs {
-		if s.Mode != discovery.MdnsModeTls || s.Addr == "" || seen[s.Addr] {
+		if (s.Mode != discovery.MdnsModeTls && (s.Mode != discovery.MdnsModeTcpip || addrPort(s.Addr) != "5555")) || !validPairIP(ipOfAddr(s.Addr)) || !validPairPort(addrPort(s.Addr)) || seen[s.Addr] {
 			continue
 		}
 		if online[s.Addr] {
 			continue // 已连接（配对成功）：正常设备卡展示
 		}
-		serial := TlsServiceIdentity(s.Name)
+		serial := SerialFromServiceName(s.Name)
 		// gui52-fix17b：删除集的设备**不在这里过滤**——「删除=不自动复活」由
 		// 设备流（filterDeletedUsb/devicesForSync）、mDNS 自动入档（applyMdnsServiceAdded）
 		// 与新设备弹窗（tryPopupDeviceLocked）的删除集过滤保证；配对弹窗是用户
@@ -4193,20 +4280,47 @@ func (a *App) buildPending(devs []adb.Device) {
 		if name == "" {
 			name = "无线调试设备"
 		}
-		ip := strings.TrimSuffix(s.Addr, ":"+addrPort(s.Addr))
+		ip := ipOfAddr(s.Addr)
 		seen[s.Addr] = true
-		out = append(out, PendingDevice{
-			Key:      s.Addr,
-			Name:     name,
-			IP:       ip,
-			Addr:     s.Addr,
-			PairPort: pairingServicePort(s.Name, ip, svcs),
-			Guid:     s.Name,
-			Serial:   serial,
-		})
+		guid := ""
+		if s.Mode == discovery.MdnsModeTls {
+			guid = s.Name
+		}
+		// One modal target per physical host. Prefer its TLS address for code
+		// pairing regardless of the order in which the two broadcasts arrived.
+		merged := false
+		for i := range out {
+			if out[i].IP != ip || out[i].Serial != serial {
+				continue
+			}
+			if guid != "" {
+				out[i].Addr, out[i].Guid = s.Addr, guid
+			}
+			merged = true
+			break
+		}
+		if !merged {
+			out = append(out, PendingDevice{Key: s.Addr, Name: name, IP: ip, Addr: s.Addr, Guid: guid, Serial: serial})
+		}
 	}
+	direct := a.pendingDirectAddrs(out)
+	for i := range out {
+		out[i].PairPort = pairingServicePort(out[i].Guid, out[i].IP, svcs)
+		out[i].DirectAddr = direct[out[i].IP]
+	}
+
 	a.mu.Lock()
-	a.pending = out
+	// A fast probe can finish before this display build publishes its pending
+	// list. Read its latest result under the publication lock, not an old copy.
+	for i := range out {
+		if probe := a.pendingTcpip[out[i].IP]; probe != nil {
+			out[i].DirectAddr = ""
+			if probe.ok {
+				out[i].DirectAddr = out[i].IP + ":5555"
+			}
+		}
+	}
+	a.pending = a.mergeLANPendingLocked(out, svcs, online)
 	a.mu.Unlock()
 }
 
@@ -4804,8 +4918,10 @@ func (a *App) mdns9UnifySlot(sl *mdns9CardSlot, e DeviceEntry) adb.Device {
 				out = merged
 			}
 		}
-	case wifiDev != nil:
+	case wifiDev != nil && profileHasActiveAddr(e):
 		out = *wifiDev
+	case wifiDev != nil:
+		return a.mdns9ProfileFallbackCard(sl.key, e)
 	case other != nil:
 		out = *other
 	default:
@@ -5133,18 +5249,22 @@ func (a *App) identityOf(d *adb.Device) string {
 	return adb.IdentityKey("", "", "", serial)
 }
 
-// displayNameOf 设备展示名（市场名优先）：档案 marketname → adb marketname →
-// Name（富化名，marketname 优先、man+model 兜底）→ serial。
+// displayNameOf 设备展示名：自定义名 → 档案 marketname → adb marketname →
+// 档案型号 → Name（富化名，marketname 优先、man+model 兜底）→ serial。
 // 弹窗文本必须用市场名：档案有 "REDMI K80" 而本轮 getprop 失败时，
 // Name 会是 "Xiaomi 12345TESTA"（厂商+型号），禁止拿它当弹窗文本。
 func (a *App) displayNameOf(d *adb.Device) string {
-	if e, ok := a.deviceEntry(d); ok {
-		if n := profileCardName(e, ""); n != "" {
-			return n
-		}
+	e, profiled := a.deviceEntry(d)
+	if profiled && ((e.DisplayNameSet && e.DisplayName != "") || e.Marketname != "") {
+		return profileCardName(e, "")
 	}
 	if d.Marketname != "" {
 		return d.Marketname
+	}
+	if profiled {
+		if n := profileCardName(e, ""); n != "" {
+			return n
+		}
 	}
 	if d.Name != "" {
 		return d.Name
@@ -5318,7 +5438,10 @@ func (a *App) listProfiles() []ProfileItem {
 // Snapshot 返回当前状态（JS 轮询入口，线程安全；panic 由 guard 兜底留痕）。
 func (a *App) Snapshot() Snapshot {
 	var s Snapshot
-	a.guard("Snapshot", func() { s = a.snapshotRaw() })
+	a.guard("Snapshot", func() {
+		a.ensureProfileDisplayCurrent()
+		s = a.snapshotRaw()
+	})
 	return s
 }
 
@@ -5330,10 +5453,18 @@ func (a *App) SetDeviceOrder(order []string) error {
 func (a *App) snapshotRaw() Snapshot {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+	now := time.Now()
+	liveLogs := make(map[castLogKey]bool, len(a.sessions)+len(a.appWins))
 	sessions := make([]Session, 0, len(a.sessions))
 	for serial, st := range a.sessions {
 		c := st.cast
-		c.Log = append([]string{}, st.cast.Log...)
+		if c.Active || st.restarting {
+			key := castLogKeyFor(serial, st.identity, "")
+			liveLogs[key] = true
+			c.Log = a.liveCastLogLocked(key, c.Log, now)
+		} else {
+			c.Log = append([]string{}, c.Log...)
+		}
 		sessions = append(sessions, Session{
 			Serial:    serial,
 			DevName:   c.DevName,
@@ -5361,24 +5492,52 @@ func (a *App) snapshotRaw() Snapshot {
 		c.Steps = append([]PairStep{}, a.pair.Steps...)
 		pair = &c
 	}
+	// 上线事件可能先于名称富化。每次快照按当前卡片／档案重取名称，
+	// 改名也即时生效；复制弹窗以免后续更新改写调用方已持有的快照。
+	var newDevice *NewDeviceInfo
+	if a.popup.info != nil {
+		c := *a.popup.info
+		if d := findTargetDevice(c.Serial, a.devices); d != nil {
+			current := *d
+			if current.Name == "" || current.Name == current.Serial {
+				current.Name = c.Name // 当前快照缺名时，保留上线事件已有的富化名。
+			}
+			c.Name = a.displayNameOf(&current)
+		}
+		newDevice = &c
+	}
+	appWins := a.appWinsListLocked(now, liveLogs)
+	devices := a.devicesWithAppBusyLocked() // 二期：填充「应用」按钮枚举遮罩态（锁内）
+	// 成功实证入档（档案随 identity 走）：静态探测暂时失败/未知时也保持入口显示。
+	for i := range devices {
+		if devices[i].WeChatScan {
+			continue
+		}
+		if id := a.identityOf(&devices[i]); id != "" && a.profiles.WeChatScanVerified(id) {
+			devices[i].WeChatScan = true
+		}
+	}
 	return Snapshot{
 		Version:            a.cfg.Version,
 		BatPath:            a.cfg.BatPath,
 		AdbOK:              a.adbOK,
-		AdbFailing:         a.adbOK && a.adbFail > 0,     // 真空期去抖：可用但正在连续失败 → 前端"刷新中"软提示
-		Devices:            a.devicesWithAppBusyLocked(), // 二期：填充「应用」按钮枚举遮罩态（锁内）
+		AdbFailing:         a.adbOK && a.adbFail > 0, // 真空期去抖：可用但正在连续失败 → 前端"刷新中"软提示
+		Devices:            devices,                  // 二期：填充「应用」按钮枚举遮罩态（锁内）
 		Pending:            append([]PendingDevice{}, a.pending...),
+		PendingSearching:   a.pendingLAN != nil && a.pendingLAN.searching,
 		Discovery:          disc,
 		Cast:               a.activeCastLocked(),
 		Sessions:           sessions,
 		Profiles:           a.listProfiles(),
 		DevOrder:           a.profiles.DeviceOrder(),
-		NewDevice:          a.popup.info,
+		NewDevice:          newDevice,
 		PairStatus:         pair,
-		AppWins:            a.appWinsListLocked(),
+		AppWins:            appWins,
+		RecentCastLogs:     a.recentCastLogsLocked(now, liveLogs),
 		ProfileSaveError:   a.profiles.SaveError(),
 		Settings:           a.settings.Get(), // 设置面板两个开关的当前值
 		NotificationStatus: a.notificationStatusLocked(),
+		WeChatScanNotice:   a.weChatScanNotice,
 	}
 }
 
@@ -5506,6 +5665,8 @@ func (a *App) StartCast(serial string) error {
 	}
 	if target != nil {
 		name = a.displayNameOf(target)
+	} else if e, ok := a.profiles.Entry(lookupKey); ok {
+		name = profileCardName(e, serial)
 	}
 	identity := ""
 	if target != nil {
@@ -5566,6 +5727,13 @@ func (a *App) StartCast(serial string) error {
 	a.physMu.Lock()
 	native := a.physCache[profileKey].native
 	a.physMu.Unlock()
+	// Card Res may be a custom/scaled casting size. Keep physical geometry for
+	// the running session's resolution conversion and restart fallback.
+	if actualNativeRes := nativeDisplayResolution(native); actualNativeRes != "" {
+		nativeRes = actualNativeRes
+	} else if entry, ok := a.profiles.Entry(profileKey); ok && entry.Res != "" {
+		nativeRes = entry.Res
+	}
 	applyNativeBaseline(&p, native)
 	applyNativeCastParams(&params, p, native)
 	// v2.1.79：锁定态也需注入（锁定=固定当前生效值，值随注入传给 bat）。
@@ -5595,6 +5763,7 @@ func (a *App) StartCast(serial string) error {
 	params.OverlayVisibleSet = true
 	params.KeepDeviceAwake = settings.KeepDeviceAwake
 	params.KeepDeviceAwakeSet = true
+	params.AutoBlackoutMainCast = settings.AutoBlackoutMainCast
 	params.VideoSmoothing = settings.VideoSmoothing
 	params.VideoSmoothingFrames = settings.VideoSmoothingFrames
 	params.VideoSmoothingSet = true
@@ -5603,6 +5772,7 @@ func (a *App) StartCast(serial string) error {
 	params.Serial, params.Addr, params.Addr2 = locked.Serial, locked.Addr, locked.Addr2
 	params.ExpectedSerial = locked.ExpectedSerial
 	params.Market, params.Model = locked.Market, locked.Model
+	params.WinTitle = castWindowTitle(name, "主投屏")
 	tlsFlag := params.Addr != "" && isTlsFormAddr(params.Addr)
 
 	// 创建会话级 runner：回调按 serial 绑定，App 侧再按 runner 身份防串
@@ -5626,12 +5796,20 @@ func (a *App) StartCast(serial string) error {
 
 	// 会话条目：结束态同 serial 原地替换；重启（restarting）沿用 startedAt 保持标签位置
 	keepStart := false
+	var previousLog []string
 	if st, ok := a.sessions[serial]; ok && st.restarting {
 		keepStart = true
+		previousLog = appendCastLog(st.cast.Log, "[EZ] ── 正在重启投屏 ──")
 	}
 	startedAt := time.Now()
 	if keepStart {
 		startedAt = a.sessions[serial].startedAt
+	}
+	initialMode := ""
+	if params.Serial != "" {
+		initialMode = "usb"
+	} else if params.Addr != "" {
+		initialMode = "wifi"
 	}
 	a.sessions[serial] = &sessionState{
 		cast: CastState{
@@ -5639,10 +5817,11 @@ func (a *App) StartCast(serial string) error {
 			Serial:    serial,
 			DevName:   name,
 			NativeRes: nativeRes,
+			Mode:      initialMode,
 			Phase:     "starting",
 			PhaseText: "正在启动…",
 			Tls:       tlsFlag,
-			Log:       []string{},
+			Log:       previousLog,
 			ExitCode:  -1,
 		},
 		runner:        r,
@@ -5705,9 +5884,10 @@ func (a *App) RefreshNow() {
 	go a.guard("RefreshNow", func() { a.pollOnce(context.Background()) })
 }
 
-// ForceDiscover（gui48-mdns5）：connect 探测已退役，保留 RPC 兼容。
-// 仅刷新设备列表/显示层，不再触发任何 connect 探测——无线状态全权由 mdns 信号决定。
+// ForceDiscover refreshes tracked devices and starts/coalesces one LAN 5555
+// discovery round. Discovery never invokes adb connect or archives a device.
 func (a *App) ForceDiscover() {
+	a.startPendingLANSearch(false)
 	a.RefreshNow()
 }
 
@@ -5750,25 +5930,10 @@ func (a *App) coldSearch5555(ctx context.Context) {
 	if len(targets) == 0 {
 		return
 	}
-	var wg sync.WaitGroup
-	for _, t := range targets {
-		wg.Add(1)
-		go func(t target) {
-			defer wg.Done()
-			cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			_, err := a.disc.ConnectOut(cctx, t.addr)
-			cancel()
-			if err == nil {
-				// gui55：connect 通只证明"这个 IP 上有台设备"——写 active 前验身
-				// （DHCP 回收复用会把 A 设备写活 B 档案：平板莫名在线）。
-				a.probeMarkActive(ctx, t.id, t.addr, t.mode, "冷启动全量搜索")
-			} else {
-				a.profiles.AddrFailMode(t.id, t.addr, t.mode)
-				bridge.DebugLog("[app] 冷启动全量搜索不通：%s/%s → stale（%v）", t.id, t.addr, err)
-			}
-		}(t)
-	}
-	wg.Wait()
+	parallel.For(ctx, len(targets), parallel.Devices, func(i int) {
+		t := targets[i]
+		a.checkChannelProbe(ctx, t.id, t.addr, t.mode, "", "", false)
+	})
 	a.reapplyDisplay("冷启动全量搜索")
 }
 
@@ -5785,8 +5950,9 @@ func (a *App) probeProfileActiveAddrs(ctx context.Context, key string) {
 		return
 	}
 	type target struct {
-		addr string
-		mode string
+		addr        string
+		mode        string
+		observation addressObservation
 	}
 	var targets []target
 	for i := range e.Addrs {
@@ -5794,44 +5960,52 @@ func (a *App) probeProfileActiveAddrs(ctx context.Context, key string) {
 		if ae.Addr == "" || ae.State != AddrStateActive {
 			continue
 		}
-		targets = append(targets, target{addr: ae.Addr, mode: addrEntryClass(ae)})
+		targets = append(targets, target{addr: ae.Addr, mode: addrEntryClass(ae), observation: a.profiles.observeAddress(key, ae.Addr)})
 	}
 	if len(targets) == 0 {
 		return
 	}
-	var wg sync.WaitGroup
-	var alive bool
-	var aliveMu sync.Mutex
-	for _, t := range targets {
-		wg.Add(1)
-		go func(t target) {
-			defer wg.Done()
-			cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			_, err := a.disc.ConnectOut(cctx, t.addr)
-			cancel()
-			if err == nil {
-				// gui55：验身通过才算"这台设备还活着"（否则 IP 复用会把别的设备
-				// 当成该档案在线）。
-				if a.probeMarkActive(ctx, key, t.addr, t.mode, "缺席验尸") {
-					aliveMu.Lock()
-					alive = true
-					aliveMu.Unlock()
-				}
-			} else {
-				a.profiles.AddrFailMode(key, t.addr, t.mode)
-				bridge.DebugLog("[app] 缺席验尸：%s/%s 探测不通 → stale（%v）", key, t.addr, err)
+	parallel.For(ctx, len(targets), parallel.Devices, func(i int) {
+		t := targets[i]
+		qctx, finish, started := a.beginChannelCheck(ctx, key+"|"+t.addr)
+		if !started {
+			return
+		}
+		defer finish()
+		defer func() {
+			if ctx.Err() == nil && qctx.Err() != context.Canceled {
+				a.rebuildCurrentDisplay("单通道缺席探测完成")
 			}
-		}(t)
-	}
-	wg.Wait()
-	// gui52-fix9：验尸判定「仍活着」后立即刷新显示——设备流缺席期间显示层
-	// 停在 offline，若不重算会闪现离线卡（实测 3.5s）；档案 active=在线证据。
-	aliveMu.Lock()
-	aliveNow := alive
-	aliveMu.Unlock()
-	if aliveNow {
-		a.reapplyDisplay("缺席验尸保活")
-	}
+		}()
+		cctx, cancel := context.WithTimeout(qctx, 2*time.Second)
+		_, err := a.disc.ConnectOut(cctx, t.addr)
+		cancel()
+		if ctx.Err() != nil || qctx.Err() == context.Canceled {
+			return
+		}
+		if err == nil {
+			// gui55：验身通过才算"这台设备还活着"（否则 IP 复用会把别的设备
+			// 当成该档案在线）。
+			ok, serial := a.probeOwnerOK(qctx, key, t.addr)
+			if ctx.Err() != nil || qctx.Err() == context.Canceled {
+				return
+			}
+			if ok && qctx.Err() == nil {
+				a.profiles.succeedObservedAddress(key, t.addr, t.mode, t.observation)
+			} else if a.profiles.failObservedAddress(key, t.addr, t.mode, t.observation) {
+				// 'already connected' can describe an ADB server's dead
+				// transport. Absence requires fresh owner evidence to stay active.
+				bridge.DebugLog("[app] 缺席验尸：%s/%s 未确认设备身份（短号=%s）→ stale", key, t.addr, serial)
+			}
+		} else {
+			if a.profiles.failObservedAddress(key, t.addr, t.mode, t.observation) {
+				bridge.DebugLog("[app] 缺席验尸：%s/%s 探测不通 → stale（%v）", key, t.addr, err)
+			} else {
+				bridge.DebugLog("[app] 缺席验尸：%s/%s 已有更新证据，丢弃旧失败（%v）", key, t.addr, err)
+			}
+		}
+	})
+	a.reapplyDisplay("缺席探测完成（含全部失效）")
 }
 
 // --- 无线调试配对向导（gui12 A：mDNS 自动发现 → 只输 6 位配对码 → TLS 接入入档） ---
@@ -5851,10 +6025,6 @@ func (a *App) PairConnect(devKey, ip, pairPort, connPort, code string) error {
 		return a.pairQrRefresh()
 	}
 	code = strings.TrimSpace(code)
-	if len(code) != 6 || !isDigits(code) {
-		a.setPairFailed(PairErrCode, "配对码须为 6 位数字", devKey, ip)
-		return nil
-	}
 	a.mu.Lock()
 	if a.pair != nil && a.pair.Phase != PairPhaseIdle &&
 		a.pair.Phase != PairPhaseSuccess && a.pair.Phase != PairPhaseFailed {
@@ -5881,20 +6051,48 @@ func (a *App) PairConnect(devKey, ip, pairPort, connPort, code string) error {
 		Steps: []PairStep{{Name: PairStepPair}}, QrText: qrText, QrExpireAt: qrExp}
 	a.mu.Unlock()
 
-	// 参数预解析（快照态：待配对卡）
-	p, _ := a.findPending(devKey)
+	p, found := a.findPending(devKey)
+	ip, pairPort, connPort = strings.TrimSpace(ip), strings.TrimSpace(pairPort), strings.TrimSpace(connPort)
 	if ip == "" {
 		ip = p.IP
+	}
+	if !validPairIP(ip) ||
+		pairPort != "" && !validPairPort(pairPort) || connPort != "" && !validPairPort(connPort) {
+		a.setPairFailed(PairErrAddr, "IP / 端口格式不正确，请检查后重试", devKey, ip)
+		return nil
 	}
 	name := p.Name
 	if name == "" {
 		name = "新设备"
 	}
-	if connPort == "" {
+	if code == "" {
+		eligible := devKey == "" && pairPort == "5555" || found && p.IP == ip && p.DirectAddr == ip+":5555"
+		if !eligible {
+			a.setPairFailed(PairErrCode, "配对码须为 6 位数字", devKey, ip)
+			return nil
+		}
+		a.mu.Lock()
+		a.pair.Direct, a.pair.Phase, a.pair.Name, a.pair.Addr = true, PairPhaseConn, name, ip+":5555"
+		a.pair.Steps = []PairStep{{Name: PairStepConnect}}
+		a.mu.Unlock()
+		go a.guard("pair-direct-connect", func() { a.runDirectPairFlow(p, ip, name) })
+		return nil
+	}
+	if len(code) != 6 || !isDigits(code) {
+		a.setPairFailed(PairErrCode, "配对码须为 6 位数字", devKey, ip)
+		return nil
+	}
+	// 5555 describes a direct target, never a pairing endpoint. A supplied
+	// code must resolve the real wireless-debugging pairing/connect services.
+	if isTcpipPort(pairPort) {
+		pairPort = ""
+	}
+	if isTcpipPort(connPort) {
+		connPort = ""
+	}
+	if connPort == "" && !isTcpipPort(addrPort(p.Addr)) {
 		connPort = addrPort(p.Addr)
 	}
-	bridge.DebugLog("[app] PairConnect devKey=%q ip=%q pairPort=%q connPort=%q", devKey, ip, pairPort, connPort)
-
 	go a.guard("pair-connect", func() { a.runPairFlow(p, ip, pairPort, connPort, code, name) })
 	return nil
 }
@@ -5902,9 +6100,17 @@ func (a *App) PairConnect(devKey, ip, pairPort, connPort, code string) error {
 // PairReset 清空配对向导状态（前端弹窗关闭/重试时调用）。
 func (a *App) PairReset() {
 	a.mu.Lock()
+	hadLAN := a.pendingLAN != nil
+	if hadLAN {
+		a.pendingLAN.cancel()
+		a.pendingLAN = nil
+	}
 	a.pair = nil
 	a.pairQR = nil
 	a.mu.Unlock()
+	if hadLAN {
+		go a.guard("pending-lan-reset", func() { a.reapplyDisplay("pair LAN search stopped") })
+	}
 }
 
 // pairQrOpen 打开二维码路线：生成 6 位码 + WIFI:T:ADB 文本，状态=idle。
@@ -5922,23 +6128,27 @@ func (a *App) pairQrOpen() error {
 	bridge.DebugLog("[app] 二维码配对已打开：%s（%s 过期）", q.qrText(), q.expireAt.Format("15:04:05"))
 	// v2.1.77：进配对流程第二道检测（防运行期中 5037 被旧版夺走）——
 	// 不完整才抢庄（只掀，不带私有兜底）；异步、不阻塞弹窗。
-	go a.guard("pair-srv-ownership", func() { a.ensureServerOwner("配对") })
+	go a.guard("pair-srv-ownership", func() { a.ensureServerOwner(context.Background(), "配对", false) })
+	a.startPendingLANSearch(true)
 	return nil
 }
 
 // pairQrRefresh 重新生成二维码（悬停刷新 / 2 分钟失效后自动重新生成）。
 func (a *App) pairQrRefresh() error {
 	a.mu.Lock()
-	if a.pairQR == nil || (a.pair != nil && a.pair.Mode != PairModeQR) {
+	if a.pairQR == nil {
 		a.mu.Unlock()
 		return errors.New("二维码路线未打开")
 	}
+	if a.pair != nil && (a.pair.Phase == PairPhasePairing || a.pair.Phase == PairPhaseConn || a.pair.Phase == PairPhaseVerify) {
+		a.mu.Unlock()
+		return errors.New("配对进行中，请完成后再刷新二维码")
+	}
 	q := a.generatePairQRLocked()
 	a.pairQR = q
-	if a.pair != nil {
-		a.pair.QrText = q.qrText()
-		a.pair.QrExpireAt = q.expireAt.Unix()
-	}
+	// A failed auto/manual attempt must return to idle so a fresh QR scan can
+	// trigger maybeAutoPairQR without closing the modal.
+	a.pair = &PairStatus{Phase: PairPhaseIdle, Mode: PairModeQR, QrText: q.qrText(), QrExpireAt: q.expireAt.Unix()}
 	a.mu.Unlock()
 	bridge.DebugLog("[app] 二维码配对已刷新：%s", q.qrText())
 	return nil
@@ -6032,8 +6242,7 @@ func (a *App) startPairQR(ip, pairPort, code, qrText string, qrExpireAt int64) {
 }
 
 // runPairFlow 配对向导异步主流程（goroutine；全程 guard 防 panic）。
-// fix6：生产路径先尝试 connect 目标 TLS 地址，成功=信任仍在，跳过 adb pair 直接建档；
-// connect 失败再回退原 pair→connect 流程。
+// Explicit codes always take the authenticated pair → TLS connect route.
 func (a *App) runPairFlow(p PendingDevice, ip, pairPort, connPort, code, name string) {
 	devKey := p.Key
 	hintSerial := p.Serial
@@ -6066,39 +6275,11 @@ func (a *App) runPairFlow(p PendingDevice, ip, pairPort, connPort, code, name st
 		}
 	}
 
-	// fix6 connect 先行快路径：connect 成功 = 手机侧仍有信任记录（删档找回场景），
-	// 无需重复 adb pair；失败则回退下面的原 pair→connect 流程。
-	if a.pairFastConnect && connPort != "" && ip != "" {
-		fctx, fcancel := context.WithTimeout(ctx, 2*time.Second)
-		out0, err0 := a.pairOps.connectFn(fctx, ip+":"+connPort)
-		fcancel()
-		if err0 == nil {
-			a.mu.Lock()
-			if a.pair != nil && len(a.pair.Steps) > 0 {
-				a.pair.Steps[0].OK = true
-				a.pair.Phase = PairPhaseConn
-				a.pair.Steps = append(a.pair.Steps, PairStep{Name: PairStepConnect})
-				a.pair.Name, a.pair.Addr = name, ip+":"+connPort
-			}
-			a.mu.Unlock()
-			bridge.DebugLog("[app] connect 先行命中（信任仍在）：跳过 pair → %s", ip+":"+connPort)
-			a.completePairFlowAfterConnect(ctx, p, ip, connPort, name, hintSerial, guid)
-			return
-		}
-		bridge.DebugLog("[app] connect 先行未命中，回退 pair：%s %v", strings.TrimSpace(out0), err0)
-	}
-
-	qrRoute := false
-	a.mu.RLock()
-	if a.pair != nil {
-		qrRoute = a.pair.Mode == PairModeQR
-	}
-	a.mu.RUnlock()
-
-	// 手动/自动路线缺少 IP 或连接端口时立即失败（既有语义）；二维码路线配对成功前
-	// 手机还没有 connect 广播，连接端口延迟到配对成功后再解析。
-	if ip == "" || (connPort == "" && !qrRoute) {
-		a.setPairFailed(PairErrConnPort, "缺少连接信息：请手动填写设备 IP 与端口（手机无线调试主界面显示）", devKey, ip)
+	// An explicit code is always authenticated by adb pair, even when a
+	// previously trusted TLS transport or port 5555 could already connect.
+	if !validPairIP(ip) || pairPort != "" && (!validPairPort(pairPort) || isTcpipPort(pairPort)) ||
+		connPort != "" && (!validPairPort(connPort) || isTcpipPort(connPort)) {
+		a.setPairFailed(PairErrAddr, "IP / 端口格式不正确，请检查后重试", devKey, ip)
 		return
 	}
 
@@ -6115,6 +6296,11 @@ func (a *App) runPairFlow(p PendingDevice, ip, pairPort, connPort, code, name st
 		}
 	}
 
+	if !validPairPort(pairPort) || isTcpipPort(pairPort) {
+		a.setPairFailed(PairErrPort, "未发现有效的无线调试配对端口", devKey, ip)
+		return
+	}
+
 	// ② adb pair（配对码 30s 过期：单步 10s 超时，失败按输出分类）
 	pctx, pcancel := context.WithTimeout(ctx, pairTimeout)
 	out, err := a.pairOps.pairFn(pctx, ip, pairPort, code)
@@ -6122,13 +6308,21 @@ func (a *App) runPairFlow(p PendingDevice, ip, pairPort, connPort, code, name st
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(pctx.Err(), context.DeadlineExceeded) {
 			a.setPairFailed(PairErrTimeout, "配对超时：请确认手机与电脑同一网络后重试", devKey, ip)
-		} else {
+			return
+		} else if errors.Is(err, os.ErrNotExist) || errors.Is(err, exec.ErrNotFound) {
+			a.setPairFailed(PairErrRuntime, "缺少 adb.exe 或配套组件，请从完整的软件目录启动后重试", devKey, ip)
+			return
+		} else if strings.TrimSpace(out) == "" {
 			a.setPairFailed(PairErrInternal, "配对失败："+err.Error(), devKey, ip)
+			return
 		}
-		return
 	}
 	switch adb.PairErrKind(out) {
 	case "":
+		if err != nil {
+			a.setPairFailed(PairErrInternal, "配对进程异常退出："+err.Error(), devKey, ip)
+			return
+		}
 		// 配对成功 ✓
 	case "code":
 		a.setPairFailed(PairErrCode, "配对码不正确或已过期。配对码约 30 秒刷新一次，请以手机屏幕当前显示为准后重试", devKey, ip)
@@ -6207,7 +6401,7 @@ func (a *App) runPairFlow(p PendingDevice, ip, pairPort, connPort, code, name st
 }
 
 // completePairFlowAfterConnect 是 runPairFlow 的公共成功尾段：
-// connect 已成功（无论 pair 后连接还是 fix6 connect 先行直通）→ 验证/入档/成功态/tcpip。
+// adb pair and TLS connect succeeded → verify/archive/success/tcpip.
 func (a *App) completePairFlowAfterConnect(ctx context.Context, p PendingDevice, ip, connPort, name, hintSerial, guid string) {
 	devKey := p.Key
 
@@ -6742,8 +6936,18 @@ func (a *App) pushErrorLocked(serial string, r Runner, text string) {
 	a.applyEventLocked(st, bridge.Event{Kind: bridge.KindError, Text: text})
 }
 
+const castLogLineLimit = 160
+
+func appendCastLog(lines []string, line string) []string {
+	lines = append(lines, line)
+	if len(lines) > castLogLineLimit {
+		return lines[len(lines)-castLogLineLimit:]
+	}
+	return lines
+}
+
 // applyEventLocked 把分类事件应用到指定会话（持锁内部版）：
-// 日志缓冲（60 行截断）/模式判定/输入状态机/规格与纹理/阶段文案——全部只作用于
+// 日志缓冲/模式判定/输入状态机/规格与纹理/阶段文案——全部只作用于
 // 该会话自己的 cast，绝不串到其他会话。
 func (a *App) applyEventLocked(st *sessionState, ev bridge.Event) {
 	if !st.cast.Active && ev.Kind != bridge.KindNone {
@@ -6754,10 +6958,7 @@ func (a *App) applyEventLocked(st *sessionState, ev bridge.Event) {
 	st.lastLineAt = time.Now()
 	c.Stalled = false
 	c.StallSecs = 0
-	c.Log = append(c.Log, ev.Text)
-	if len(c.Log) > 60 {
-		c.Log = c.Log[len(c.Log)-60:]
-	}
+	c.Log = appendCastLog(c.Log, ev.Text)
 
 	// 模式判定（修复误判）：只接受"真实模式行"（[高清]/[流畅]/[custom]/[学习] 有线/
 	// 进入无线模式/无线模式尝试连接）携带的 Mode；"保存无线地址"等学习行 Mode 为空，
@@ -6892,6 +7093,9 @@ func (a *App) OnBatExitFor(serial string, r Runner, code int) {
 		st.closing = false  // "正在关闭…"同样由 bat 退出统一复位
 		st.runner = nil     // 允许该 serial 下次投屏
 		st.endedAt = time.Now()
+		if !st.restarting {
+			a.retainMainCastLogLocked(serial, st, "[EZ] "+st.cast.ExitText, st.endedAt)
+		}
 		// Event workers never reset the shared ADB server on session exit.
 		// Transport recovery belongs to the raw event stream, not a delayed list.
 	})
@@ -6967,6 +7171,7 @@ func (a *App) promptTick() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := time.Now()
+	a.pruneCastLogsLocked(now)
 	for _, st := range a.sessions {
 		c := &st.cast
 		if !c.Active || st.runner == nil {
@@ -7208,7 +7413,9 @@ func (a *App) effectiveProfile(serial string) DeviceProfile {
 	p := a.profiles.Get(key)
 
 	a.mu.RLock()
-	devices := append([]adb.Device{}, a.devices...)
+	// Display cards already contain scaled per-mode specifications. Only the
+	// validated transport snapshot may supply physical fallback measurements.
+	devices := append([]adb.Device{}, a.lastTrack...)
 	a.mu.RUnlock()
 
 	if p.Usb.Baseline.Res == 0 {
@@ -7343,7 +7550,7 @@ func (a *App) restartAfterExit(serial string) {
 		a.mu.Lock()
 		if st := a.sessions[serial]; st != nil {
 			st.restarting = false
-			st.cast.Log = append(st.cast.Log, "[GUI] 重启失败：bat 未退出")
+			st.cast.Log = appendCastLog(st.cast.Log, "[GUI] 重启失败：bat 未退出")
 		}
 		a.mu.Unlock()
 		return
@@ -7353,7 +7560,10 @@ func (a *App) restartAfterExit(serial string) {
 		a.mu.Lock()
 		if st := a.sessions[serial]; st != nil {
 			st.restarting = false
-			st.cast.Log = append(st.cast.Log, "[GUI] 重启失败："+err.Error())
+			st.cast.Log = appendCastLog(st.cast.Log, "[GUI] 重启失败："+err.Error())
+			if st.runner == nil {
+				a.retainMainCastLogLocked(serial, st, "[EZ] 投屏已结束", time.Now())
+			}
 		}
 		a.mu.Unlock()
 	}
@@ -7366,7 +7576,7 @@ func (a *App) ResetCast() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for serial, st := range a.sessions {
-		if st.runner == nil {
+		if st.runner == nil && !st.restarting {
 			delete(a.sessions, serial)
 		}
 	}
@@ -7377,7 +7587,7 @@ func (a *App) ResetCast() {
 func (a *App) ForgetSession(serial string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if st, ok := a.sessions[serial]; ok && st.runner == nil {
+	if st, ok := a.sessions[serial]; ok && st.runner == nil && !st.restarting {
 		delete(a.sessions, serial)
 		bridge.DebugLog("[app] 会话 %s 标签淡出完成，已移除", serial)
 	}
@@ -7502,6 +7712,14 @@ func (a *App) BeginClose() <-chan struct{} {
 		a.mu.Lock()
 		cancel := a.cancel
 		a.notificationClosing = true
+		for _, state := range a.wirelessTcpipLearning {
+			if state.cancel != nil {
+				state.cancel()
+			}
+		}
+		if a.pendingLAN != nil {
+			a.pendingLAN.cancel()
+		}
 		notificationService := a.notificationService
 		wirelessConnector := a.wirelessConnector
 		runners := make([]Runner, 0, len(a.sessions)+len(a.appWins))
@@ -7540,6 +7758,10 @@ func (a *App) BeginClose() <-chan struct{} {
 		go func() {
 			defer close(done)
 			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() { defer wg.Done(); a.learningWG.Wait() }()
+			wg.Add(1)
+			go func() { defer wg.Done(); a.closeChannelChecks() }()
 			if wirelessConnector != nil {
 				wg.Add(1)
 				go func() { defer wg.Done(); wirelessConnector.Close() }()

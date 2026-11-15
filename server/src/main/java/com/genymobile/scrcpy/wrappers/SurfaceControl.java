@@ -181,6 +181,14 @@ public final class SurfaceControl {
         }
     }
 
+    public static boolean getDisplayBrightnessSupport(IBinder displayToken) throws ReflectiveOperationException {
+        return (boolean) CLASS.getMethod("getDisplayBrightnessSupport", IBinder.class).invoke(null, displayToken);
+    }
+
+    public static boolean setDisplayBrightness(IBinder displayToken, float brightness) throws ReflectiveOperationException {
+        return (boolean) CLASS.getMethod("setDisplayBrightness", IBinder.class, float.class).invoke(null, displayToken, brightness);
+    }
+
     public static void destroyDisplay(IBinder displayToken) {
         try {
             CLASS.getMethod("destroyDisplay", IBinder.class).invoke(null, displayToken);

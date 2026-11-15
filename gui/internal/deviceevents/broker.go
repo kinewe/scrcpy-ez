@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"net"
 	"time"
+
+	"scrcpy-ez/gui/internal/loopback"
 )
 
 // Serve exposes an authenticated loopback stream to this GUI's cast workers.
 // Only the GUI owns the ADB subscription; workers never reset its server.
 func Serve(ctx context.Context, h *Hub) (endpoint, token string, err error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := loopback.Listen()
 	if err != nil {
 		return "", "", err
 	}

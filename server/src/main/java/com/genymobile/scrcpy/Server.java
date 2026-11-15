@@ -21,6 +21,7 @@ import com.genymobile.scrcpy.util.Ln;
 import com.genymobile.scrcpy.util.LogUtils;
 import com.genymobile.scrcpy.video.CameraCapture;
 import com.genymobile.scrcpy.video.NewDisplayCapture;
+import com.genymobile.scrcpy.video.PerspectiveCamera;
 import com.genymobile.scrcpy.video.ScreenCapture;
 import com.genymobile.scrcpy.video.SurfaceCapture;
 import com.genymobile.scrcpy.video.SurfaceEncoder;
@@ -105,12 +106,27 @@ public final class Server {
         List<AsyncProcessor> asyncProcessors = new ArrayList<>();
 
         BgNotification bgNotification = null;
+        PerspectiveCamera perspective = null;
         Controller controller = null;
 
-        DesktopConnection connection = DesktopConnection.open(scid, tunnelForward, video, audio, control, sendDummyByte);
+        DesktopConnection connection = DesktopConnection.open(scid, tunnelForward, video, audio, control, sendDummyByte, options.getPerspectiveCamera());
         try {
             if (options.getSendDeviceMeta()) {
                 connection.sendDeviceMeta(Device.getDeviceName());
+            }
+
+            if (options.getPerspectiveCamera()) {
+                if (options.getNewDisplay() == null || !control || !video) { throw new IOException("Perspective camera requires an application display"); }
+                final CleanUp perspectiveCleanUp = cleanUp;
+                try {
+                    perspective = new PerspectiveCamera(scid, options.getPerspectivePackage(), connection.getPerspectiveSocket(),
+                            perspectiveCleanUp == null ? null : perspectiveCleanUp::setPerspectiveAssociation, options.getCameraEvictionNotice());
+                } catch (IOException e) {
+                    // The enabled-by-default optional camera must not prevent
+                    // ordinary casting on older or unsupported Android devices.
+                    Ln.w("SCRCPY_EZ_PERSPECTIVE_UNAVAILABLE: normal projection continues; " + e.getMessage());
+                    connection.getPerspectiveSocket().close();
+                }
             }
 
             if (control) {
@@ -161,7 +177,7 @@ public final class Server {
                 if (options.getVideoSource() == VideoSource.DISPLAY) {
                     NewDisplay newDisplay = options.getNewDisplay();
                     if (newDisplay != null) {
-                        surfaceCapture = new NewDisplayCapture(controller, options);
+                        surfaceCapture = new NewDisplayCapture(controller, options, perspective);
                     } else {
                         assert options.getDisplayId() != Device.DISPLAY_ID_NONE;
                         surfaceCapture = new ScreenCapture(controller, options);
@@ -195,7 +211,7 @@ public final class Server {
             if (bgNotification != null) {
                 bgNotification.stop();
             }
-            if (cleanUp != null) {
+            if (cleanUp != null && perspective == null) {
                 cleanUp.interrupt();
             }
             for (AsyncProcessor asyncProcessor : asyncProcessors) {
@@ -205,19 +221,36 @@ public final class Server {
             connection.shutdown();
 
             try {
-                if (cleanUp != null) {
-                    cleanUp.join();
+                if (cleanUp != null && perspective == null) {
+                    cleanUp.join(4000);
                 }
                 for (AsyncProcessor asyncProcessor : asyncProcessors) {
                     asyncProcessor.join();
                 }
 
-                OpenGLRunner.shutdown();
             } catch (InterruptedException e) {
                 // ignore
+            } finally {
+                if (perspective != null) {
+                    try { perspective.close(); }
+                    catch (Throwable t) { Ln.e("Perspective close failed", t); }
+                }
+                // Release the application's display (and camera client) before
+                // unregistering its camera. The crash cleanup pipe stays alive
+                // until normal camera/device teardown has completed.
+                if (perspective != null && cleanUp != null) {
+                    cleanUp.interrupt();
+                    try { cleanUp.join(4000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                }
+                try {
+                    OpenGLRunner.shutdown();
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
             }
 
-            connection.close();
+            try { connection.close(); }
+            catch (Throwable t) { Ln.w("Connection close failed: " + t); }
         }
     }
 

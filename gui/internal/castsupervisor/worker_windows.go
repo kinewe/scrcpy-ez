@@ -26,7 +26,15 @@ import (
 	"scrcpy-ez/gui/internal/sessioncontrol"
 )
 
-type identityResult struct{ key, id string }
+type transportInfo struct {
+	id  string
+	sdk int
+}
+
+type identityResult struct {
+	key string
+	transportInfo
+}
 type learningResult struct{ serial, addr string }
 type repairResult struct {
 	key     string
@@ -39,17 +47,30 @@ type childMessage struct {
 	code int
 }
 type child struct {
-	cmd              *exec.Cmd
-	route            deviceevents.Transport
-	key              string
-	switchEvent      *sessioncontrol.Event
-	ready, switching bool
-	uploadDenied     bool
-	frameSeen        bool
-	readyAt          time.Time
+	cmd                    *exec.Cmd
+	route                  deviceevents.Transport
+	key                    string
+	switchEvent            *sessioncontrol.Event
+	ready, switching       bool
+	uploadDenied           bool
+	perspectiveUnavailable bool
+	frameSeen              bool
+	readyAt                time.Time
+	// cameraID = 本会话创建的虚拟相机 HAL 设备 id（如 v39_1038）。
+	// 退出/切换/停止后必须等它在手机相机服务里真正消失，再允许重建透视相机；
+	// 否则残留设备会让下一次 createVirtualCamera 卡满 12 秒（实测）。
+	cameraID    string
+	perspective bool
 }
 
 var safeSerial = regexp.MustCompile(`^[A-Za-z0-9_.:\[\]-]+$`)
+
+// PerspectiveCamera 启动成功时服务端会打印 "Perspective camera events: id=vNN_M"。
+var perspectiveCameraEvent = regexp.MustCompile(`Perspective camera events: id=(v[0-9]+_[0-9]+)`)
+
+// dumpsys media.camera 的"当前设备映射"行：Device 2 maps to "v3_1073"。
+// 只能看映射，不能在整个 dump 里找 id——服务事件历史里会永久保留 CONNECT/REMOVE 记录。
+var cameraDeviceMapping = regexp.MustCompile(`maps to "([^"]+)"`)
 
 func say(format string, args ...any) {
 	s := fmt.Sprintf(format, args...) + "\r\n"
@@ -86,18 +107,35 @@ func query(ctx context.Context, adb string, args ...string) string {
 	return strings.TrimSpace(string(b))
 }
 
-func identify(ctx context.Context, adb string, t deviceevents.Transport) string {
-	id := query(ctx, adb, "-s", t.Serial, "shell", "getprop", "ro.serialno")
-	if id == "" {
-		id = query(ctx, adb, "-s", t.Serial, "shell", "getprop", "ro.boot.serialno")
+func inspectTransport(ctx context.Context, adb string, t deviceevents.Transport) transportInfo {
+	// Fetch the keyboard SDK with the identity the supervisor already needs.
+	const properties = `printf 'serial=%s\nboot=%s\nsdk=%s\n' "$(getprop ro.serialno)" "$(getprop ro.boot.serialno)" "$(getprop ro.build.version.sdk)"`
+	out := query(ctx, adb, "-s", t.Serial, "shell", properties)
+	var info transportInfo
+	var boot string
+	for _, line := range strings.Split(out, "\n") {
+		key, value, _ := strings.Cut(strings.TrimSpace(line), "=")
+		switch key {
+		case "serial":
+			info.id = value
+		case "boot":
+			boot = value
+		case "sdk":
+			if sdk, err := strconv.Atoi(value); err == nil && sdk > 0 && sdk < 1000 {
+				info.sdk = sdk
+			}
+		}
 	}
-	if id == "" && t.Kind == "usb" {
-		id = t.Serial
+	if info.id == "" {
+		info.id = boot
 	}
-	if !safeSerial.MatchString(id) {
-		return ""
+	if info.id == "" && t.Kind == "usb" {
+		info.id = t.Serial
 	}
-	return id
+	if !safeSerial.MatchString(info.id) {
+		info.id = ""
+	}
+	return info
 }
 
 func watchStop(ctx context.Context, cancel context.CancelFunc, stop *sessioncontrol.Event) {
@@ -133,7 +171,7 @@ func watchStop(ctx context.Context, cancel context.CancelFunc, stop *sessioncont
 	cancel()
 }
 
-func startChild(bat string, args []string, route deviceevents.Transport, key, identity, stopName, tag string, generation int, messages chan<- childMessage) (*child, error) {
+func startChild(bat string, args []string, route deviceevents.Transport, key, identity, stopName, tag string, generation, sdk int, withoutPerspective bool, messages chan<- childMessage) (*child, error) {
 	event, err := sessioncontrol.New(fmt.Sprintf(`Local\SCEZ_ROUTE_%s_%d`, tag, generation))
 	if err != nil {
 		return nil, err
@@ -150,14 +188,23 @@ func startChild(bat string, args []string, route deviceevents.Transport, key, id
 	hide(cmd)
 	cmd.SysProcAttr.CmdLine = `cmd.exe /d /s /c ""` + bat + `"` + tail.String() + `"`
 	cmd.Dir = filepath.Dir(bat)
+	sdkVersion := ""
+	if sdk > 0 {
+		sdkVersion = strconv.Itoa(sdk)
+	}
 	cmd.Env = append(os.Environ(), "SCEZ_EVENT_CHILD=1", "SCEZ_EVENT_ROUTE="+route.Serial,
 		"SCEZ_EVENT_KIND="+route.Kind,
+		"SCEZ_EVENT_SDK="+sdkVersion,
 		"SCEZ_EXPECT_SERIAL="+identity,
 		"SCEZ_NO_ADB_RESET=1", "SCEZ_NO_WATCH=1", "SCEZ_WATCH_TAG="+tag,
 		"SCEZ_EVENT_STOP_NAME="+stopName, "SCEZ_EVENT_SWITCH_NAME="+event.Name,
 		fmt.Sprintf("SCEZ_EVENT_SUPERVISOR_PID=%d", os.Getpid()))
 	if generation > 1 {
 		cmd.Env = append(cmd.Env, "FIRST_CAST_DONE=1")
+	}
+	if withoutPerspective {
+		cmd.Env = append(cmd.Env, "SCEZ_PERSPECTIVE_CAMERA=0",
+			"SCEZ_PERSPECTIVE_CAMERA_USB=0", "SCEZ_PERSPECTIVE_CAMERA_WIFI=0")
 	}
 	cmd.Stdin = os.Stdin
 	out, err := cmd.StdoutPipe()
@@ -174,7 +221,15 @@ func startChild(bat string, args []string, route deviceevents.Transport, key, id
 		event.Close()
 		return nil, err
 	}
-	p := &child{cmd: cmd, route: route, key: key, switchEvent: event}
+	mode := "USB"
+	if route.Kind == "wifi" {
+		mode = "WIFI"
+	}
+	perspectiveSetting := os.Getenv("SCEZ_PERSPECTIVE_CAMERA_" + mode)
+	if perspectiveSetting == "" {
+		perspectiveSetting = os.Getenv("SCEZ_PERSPECTIVE_CAMERA")
+	}
+	p := &child{cmd: cmd, route: route, key: key, switchEvent: event, perspective: !withoutPerspective && perspectiveSetting == "1"}
 	var readers sync.WaitGroup
 	read := func(r io.Reader) {
 		defer readers.Done()
@@ -214,6 +269,78 @@ func killTree(p *child) {
 	hide(c)
 	_ = c.Run()
 	_ = p.cmd.Process.Kill()
+}
+
+// perspectiveCameraIDFromLine 从子进程日志里提取本次会话创建的虚拟相机 id。
+func perspectiveCameraIDFromLine(line string) string {
+	if m := perspectiveCameraEvent.FindStringSubmatch(line); len(m) == 2 {
+		return m[1]
+	}
+	return ""
+}
+
+// virtualCameraMapped 判断虚拟相机 id 是否仍作为"当前相机设备"挂载。
+func virtualCameraMapped(dumpsys, cameraID string) bool {
+	if cameraID == "" {
+		return false
+	}
+	for _, m := range cameraDeviceMapping.FindAllStringSubmatch(dumpsys, -1) {
+		if len(m) == 2 && m[1] == cameraID {
+			return true
+		}
+	}
+	return false
+}
+
+// waitPerspectiveCameraGone 等手机相机服务里的会话虚拟相机真正注销。
+//
+// 为什么必须等：服务端 PerspectiveCamera.close() 会先 close-camera → close-device
+// → close-association；但小米 HyperOS 的虚拟相机 provider 在异常/快速重启场景下
+// 可能把 HAL 设备（vNN_M）留在 cameraserver。此时立刻重建透视相机会卡在
+// createVirtualCamera 12 秒（看门狗超时），甚至把系统相机栈拖进坏状态。
+// 因此"不用就清、要用再建"的关键是：旧相机设备消失后才允许下一次创建。
+//
+// 只做只读 dumpsys，不修改手机状态；超时只记录提示（清理仍需重启手机完成）。
+func waitPerspectiveCameraGone(adb, serial, cameraID string) {
+	if cameraID == "" || serial == "" {
+		return
+	}
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	empty := 0
+	for {
+		out := query(ctx, adb, "-s", serial, "shell", "dumpsys", "-t", "2", "media.camera")
+		if strings.Contains(out, "== Camera service events log") && !strings.Contains(out, "DUMP TIMEOUT") {
+			empty = 0
+			if !virtualCameraMapped(out, cameraID) {
+				if elapsed := time.Since(start); elapsed >= 200*time.Millisecond {
+					say("[清理] 透视相机已释放：%s（%dms）", cameraID, elapsed.Milliseconds())
+				}
+				return
+			}
+		} else {
+			// 设备已离线/查询失败：无法确认，连续失败则不再空等。
+			if empty++; empty >= 3 {
+				say("[清理] 设备不可查询，跳过透视相机释放确认：%s", cameraID)
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			say("[清理] 透视相机释放超时：%s；如再遇透视失败，请重启手机", cameraID)
+			return
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+}
+
+func sessionStopTimeout(p *child) time.Duration {
+	if p != nil && (p.cameraID != "" || p.perspective) {
+		// The native client gives the Android camera teardown up to 20 seconds.
+		return 22 * time.Second
+	}
+	return 5 * time.Second
 }
 
 func addresses(dir string) []string {
@@ -268,7 +395,7 @@ func learnUSB(ctx context.Context, adb, serial, target string) string {
 			}
 		}
 		query(ctx, adb, "connect", addr)
-		if identify(ctx, adb, deviceevents.Transport{Serial: addr, Kind: "wifi"}) == target {
+		if inspectTransport(ctx, adb, deviceevents.Transport{Serial: addr, Kind: "wifi"}).id == target {
 			return addr
 		}
 	}
@@ -319,6 +446,7 @@ func run(bat string, args []string) int {
 	}
 	events := hub.Subscribe(ctx)
 	identities := map[string]string{}
+	androidSDK := map[string]int{}
 	resolving := map[string]bool{}
 	blocked := map[string]bool{}
 	failures := map[string]int{}
@@ -349,6 +477,8 @@ func run(bat string, args []string) int {
 		}
 	}()
 	generation := 0
+	wechatScanner := strings.TrimPrefix(os.Getenv("SCEZ_START_APP"), "+") == "com.tencent.mm:scan"
+	withoutPerspective := false
 	repairAttempted, preparing := false, false
 	repairPaused := false
 	pausedKey := ""
@@ -407,7 +537,9 @@ func run(bat string, args []string) int {
 		}
 		if p != nil {
 			stop.Signal()
+			id, serial := p.cameraID, p.route.Serial
 			killTree(p)
+			waitPerspectiveCameraGone(adb, serial, id)
 			p.switchEvent.Close()
 		}
 	}()
@@ -446,9 +578,9 @@ func run(bat string, args []string) int {
 				}
 				resolving[key] = true
 				go func(t deviceevents.Transport, key string) {
-					id := identify(ctx, adb, t)
+					info := inspectTransport(ctx, adb, t)
 					select {
-					case results <- identityResult{key, id}:
+					case results <- identityResult{key, info}:
 					case <-ctx.Done():
 					}
 				}(t, key)
@@ -495,7 +627,7 @@ func run(bat string, args []string) int {
 						say("[剪贴板] 无法保留恢复状态：%v", err)
 					}
 				}
-				p, err = startChild(bat, args, want, key, target, stop.Name, tag, generation, messages)
+				p, err = startChild(bat, args, want, key, target, stop.Name, tag, generation, androidSDK[key], withoutPerspective, messages)
 				if err != nil {
 					say("[错误] 无法启动投屏：%v", err)
 					return 1
@@ -530,7 +662,7 @@ func run(bat string, args []string) int {
 					if deadlineTimer != nil {
 						deadlineTimer.Stop()
 					}
-					deadlineTimer = time.NewTimer(5 * time.Second)
+					deadlineTimer = time.NewTimer(sessionStopTimeout(p))
 					deadline = deadlineTimer.C
 				}
 			}
@@ -547,7 +679,7 @@ func run(bat string, args []string) int {
 				if deadlineTimer != nil {
 					deadlineTimer.Stop()
 				}
-				deadlineTimer = time.NewTimer(5 * time.Second)
+				deadlineTimer = time.NewTimer(sessionStopTimeout(p))
 				deadline = deadlineTimer.C
 			}
 		case repaired := <-repairs:
@@ -596,6 +728,7 @@ func run(bat string, args []string) int {
 			}
 			if r.id != "" {
 				identities[r.key] = r.id
+				androidSDK[r.key] = r.sdk
 				if r.id == target {
 					for _, t := range snapshot.Transports {
 						if transportKey(snapshot, t) == r.key && t.Kind == "wifi" {
@@ -646,7 +779,10 @@ func run(bat string, args []string) int {
 			deadline = nil
 			if p != nil {
 				say("[提示] 本次启动或退出超时，清理本会话进程")
+				id, serial := p.cameraID, p.route.Serial
 				killTree(p)
+				// 强杀后同样要确认虚拟相机已注销，避免把残留留给下一次创建。
+				waitPerspectiveCameraGone(adb, serial, id)
 			}
 			if stopping {
 				return 0
@@ -656,6 +792,12 @@ func run(bat string, args []string) int {
 				continue
 			}
 			if m.line != "" {
+				if strings.Contains(m.line, "SCRCPY_EZ_PERSPECTIVE_UNAVAILABLE") {
+					p.perspectiveUnavailable = true
+				}
+				if id := perspectiveCameraIDFromLine(m.line); id != "" {
+					p.cameraID = id
+				}
 				if clientlog.TextureSize(m.line) != "" {
 					p.frameSeen = true
 				}
@@ -684,8 +826,14 @@ func run(bat string, args []string) int {
 			}
 			key := p.key
 			denied, wasReady, route := p.uploadDenied, p.ready, p.route
+			perspectiveUnavailable := p.perspectiveUnavailable
 			switched := p.switching
 			say("[会话] 子进程退出：tag=%s route=%s key=%s bat_pid=%d code=%d (0x%08X) ready=%t switching=%t", tag, p.route.Serial, p.key, p.cmd.Process.Pid, m.code, uint32(m.code), p.ready, switched)
+			// 不用就清干净：退出/切换/停止后先等手机侧虚拟相机真正注销，
+			// 再决定是否重开/继续；否则残留相机会让下一次创建卡 12 秒。
+			if id := p.cameraID; id != "" {
+				waitPerspectiveCameraGone(adb, route.Serial, id)
+			}
 			if p.ready && time.Since(p.readyAt) >= 5*time.Second {
 				failures[key] = 0
 				if p.frameSeen {
@@ -700,6 +848,17 @@ func run(bat string, args []string) int {
 			deadline = nil
 			if stopping || userClosed || m.code == 0 {
 				return 0
+			}
+			if perspectiveUnavailable {
+				if wechatScanner && !withoutPerspective {
+					withoutPerspective = true
+					say("[透视相机] 手机虚拟相机启动失败，本次改用普通扫一扫窗口，电脑画面透视不可用")
+					continue
+				}
+				blocked[key] = true
+				say("SCRCPY_EZ_RETRY_WAIT")
+				say("[透视相机] 手机虚拟相机服务未响应，请重新启动手机，或关闭透视相机后重新投屏")
+				continue
 			}
 			if denied && !wasReady && !switched && current(hub.Current(), key) {
 				blocked[key] = true
