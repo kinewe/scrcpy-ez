@@ -329,6 +329,13 @@ func Run(a *app.App, html string) error {
 				serial, mode, res, fps, bitrate, custom, audio, lockFps, lockBitrate, vcodec, acodec)
 			return a.SaveProfileAndRestart(serial, mode, res, fps, bitrate, custom, audio, lockFps, lockBitrate, vcodec, acodec)
 		}},
+		// 键盘模式（设备级）随参数浮窗一起保存：多带一个 keyboard 参数
+		// （auto/uhid/sdk/aoa；空=不改动档案现值）。
+		{"SaveProfileAndRestartKb", func(serial, mode string, res, fps, bitrate int, custom bool, audio string, lockFps, lockBitrate bool, vcodec, acodec, keyboard string) error {
+			bridge.DebugLog("[js] SaveProfileAndRestartKb serial=%q mode=%s res=%d fps=%d bitrate=%d custom=%v audio=%s vcodec=%s acodec=%s keyboard=%s",
+				serial, mode, res, fps, bitrate, custom, audio, vcodec, acodec, keyboard)
+			return a.SaveProfileAndRestartKb(serial, mode, res, fps, bitrate, custom, audio, lockFps, lockBitrate, vcodec, acodec, keyboard)
+		}},
 		// 设备参数管理页：仅保存 profiles.json（不重投）
 		{"SaveProfile", func(serial, mode string, res, fps, bitrate int, custom bool, audio string, lockFps, lockBitrate bool, vcodec, acodec string) error {
 			bridge.DebugLog("[js] SaveProfile serial=%q mode=%s res=%d fps=%d bitrate=%d custom=%v audio=%s lockFps=%v lockBitrate=%v vcodec=%s acodec=%s",

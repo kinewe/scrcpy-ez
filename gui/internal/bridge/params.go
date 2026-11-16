@@ -93,6 +93,10 @@ type CastParams struct {
 	// 新旧 bat 组合兼容（旧 bat 只读旧变量）。
 	VdUsb  VdModeParams
 	VdWifi VdModeParams
+
+	// Keyboard 键盘输入模式（设备级，不分模式）：uhid / sdk / aoa 时注入
+	// SCEZ_KEYBOARD，bat 侧跳过版本自适应直接采用；空/auto=不注入（原行为）。
+	Keyboard string
 }
 
 // VdModeParams 是应用窗口（虚拟屏）单模式（有线/无线）参数（二期 Step 4/5）。
@@ -175,6 +179,11 @@ func castEnv(params CastParams, watchTag string) []string {
 	}
 	if params.Wifi.LockBitrate {
 		env = append(env, "SCEZ_LOCK_BITRATE_WIFI=1")
+	}
+	// 键盘模式（设备级）：非空且非 auto 才注入——bat 见 SCEZ_KEYBOARD 即跳过
+	// 版本自适应（Android 12 等被 lss 33 降级但实际支持 uhid 的设备用它开中文输入）。
+	if params.Keyboard != "" && params.Keyboard != "auto" {
+		env = append(env, "SCEZ_KEYBOARD="+params.Keyboard)
 	}
 	if params.Serial != "" {
 		env = append(env, "SCEZ_SERIAL="+params.Serial)
