@@ -5011,6 +5011,8 @@
       // v2.1.91：编码格式（两套独立记忆；空兜底默认）
       vcodec: { usb: (usb.vcodec || 'h264'), wifi: (wifi.vcodec || 'h264') },
       acodec: { usb: (usb.acodec || 'opus'), wifi: (wifi.acodec || 'opus') },
+      // 键盘模式（设备级，不分有线/无线；空/auto=按 bat 版本自适应）
+      keyboard: (p.keyboard || 'auto'),
       // 打开推断——仅"已自定义且值不在档位列表"才进输入态，且输入框=自定义值（非空）
       fields: {
         usb: {
@@ -5106,6 +5108,29 @@
       box.appendChild(c);
     });
   }
+  // 键盘模式选项（设备级）：auto=按 bat 的 Android SDK 版本自适应（原行为），
+  // uhid=模拟外接物理键盘（可打中文，Android 13+ 官方推荐，Android 11/12 实测多数可用），
+  // sdk=adb 注入（仅 ASCII，老设备通用回退），aoa=USB 直连 HID（Windows 投屏时通常不可用）。
+  var KEYBOARD_OPTS = ['auto', 'uhid', 'sdk', 'aoa'];
+  var KEYBOARD_LABELS = { auto: '自动', uhid: 'UHID', sdk: 'SDK', aoa: 'AOA' };
+  function fmtKeyboard(v) { return KEYBOARD_LABELS[v] || v; }
+  var KEYBOARD_NOTE = '键盘模式：自动=按设备 Android 版本自适应（Android 12 及以下会退回 SDK，此时无法输入中文）；' +
+    'UHID=把电脑键盘模拟成外接物理键盘，可用手机输入法打中文（推荐 Android 11/12 试这个）；' +
+    'SDK=adb 注入按键，仅英文字符；AOA=USB 直连，Windows 上投屏时通常不可用';
+
+  // updateParamKeyboardRow：刷新键盘模式行（标签/chip 选中态）。
+  function updateParamKeyboardRow(state) {
+    if (!state) return;
+    var cur = state.keyboard || 'auto';
+    el('param-keyboard-label').innerHTML = '键盘模式 (<b>' + fmtKeyboard(cur) + '</b>)';
+    renderCodecChips('param-keyboard-chips', KEYBOARD_OPTS, cur, function (nv) {
+      if (!paramState || paramTransition) return;
+      paramState.keyboard = nv;
+      updateParamKeyboardRow(paramState);
+      updateParamDirtyTabs();
+    }, fmtKeyboard);
+  }
+
   function updateParamCodecRows(state) {
     if (!state) return;
     var renderMode = state.mode;
@@ -5415,6 +5440,7 @@
       return;
     }
     renderParamRows(paramState, el('param-rows'), renderParamModal);
+    if (typeof updateParamKeyboardRow === 'function') updateParamKeyboardRow(paramState);
     showDialogTab('param', currentDialogTab('param'));
     updateParamDirtyTabs();
   }
@@ -5442,6 +5468,19 @@
     if (!paramState) return;
     paramState.activeField = 'acodec';
     setNote('param-note-audio', PARAM_NOTES.acodec);
+  });
+  el('param-keyboard-row').addEventListener('click', function () {
+    if (!paramState) return;
+    paramState.activeField = 'keyboard';
+    setNote('param-note-display', KEYBOARD_NOTE);
+  });
+  bindResetFlash('param-keyboard-reset', function () {
+    if (!paramState || paramTransition) return;
+    paramState.touched.display = true;
+    paramState.keyboard = 'auto';
+    updateParamKeyboardRow(paramState);
+    setNote('param-note-display', KEYBOARD_NOTE);
+    updateParamDirtyTabs();
   });
   // v2.1.96：编码/声音行「重置」——跳默认初始值（H.264 / Opus / 电脑）。
   bindResetFlash('param-vcodec-reset', function () {
@@ -5490,7 +5529,11 @@
     // 保存失败时面板已关：仅错误 toast（参数未生效，用户可重新打开浮窗重试）。
     closeSpecModal();
     toast('已保存，正在以新参数重新投屏…');
-    SaveProfileAndRestart(savingState.serial, savingState.mode, r.value, s2.value, b.value, custom, savingState.audio[savingState.mode], !!p.lockFps, !!p.lockBitrate, savingState.vcodec[savingState.mode], savingState.acodec[savingState.mode]).then(function () {
+    // 带键盘模式的保存（后端 Kb 版本）；旧后端/测试桩没有该绑定时回落到原接口。
+    var saveCall = (typeof SaveProfileAndRestartKb === 'function')
+      ? SaveProfileAndRestartKb(savingState.serial, savingState.mode, r.value, s2.value, b.value, custom, savingState.audio[savingState.mode], !!p.lockFps, !!p.lockBitrate, savingState.vcodec[savingState.mode], savingState.acodec[savingState.mode], savingState.keyboard || 'auto')
+      : SaveProfileAndRestart(savingState.serial, savingState.mode, r.value, s2.value, b.value, custom, savingState.audio[savingState.mode], !!p.lockFps, !!p.lockBitrate, savingState.vcodec[savingState.mode], savingState.acodec[savingState.mode]);
+    saveCall.then(function () {
       refreshNow();
     }).catch(function (e) {
       toast('保存失败：' + (e && e.message ? e.message : e));

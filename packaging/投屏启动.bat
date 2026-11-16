@@ -57,8 +57,11 @@ rem ÃüÁî±ØĞë°Ñ !ADB! ÓÃÒıºÅ°ü×¡£ºÂ·¾¶º¬¿Õ¸ñ£¬Î´¼ÓÒıºÅÊ± FOR /F Ö»»áÖ´ĞĞµ½µÚÒ»¸ö¿
 for /f "tokens=1" %%v in ('"!ADB!" -s !PICK! shell getprop ro.build.version.sdk 2^>nul') do if not defined SDK_VER set "SDK_VER=%%v"
 rem Ö»ĞÅÈÎ´¿Êı×Ö°æ±¾ºÅ£ºgetprop Ê§°Ü/Òì³£Êä³öÊ±±£³ÖÄ¬ÈÏ uhid£¬¸ß°æ±¾ÁãÎÛÈ¾
 if defined SDK_VER for /f "delims=0123456789" %%d in ("!SDK_VER!") do if not "%%d"=="" set "SDK_IS_NUM=1"
+rem [EZ] ¼üÅÌÄ£Ê½¿ÉÓÉ±¾±äÁ¿Ö¸¶¨£ºuhid / sdk / aoa£»auto »òÎ´Éè = °´ÏÂ·½°æ±¾×ÔÊÊÓ¦
+rem ÓÃÍ¾£ºAndroid 11/12 µÈ±» lss 33 ½µ¼¶µ½ sdk¡¢µ«Êµ¼ÊÖ§³Ö uhid µÄÉè±¸£¬¿ÉÇ¿ÖÆ uhid ÒÔÊäÈëÖĞÎÄ
+if defined SCEZ_KEYBOARD if /i not "!SCEZ_KEYBOARD!"=="auto" set "KEYBOARD=!SCEZ_KEYBOARD!"
 if not defined SDK_IS_NUM if defined SDK_VER (
-    if !SDK_VER! lss 33 set "KEYBOARD=sdk"
+    if not defined SCEZ_KEYBOARD if !SDK_VER! lss 33 set "KEYBOARD=sdk"
     if !SDK_VER! lss 29 set "LEGACY_DEVICE=1"
 )
 rem SDK ¼üÅÌ×ß adb ×¢Èë£¬USB/ÎŞÏßÈ«°æ±¾¿ÉÓÃ£¬ÊÇ Windows ÏÂÀÏÉè±¸µÄÎ¨Ò»Í¨ÓÃ»ØÍË

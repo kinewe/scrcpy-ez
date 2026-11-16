@@ -146,6 +146,24 @@ type AppWinParams struct {
 type DeviceProfile struct {
 	Usb  ModeProfile `json:"usb"`
 	Wifi ModeProfile `json:"wifi"`
+	// Keyboard 键盘输入模式（设备级，不分有线/无线——取决于设备 ROM 能力，与
+	// 连接方式无关）：auto=按 bat 版本自适应（默认，保持原行为）/ uhid /
+	// sdk / aoa。空值与 auto 等价。
+	//
+	// 背景：bat 的 :detect_keyboard 在 Android SDK < 33 时把 uhid 降级为 sdk
+	// （原设计是 aoa→因 Windows 下 adb 独占 USB 改用 sdk）。但实测 Android 12
+	// (SDK 31) 上 uhid 可用且中文输入正常，被误伤成 sdk 后无法输入中文。
+	// 置为 uhid 可强制使用，代价是该 ROM 若真的不支持会降级为纯英文字符。
+	Keyboard string `json:"keyboard,omitempty"`
+}
+
+// NormalizeKeyboardMode 键盘模式归一：auto/uhid/sdk/aoa 原样；空/非法 → auto。
+func NormalizeKeyboardMode(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "uhid", "sdk", "aoa":
+		return strings.ToLower(strings.TrimSpace(s))
+	}
+	return "auto"
 }
 
 // DefaultProfile 返回某设备的默认档（= 该模式 bat 自动值：

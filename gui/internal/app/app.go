@@ -5754,6 +5754,11 @@ func (a *App) StartCast(serial string) error {
 	params.Usb.ACodec = NormalizeACodec(p.Usb.ACodec)
 	params.Wifi.VCodec = NormalizeVCodec(p.Wifi.VCodec)
 	params.Wifi.ACodec = NormalizeACodec(p.Wifi.ACodec)
+	// 键盘模式（设备级）：auto/空=不注入（保持零值，bat 按 SDK 版本自适应=原行为）；
+	// uhid/sdk/aoa=强制指定，供 Android 11/12 等需要 uhid 打中文的设备使用。
+	if kb := NormalizeKeyboardMode(p.Keyboard); kb != "auto" {
+		params.Keyboard = kb
+	}
 	// 开关 A（设置面板）：参数控件默认可见性——每次启动投屏按当前设置注入
 	// SCEZ_PARAM_OVERLAY（1=启动可见，0=启动隐藏），由 bat 转交 scrcpy.exe
 	// 客户端（环境变量随进程树继承），客户端在浮层初始化时读取。
@@ -7483,10 +7488,20 @@ func (a *App) SaveProfile(serial, mode string, res, fps, bitrate int, custom boo
 
 // saveProfileOnly 校验并写入参数档（基线随保存持久化）。
 func (a *App) saveProfileOnly(serial, mode string, res, fps, bitrate int, custom bool, audio string, lockFps, lockBitrate bool, vcodec, acodec string) error {
+	return a.saveProfileOnlyKb(serial, mode, res, fps, bitrate, custom, audio, lockFps, lockBitrate, vcodec, acodec, "")
+}
+
+// saveProfileOnlyKb 同 saveProfileOnly，另接受设备级键盘模式（""=不改动该字段）。
+// 键盘模式不分有线/无线，故写入时落在 DeviceProfile 顶层；空串表示调用方未提供，
+// 保留档案现值（避免旧调用路径把用户设置清掉）。
+func (a *App) saveProfileOnlyKb(serial, mode string, res, fps, bitrate int, custom bool, audio string, lockFps, lockBitrate bool, vcodec, acodec, keyboard string) error {
 	if err := validateProfileParams(res, fps, bitrate); err != nil {
 		return err
 	}
 	p := a.effectiveProfile(serial) // 保留/推导 baseline（动态默认值随保存持久化）
+	if keyboard != "" {
+		p.Keyboard = NormalizeKeyboardMode(keyboard)
+	}
 	mp := ModeProfile{Res: res, FPS: fps, Bitrate: bitrate, Custom: custom, Audio: mainAudioMode(audio),
 		LockFps: lockFps, LockBitrate: lockBitrate,
 		VCodec: NormalizeVCodec(vcodec), ACodec: NormalizeACodec(acodec)}
@@ -7505,19 +7520,29 @@ func (a *App) saveProfileOnly(serial, mode string, res, fps, bitrate int, custom
 // false=自动档重启（另一模式仍按记忆独立注入）。参数覆盖按 serial 存放，
 // 多会话互不串（每个会话的下一次 StartCast 只消费自己的覆盖）。
 func (a *App) SaveProfileAndRestart(serial, mode string, res, fps, bitrate int, custom bool, audio string, lockFps, lockBitrate bool, vcodec, acodec string) error {
-	if err := a.saveProfileOnly(serial, mode, res, fps, bitrate, custom, audio, lockFps, lockBitrate, vcodec, acodec); err != nil {
+	return a.SaveProfileAndRestartKb(serial, mode, res, fps, bitrate, custom, audio, lockFps, lockBitrate, vcodec, acodec, "")
+}
+
+// SaveProfileAndRestartKb 同 SaveProfileAndRestart，另接受设备级键盘模式
+// （""=不改动，保留档案现值）。
+func (a *App) SaveProfileAndRestartKb(serial, mode string, res, fps, bitrate int, custom bool, audio string, lockFps, lockBitrate bool, vcodec, acodec, keyboard string) error {
+	if err := a.saveProfileOnlyKb(serial, mode, res, fps, bitrate, custom, audio, lockFps, lockBitrate, vcodec, acodec, keyboard); err != nil {
 		return err
 	}
 	a.mu.Lock()
 	// 注入条件：自定义档 或 任一维度锁定（锁定=固定"当前生效值"，值也要显式传给 bat）；
 	// 全自动且未锁=不注入（bat 走自身检测逻辑）。
+	kbd := NormalizeKeyboardMode(keyboard)
+	if kbd == "auto" {
+		kbd = ""
+	}
 	if custom || lockFps || lockBitrate {
 		mp := bridge.ModeParams{Res: res, FPS: fps, Bitrate: bitrate, Set: true,
 			LockFps: lockFps, LockBitrate: lockBitrate}
 		if mode == "wifi" {
-			a.nextParams[serial] = bridge.CastParams{Wifi: mp}
+			a.nextParams[serial] = bridge.CastParams{Wifi: mp, Keyboard: kbd}
 		} else {
-			a.nextParams[serial] = bridge.CastParams{Usb: mp}
+			a.nextParams[serial] = bridge.CastParams{Usb: mp, Keyboard: kbd}
 		}
 	} else {
 		delete(a.nextParams, serial)
