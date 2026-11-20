@@ -79,8 +79,10 @@ type appWinState struct {
 	startedAt          time.Time
 	closing            bool
 	clientPID          int
+	liveWheelSwipe     *int
 	displayID          int
 	displayReady       bool
+	powerSaveDisplay   int
 	displayHasVideo    bool
 	scannerReadyFile   string
 	notificationWindow bool
@@ -126,31 +128,24 @@ func appWinKey(serial, pkg string) string { return serial + "#" + pkg }
 // 走 bat（Runner）：参数=虚拟屏默认档（1280x720 + 等比 dpi + flex + IME=local
 // + 任务复用）+ 设备锁定注入；bat 侧组装完整投屏参数（uhid/渲染/自愈）。
 func (a *App) StartAppWin(serial, pkg, name string) error {
-	return a.startAppWin(serial, pkg, name, false)
+	a.recordAppLauncherOpen(serial, pkg)
+	st, created, err := a.startAppWinSession(serial, pkg, name, false, false, false)
+	if err != nil || created || st == nil {
+		return err
+	}
+	a.mu.RLock()
+	ready := st.displayHasVideo && st.launchFailure == "" && !st.closing && !st.restarting
+	castSerial := st.serial
+	a.mu.RUnlock()
+	if ready {
+		return a.BringAppWinToFront(castSerial, pkg)
+	}
+	return nil
 }
 
 func (a *App) StartWeChatScanner(serial string) error {
+	a.recordAppLauncherOpen(serial, "com.tencent.mm")
 	return a.startAppWinWithRestart(serial, "com.tencent.mm", "微信扫一扫", false, false, true)
-}
-
-// wakeScanDisplay 在扫一扫启动前检查默认屏是否在休眠；只在 Asleep/Dozing 时
-// 发一次 KEYCODE_WAKEUP。虚拟屏本身可独立运行，但原生 Alpha 的窗口选择在
-// 物理屏熄屏后会丢失扫描页（Pad 实测），因此用户主动开扫一扫时唤醒屏幕。
-func (a *App) wakeScanDisplay(serial string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-	defer cancel()
-	out, err := a.adb.Shell(ctx, serial, "dumpsys", "power")
-	if err != nil {
-		bridge.DebugLog("[appwin] 扫一扫唤醒检查失败：%s（%v）", serial, err)
-		return
-	}
-	if !strings.Contains(out, "mWakefulness=Asleep") && !strings.Contains(out, "mWakefulness=Dozing") {
-		return
-	}
-	bridge.DebugLog("[appwin] 扫一扫目标熄屏，先唤醒屏幕：%s", serial)
-	if _, err := a.adb.Shell(ctx, serial, "input", "keyevent", "KEYCODE_WAKEUP"); err != nil {
-		bridge.DebugLog("[appwin] 扫一扫唤醒失败：%s（%v）", serial, err)
-	}
 }
 
 func (a *App) startAppWin(serial, pkg, name string, notification bool) error {
@@ -158,13 +153,18 @@ func (a *App) startAppWin(serial, pkg, name string, notification bool) error {
 }
 
 func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, restartProcess, wechatScanner bool) error {
+	_, _, err := a.startAppWinSession(serial, pkg, name, notification, restartProcess, wechatScanner)
+	return err
+}
+
+func (a *App) startAppWinSession(serial, pkg, name string, notification, restartProcess, wechatScanner bool) (*appWinState, bool, error) {
 	unlockUpdate, updateErr := a.guardUpdateStart()
 	if updateErr != nil {
-		return updateErr
+		return nil, false, updateErr
 	}
 	defer unlockUpdate()
 	if serial == "" || pkg == "" {
-		return fmt.Errorf("参数不完整（serial/pkg 为空）")
+		return nil, false, fmt.Errorf("参数不完整（serial/pkg 为空）")
 	}
 	key := appWinKey(serial, pkg)
 	lookupKey := serial
@@ -176,27 +176,28 @@ func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, res
 	if old := a.appWins[key]; old != nil && !old.restarting {
 		a.mu.Unlock()
 		if wechatScanner && !old.wechatScanner {
-			return errors.New("请先关闭已有的微信应用窗口")
+			return nil, false, errors.New("请先关闭已有的微信应用窗口")
 		}
 		bridge.DebugLog("[appwin] 已在运行 serial=%s pkg=%s（幂等）", serial, pkg)
-		return nil
+		return old, false, nil
 	}
 	a.mu.Unlock()
 
 	if a.newR == nil {
-		return errors.New("bat 桥接未初始化")
+		return nil, false, errors.New("bat 桥接未初始化")
 	}
 
 	// 设备锁定注入（USB 优先 / 无线地址+备用 / 身份防抢——与 StartCast 同链）。
 	params := a.appWinLockParams(lookupKey)
 	identity := a.appListKeyFor(lookupKey)
 	if params.Serial == "" && params.Addr == "" {
-		return errors.New("设备当前没有可用连接地址")
+		return nil, false, errors.New("设备当前没有可用连接地址")
 	}
 	// v2.1.91：编码格式随档案两套注入（独立于 Set——应用窗口与主投屏同源）。
 	// v2.1.95：应用级优先，空则继承设备档案（应用没设置过 → 跟随设备档案）。
 	lp := a.profiles.Get(identity)
 	ap, hasArchive := a.appWinParamsFor(identity, pkg)
+	params.WheelSwipePercent = ap.activePercent()
 	pickV := func(appV, devV string) string {
 		if strings.TrimSpace(appV) != "" {
 			return NormalizeVCodec(appV)
@@ -287,6 +288,7 @@ func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, res
 	if notification {
 		params.StartApp = ""
 		params.ReuseAppTask = false
+		params.AppPowerSavePackage = pkg
 	} // Original PendingIntent supplies the destination; never force-stop.
 	// 参数控件启动可见性（v2.1.56）：跟随全局设置（与主投屏 StartCast 同链）。
 	// 此前虚拟屏未注入 SCEZ_PARAM_OVERLAY → scrcpy 客户端回退历史默认=可见，
@@ -308,11 +310,11 @@ func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, res
 		func(line string) { a.onAppWinLineFor(serial, pkg, r, line) },
 		func(code int) { a.onAppWinExit(serial, pkg, r, code) })
 	if err != nil {
-		return fmt.Errorf("创建 bat 会话失败：%w", err)
+		return nil, false, fmt.Errorf("创建 bat 会话失败：%w", err)
 	}
 	// 创建 runner 期间也可能收到新地址，启动前再读取同一档案入口。
 	if a.appListKeyFor(lookupKey) != identity {
-		return errors.New("设备身份已变化，请重新选择设备")
+		return nil, false, errors.New("设备身份已变化，请重新选择设备")
 	}
 	locked := a.appWinLockParams(lookupKey)
 	params.Serial, params.Addr, params.Addr2 = locked.Serial, locked.Addr, locked.Addr2
@@ -352,13 +354,13 @@ func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, res
 	old := a.appWins[key]
 	if old != nil && (!old.restarting || old.runner != nil) {
 		a.mu.Unlock()
-		return nil
+		return old, false, nil
 	}
 	logKey := castLogKeyFor(serial, identity, pkg)
 	for _, win := range a.appWins {
 		if win != old && castLogKeyFor(win.serial, win.identity, win.pkg) == logKey {
 			a.mu.Unlock()
-			return nil
+			return win, false, nil
 		}
 	}
 	if old != nil {
@@ -368,25 +370,13 @@ func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, res
 	// Register before Start so startup output and early exits belong to this runner.
 	a.appWins[key] = st
 	a.mu.Unlock()
-	// 扫一扫的原生 Alpha 依赖物理屏窗口信息：手机/平板熄屏后 WindowInfosListener
-	// 不再给出扫描页（实测 Pad 20s 黑屏，唤醒后 2.3s 即 SUPPORTED/PRESENTED）。
-	// 用户主动开扫一扫，先异步唤醒屏幕；只查一次 dumpsys，避免阻塞 GUI 消息循环。
-	if wechatScanner && params.PerspectiveCamera {
-		wakeSerial := params.Serial
-		if wakeSerial == "" {
-			wakeSerial = params.Addr
-		}
-		if wakeSerial != "" {
-			go a.guard("scan-wake", func() { a.wakeScanDisplay(wakeSerial) })
-		}
-	}
 	if err := r.Start(serial, params); err != nil {
 		a.mu.Lock()
 		if a.appWins[key] == st {
 			a.finishAppWinLocked(key, st, "[EZ] 启动失败："+err.Error())
 		}
 		a.mu.Unlock()
-		return fmt.Errorf("启动 bat 失败：%w", err)
+		return nil, false, fmt.Errorf("启动 bat 失败：%w", err)
 	}
 	if wechatScanner {
 		if st.scannerReadyFile != "" {
@@ -412,7 +402,7 @@ func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, res
 		}
 		a.seedAppWinBaseline(identity, mode, cur)
 	}
-	return nil
+	return st, true, nil
 }
 
 // onAppWinLine 解析应用窗口 bat 输出行（v2.1.51 起改用统一分类器 bridge.ClassifyLine，
@@ -430,6 +420,8 @@ func (a *App) startAppWinWithRestart(serial, pkg, name string, notification, res
 var notificationClientReady = regexp.MustCompile(`SCRCPY_EZ_READY pid=([0-9]+)`)
 
 var notificationDisplay = regexp.MustCompile(`New display: .*\(id=([0-9]+)\)`)
+
+var notificationDisplayReady = regexp.MustCompile(`SCRCPY_EZ_NOTIFICATION_DISPLAY_READY id=([0-9]+)\b`)
 
 var appLaunchResult = regexp.MustCompile(`SCRCPY_EZ_APP_LAUNCH=(reused|started|reuse-failed|launch-failed|layout-incompatible|in-use)\b`)
 
@@ -458,6 +450,14 @@ func (a *App) onAppWinLineFor(serial, pkg string, r Runner, line string) {
 	if match := notificationClientReady.FindStringSubmatch(line); len(match) == 2 {
 		st.clientPID, _ = strconv.Atoi(match[1])
 		st.displayReady = st.clientPID > 0 && st.displayID > 0
+		if st.liveWheelSwipe != nil && !st.closing && !st.restarting {
+			if err := bridge.SetClientWheelSwipe(st.clientPID, *st.liveWheelSwipe); err != nil {
+				bridge.DebugLog("[appwin] 同步滚轮设置失败: %v", err)
+			}
+		}
+	}
+	if match := notificationDisplayReady.FindStringSubmatch(line); len(match) == 2 {
+		st.powerSaveDisplay, _ = strconv.Atoi(match[1])
 	}
 	if ev.Kind == bridge.KindTexture {
 		st.displayHasVideo = true
@@ -497,6 +497,7 @@ func (a *App) onAppWinLineFor(serial, pkg string, r Runner, line string) {
 		st.launchFailure = ""
 		st.launchFailureID = 0
 		st.displayID = 0
+		st.powerSaveDisplay = 0
 		st.clientPID = 0
 		st.displayReady = false
 		st.displayHasVideo = false
@@ -690,7 +691,7 @@ func (a *App) onAppWinExit(serial, pkg string, r Runner, code int) {
 //   - bat 退出 → onAppWinExit 摘除（前端淡出）；Stop 失败复位 closing（可重试）；
 //   - 兜底：Stop 成功但 onExit 极端丢失 → 超时强摘（防卡片卡死）。
 func (a *App) StopAppWin(serial, pkg string) error {
-	return a.stopAppWinChecked(serial, pkg, 0)
+	return a.stopAppWinChecked(serial, pkg, 0, nil)
 }
 
 func appLaunchNoticeMatches(st *appWinState, noticeID uint64) bool {
@@ -724,13 +725,17 @@ func (a *App) ResolveAppLaunchFailure(serial, pkg string, noticeID uint64, resta
 	if restart {
 		return a.restartAppWinChecked(serial, pkg, true, noticeID)
 	}
-	return a.stopAppWinChecked(serial, pkg, noticeID)
+	return a.stopAppWinChecked(serial, pkg, noticeID, nil)
 }
 
-func (a *App) stopAppWinChecked(serial, pkg string, noticeID uint64) error {
+func (a *App) stopAppWinChecked(serial, pkg string, noticeID uint64, expected *appWinState) error {
 	key := appWinKey(serial, pkg)
 	a.mu.Lock()
 	st := a.appWins[key]
+	if expected != nil && st != expected {
+		a.mu.Unlock()
+		return nil
+	}
 	if noticeID != 0 && !appLaunchNoticeMatches(st, noticeID) {
 		a.mu.Unlock()
 		return errors.New("此启动提示已失效，窗口状态已更新")
@@ -995,28 +1000,26 @@ func (a *App) seedAppWinBaseline(serial, mode string, m AppWinModeParams) {
 		return
 	}
 	key := a.appListKeyFor(serial)
-	p := a.profiles.Get(key)
 	changed := false
-	if mode == "usb" {
-		if p.Usb.Baseline.Res == 0 {
-			p.Usb.Baseline = Baseline{Res: le, FPS: m.FPS, Bitrate: m.Bitrate}
-			changed = true
+	if err := a.profiles.updateProfile(key, func(p *DeviceProfile) bool {
+		current := &p.Usb
+		if mode == "wifi" {
+			current = &p.Wifi
 		}
-	} else {
-		if p.Wifi.Baseline.Res == 0 {
-			p.Wifi.Baseline = Baseline{Res: le, FPS: m.FPS, Bitrate: m.Bitrate}
-			changed = true
+		if current.Baseline.Res != 0 {
+			return false
 		}
-	}
-	if !changed {
-		return
-	}
-	if err := a.profiles.Save(key, p); err != nil {
+		current.Baseline = Baseline{Res: le, FPS: m.FPS, Bitrate: m.Bitrate}
+		changed = true
+		return true
+	}); err != nil {
 		bridge.DebugLog("[appwin] 默认规格播种失败 key=%s mode=%s: %v", key, mode, err)
 		return
 	}
-	bridge.DebugLog("[appwin] 默认规格已入档 key=%s mode=%s 长边=%d %dfps %dM（首次以默认档开虚拟屏）",
-		key, mode, le, m.FPS, m.Bitrate)
+	if changed {
+		bridge.DebugLog("[appwin] 默认规格已入档 key=%s mode=%s 长边=%d %dfps %dM（首次以默认档开虚拟屏）",
+			key, mode, le, m.FPS, m.Bitrate)
+	}
 }
 
 // appWinDefaults 应用窗口默认档（v2.1.48 主人拍板：**共享主投屏默认规格**）。
@@ -1233,6 +1236,8 @@ func appWinInitialSize(native string, longEdge, ratioW, ratioH int) string {
 
 // AppWinParamsView 是 GetAppWinParams 返回（前端面板初始化：两套 + 当前形态）。
 type AppWinParamsView struct {
+	WheelSwipeSettings
+
 	Identity             string           `json:"identity"`
 	Usb                  AppWinModeParams `json:"usb"`
 	Wifi                 AppWinModeParams `json:"wifi"`
@@ -1302,6 +1307,7 @@ func (a *App) GetAppWinParams(serial, pkg string) (AppWinParamsView, error) {
 		return NormalizeACodec(devV)
 	}
 	v := AppWinParamsView{
+		WheelSwipeSettings:   ap.WheelSwipeSettings.normalized(),
 		Identity:             identity,
 		NativeAlphaPresented: nativeAlphaPresented,
 		Usb:                  ap.Usb, Wifi: ap.Wifi,
@@ -1332,6 +1338,9 @@ func (a *App) SaveAppWinParams(serial, pkg, payload string) error {
 		return errors.New("参数不完整（serial/pkg 为空）")
 	}
 	var in struct {
+		WheelSwipeSettings
+		WheelSwipeOnly      bool    `json:"wheelSwipeOnly"`
+		WheelSwipeEdited    bool    `json:"wheelSwipeEdited"`
 		Mode                string  `json:"mode"`
 		Size                string  `json:"size"`
 		RatioW              int     `json:"ratioW"`
@@ -1360,6 +1369,24 @@ func (a *App) SaveAppWinParams(serial, pkg, payload string) error {
 	}
 	if in.Mode != "usb" && in.Mode != "wifi" {
 		return fmt.Errorf("模式无效：%q", in.Mode)
+	}
+	if in.WheelSwipeOnly && in.WheelSwipeEdited {
+		identity := a.appWinProfileKey(serial, pkg)
+		wheel := in.WheelSwipeSettings.normalized()
+		if err := a.profiles.updateAppParams(identity, pkg, func(p AppWinParams) AppWinParams {
+			p.WheelSwipeSettings = wheel
+			return p
+		}); err != nil {
+			return err
+		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if st := a.appWins[appWinKey(serial, pkg)]; st != nil && !st.closing && !st.restarting {
+			percent := wheel.activePercent()
+			st.liveWheelSwipe = &percent
+			return bridge.SetClientWheelSwipe(st.clientPID, percent)
+		}
+		return nil
 	}
 	if (in.RatioW == 0) != (in.RatioH == 0) || in.RatioW < 0 || in.RatioH < 0 || in.RatioW > 10000 || in.RatioH > 10000 {
 		return fmt.Errorf("初始比例无效：宽高必须同时留空，或均为 1-10000 的整数")
@@ -1399,6 +1426,9 @@ func (a *App) SaveAppWinParams(serial, pkg, payload string) error {
 	identity := a.appWinProfileKey(serial, pkg)
 	def := a.appWinDefaults(identity)
 	ap, _ := a.appWinParamsFor(identity, pkg)
+	if in.WheelSwipeEdited {
+		ap.WheelSwipeSettings = in.WheelSwipeSettings.normalized()
+	}
 	if np.Size != "" {
 		// Retain the former per-app value for older versions reading the same profile.
 		previous := ap.Usb

@@ -1,6 +1,9 @@
 package bridge
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 // ModeParams 是单模式（usb/wifi）的参数浮窗覆盖。
 // Set=false 表示该模式自动档：不注入该模式环境变量，bat 该模式走自身检测逻辑。
@@ -84,6 +87,8 @@ type CastParams struct {
 	VdKeepContent        bool   // SCEZ_VD_KEEP_CONTENT=1 → --no-vd-destroy-content
 	VdAudio              string // SCEZ_VD_AUDIO：声音档位单套回退（v2.1.78；phone/pc/both，空=不注入）
 	StartApp             string // SCEZ_START_APP：启动应用包名（调用方带 "+" 前缀=先强停再启动）
+	WheelSwipePercent    int    // Negative reverses swipes. Zero keeps native wheel input.
+	AppPowerSavePackage  string // App opened by a notification on this session's virtual display.
 	ReuseAppTask         bool   // Prefer a verified existing task; never silently force-stop.
 	WinTitle             string // Display title; castEnv quotes it as one Windows argument.
 
@@ -288,6 +293,10 @@ func castEnv(params CastParams, watchTag string) []string {
 	}
 	if params.StartApp != "" {
 		env = append(env, "SCEZ_START_APP="+params.StartApp)
+	}
+	env = append(env, "SCEZ_WHEEL_SWIPE_PERCENT="+strconv.Itoa(params.WheelSwipePercent))
+	if params.AppPowerSavePackage != "" {
+		env = append(env, "SCEZ_APP_POWER_SAVE_PACKAGE="+params.AppPowerSavePackage)
 	}
 	if params.VdSize != "" {
 		value := "0"

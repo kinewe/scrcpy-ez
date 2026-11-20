@@ -45,6 +45,7 @@ type worker struct {
 
 type Manager struct {
 	opener        func(context.Context, OpenRequest) error
+	openClicked   func(OpenRequest)
 	openPolicies  map[string]Policy
 	source        Source
 	artwork       func(string, string) Artwork
@@ -115,6 +116,21 @@ func (m *Manager) SetOpener(open func(context.Context, OpenRequest) error) {
 	m.mu.Lock()
 	m.opener = open
 	m.mu.Unlock()
+}
+
+func (m *Manager) SetOpenClickObserver(clicked func(OpenRequest)) {
+	m.mu.Lock()
+	m.openClicked = clicked
+	m.mu.Unlock()
+}
+
+func (m *Manager) observeOpenClick(req OpenRequest) {
+	m.mu.Lock()
+	clicked := m.openClicked
+	m.mu.Unlock()
+	if clicked != nil {
+		clicked(req)
+	}
 }
 
 func (m *Manager) open(ctx context.Context, req OpenRequest) error {
@@ -289,6 +305,7 @@ func (m *Manager) run(ctx context.Context) {
 				workerCtx, cancel := context.WithCancel(ctx)
 				policy, preview := options.policy(id)
 				w := &worker{target: target, name: target.Name, generation: generation, cancel: cancel, state: NewState(id, target.Name, preview), done: make(chan struct{})}
+				w.state.openClicked = m.observeOpenClick
 				w.state.policy = policy.Clone()
 				w.state.connection = target.Connection
 				w.state.copyFallback = options.CopyFallback

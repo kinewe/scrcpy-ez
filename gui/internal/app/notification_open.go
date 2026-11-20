@@ -14,6 +14,14 @@ type notificationOpener interface {
 	Open(context.Context, notifications.OpenRequest, int) error
 }
 
+// RecordNotificationOpenClick is called by the toast activation handler,
+// before the open queue can wait on another cast.
+func (a *App) RecordNotificationOpenClick(req notifications.OpenRequest) {
+	if a.notificationOpenAllowed(req) {
+		a.recordAppLauncherOpen(req.Identity, req.Package)
+	}
+}
+
 func (a *App) notificationOpenAllowed(req notifications.OpenRequest) bool {
 	settings := a.settings.Get()
 	if !rePkgName.MatchString(req.Package) {
@@ -80,10 +88,11 @@ func (a *App) OpenNotification(parent context.Context, req notifications.OpenReq
 	if !source.Current(req) {
 		return &notifications.OpenFailure{Code: "stale"}
 	}
+	identity := a.appListKeyFor(req.Identity)
 	a.mu.RLock()
 	var window *appWinState
 	for _, candidate := range a.appWins {
-		if candidate.identity == req.Identity && candidate.pkg == req.Package {
+		if candidate.identity == identity && candidate.pkg == req.Package {
 			if candidate.closing || candidate.restarting {
 				a.mu.RUnlock()
 				return &notifications.OpenFailure{Code: "switching"}
@@ -93,15 +102,13 @@ func (a *App) OpenNotification(parent context.Context, req notifications.OpenReq
 		}
 	}
 	a.mu.RUnlock()
-	created = window == nil
-	if created {
+	if window == nil {
 		stage = "start"
-		if err := a.startAppWin(req.Identity, req.Package, req.App, true); err != nil {
+		var err error
+		window, created, err = a.startAppWinSession(req.Identity, req.Package, req.App, true, false, false)
+		if err != nil {
 			return err
 		}
-		a.mu.RLock()
-		window = a.appWins[appWinKey(req.Identity, req.Package)]
-		a.mu.RUnlock()
 	}
 	if window == nil {
 		return notifications.ErrUnavailable
@@ -111,6 +118,7 @@ func (a *App) OpenNotification(parent context.Context, req notifications.OpenReq
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	sent := false
+	sentDisplay, sentPID := 0, 0
 	failure := notifications.ErrUnavailable
 	for {
 		// Apps commonly remove their notification while opening its detail.
@@ -125,8 +133,9 @@ func (a *App) OpenNotification(parent context.Context, req notifications.OpenReq
 		}
 		a.mu.RLock()
 		current := a.appWins[appWinKey(window.serial, window.pkg)]
-		usable := current == window && !window.closing && !window.restarting
-		ready := usable && window.displayReady && window.displayID > 0
+		usable := current == window && window.identity == identity && !window.closing && !window.restarting
+		ready := usable && window.displayReady && window.displayID > 0 &&
+			(!window.notificationWindow || window.powerSaveDisplay == window.displayID)
 		display := window.displayID
 		hasVideo := window.displayHasVideo
 		clientPID = window.clientPID
@@ -134,6 +143,10 @@ func (a *App) OpenNotification(parent context.Context, req notifications.OpenReq
 		displayID = display
 		if !usable {
 			failure = &notifications.OpenFailure{Code: "window-lost"}
+			break
+		}
+		if sent && (display != sentDisplay || clientPID != sentPID) {
+			failure = &notifications.OpenFailure{Code: "switching"}
 			break
 		}
 		if ready && !sent {
@@ -147,6 +160,7 @@ func (a *App) OpenNotification(parent context.Context, req notifications.OpenReq
 				break
 			}
 			sent = true
+			sentDisplay, sentPID = display, clientPID
 			stage = "sent"
 			continue
 		}
@@ -174,14 +188,8 @@ func (a *App) OpenNotification(parent context.Context, req notifications.OpenReq
 	}
 failed:
 	if created {
-		a.mu.RLock()
-		same := a.appWins[appWinKey(window.serial, window.pkg)] == window
-		a.mu.RUnlock()
-		if same {
-			_ = a.StopAppWin(window.serial, window.pkg)
-		}
-	}
-	if !created {
+		_ = a.stopAppWinChecked(window.serial, window.pkg, 0, window)
+	} else {
 		a.mu.Lock()
 		if window.phase == "notification-opening" {
 			window.phase, window.phaseText = "", ""

@@ -24,6 +24,7 @@ let backend = {settings:{notificationDefault:true,notificationPreview:true,notif
 let selected = [{identity:'tablet'}], reject=false, hold=null;
 const saves=[],messages=[],launches=[];
 const context = {el,Promise,SCEZNotificationIcons:require('./notification_icons'),lastState:backend,lastJson:'',appWinModalSerial:'wifi-tablet',appWinNotificationView:false,notificationOptionsOpen:false,notificationSaving:false,notificationBatchTargets:[],
+  appLauncherDraft:null,closeAppLauncherOptions:done=>done(),renderAppLauncherControls(){},
   appWins:{'wifi-tablet':{identity:'tablet',loaded:true,name:'平板 <test>',apps}},
   batchSelectedDevices:()=>selected,syncBatchUI(){},renderDevices(){},renderAppWinGrid(serial){context.renderAppNotificationControls(serial);},deviceIdentityOf:()=>'',refreshNow(){},toast:text=>messages.push(text),
   SetSettings:()=>Promise.resolve(),SetOtherAppWinSystemDecorations:()=>Promise.resolve(),GetState:()=>Promise.resolve(clone(backend)),

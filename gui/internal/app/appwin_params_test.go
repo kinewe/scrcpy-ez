@@ -677,3 +677,60 @@ func TestAppWindowInitialOrientationUsesLiveDeviceContract(t *testing.T) {
 		t.Fatalf("explicit aspect direction must win: %+v", got)
 	}
 }
+
+func TestWheelSwipeSettingsFollowAppAcrossLaunchPaths(t *testing.T) {
+	launches := []struct {
+		name  string
+		pkg   string
+		start func(*App) error
+	}{
+		{"regular", "com.example.store", func(a *App) error {
+			return a.StartAppWin("K80", "com.example.store", "Store")
+		}},
+		{"scanner", "com.tencent.mm", func(a *App) error {
+			return a.StartWeChatScanner("K80")
+		}},
+		{"notification", "com.example.mail", func(a *App) error {
+			return a.startAppWin("K80", "com.example.mail", "Mail", true)
+		}},
+	}
+	for _, launch := range launches {
+		t.Run(launch.name, func(t *testing.T) {
+			e := newAppWinParamsEnv(t)
+			setDevices(e.a, []adb.Device{{Serial: "K80", State: "device", ConnType: "usb"}})
+			if err := e.a.SaveAppWinParams("K80", launch.pkg,
+				`{"mode":"wifi","wheelSwipeOnly":true,"wheelSwipeEdited":true,"wheelSwipeEnabled":true,"wheelSwipePercent":27,"wheelSwipeReverse":true}`); err != nil {
+				t.Fatal(err)
+			}
+			if err := launch.start(e.a); err != nil {
+				t.Fatal(err)
+			}
+			if got := e.f.waitParams(t, 1).WheelSwipePercent; got != -27 {
+				t.Fatalf("USB launch ignored preference configured on Wi-Fi: %d", got)
+			}
+			if err := e.a.SaveAppWinParams("K80", launch.pkg,
+				`{"mode":"usb","wheelSwipeOnly":true,"wheelSwipeEdited":true,"wheelSwipePercent":27,"wheelSwipeReverse":true}`); err != nil {
+				t.Fatal(err)
+			}
+			e.a.mu.RLock()
+			window := e.a.appWins[appWinKey("K80", launch.pkg)]
+			applied := window != nil && !window.restarting && window.liveWheelSwipe != nil && *window.liveWheelSwipe == 0
+			e.a.mu.RUnlock()
+			if !applied {
+				t.Fatal("changing only the scroll setting must keep the current virtual display")
+			}
+			store := NewProfileStore(e.a.profiles.Path())
+			if err := store.Load(); err != nil {
+				t.Fatal(err)
+			}
+			entry, _ := store.Entry("K80")
+			got := entry.AppParams[launch.pkg]
+			if got.WheelSwipeEnabled || !got.WheelSwipeReverse || got.WheelSwipePercent != 27 || !got.Usb.Empty() || !got.Wifi.Empty() {
+				t.Fatalf("saved preference or transport defaults changed: %+v", got)
+			}
+			if other, _ := e.a.appWinParamsFor("K80", "com.example.other"); other.activePercent() != 0 {
+				t.Fatal("unrelated apps must retain the default")
+			}
+		})
+	}
+}

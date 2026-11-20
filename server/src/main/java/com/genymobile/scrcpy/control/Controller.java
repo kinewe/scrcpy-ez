@@ -108,6 +108,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     private Thread keepAwakeWatchdog;
     private final KeepAwakeLease keepAwakeLease;
     private final KeepAwakeLease appPowerSaveLease;
+    private final String appPowerSavePackage;
     private final ControlDiagnostics controlDiagnostics;
     private Timer controlDiagnosticsTimer;
 
@@ -148,6 +149,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         this.camera = options.getVideoSource() == VideoSource.CAMERA;
         this.controlChannel = controlChannel;
         this.cleanUp = cleanUp;
+        this.appPowerSavePackage = options.getAppPowerSavePackage();
         this.controlDiagnostics = AppRuntimeDiagnostics.ENABLED && options.getNewDisplay() != null ? new ControlDiagnostics() : null;
 
         if (this.camera) {
@@ -252,7 +254,14 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         // Publish the display before waiting for the independent cleanup process:
         // app launch only waits one second for the display ID. Its exemption
         // acquisition separately waits for registration before starting the app.
-        if (cleanUp != null) {
+        if (appPowerSavePackage != null && (old == null || old.virtualDisplayId != virtualDisplayId)) {
+            if (cleanUp != null) {
+                cleanUp.acquireAppPowerSave(appPowerSavePackage, virtualDisplayId);
+            }
+            // Launch the original PendingIntent after attempting both exemptions.
+            // An unsupported vendor API must still allow notification navigation.
+            Ln.i("SCRCPY_EZ_NOTIFICATION_DISPLAY_READY id=" + virtualDisplayId);
+        } else if (cleanUp != null) {
             cleanUp.registerAppPowerSaveDisplay(virtualDisplayId);
         } else {
             Ln.w("SCRCPY_EZ_APP_POWER_SAVE action=skipped display=" + virtualDisplayId + " reason=cleanup-disabled");
@@ -887,12 +896,15 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     }
 
     private boolean pressBackOrTurnScreenOn(int action) {
+        if (displayId == Device.DISPLAY_ID_NONE) {
+            // App windows use this shortcut for Back even while the phone sleeps.
+            return injectKeyEvent(action, KeyEvent.KEYCODE_BACK, 0, 0, Device.INJECT_MODE_ASYNC);
+        }
+
         boolean injectBack;
         // Device.isScreenOn(displayId) ignores the displayId below Android 14
         if (Build.VERSION.SDK_INT >= AndroidVersions.API_34_ANDROID_14) {
-            // Inject BACK if the screen is on for the current virtual display id
-            int actionDisplayId = getActionDisplayId();
-            injectBack = actionDisplayId == Device.DISPLAY_ID_NONE || Device.isScreenOn(actionDisplayId);
+            injectBack = Device.isScreenOn(displayId);
         } else {
             // Inject BACK if the display is not the main display, or if the main display is on
             injectBack = displayId != 0 || Device.isScreenOn(0);

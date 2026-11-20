@@ -6,7 +6,11 @@ const source = fs.readFileSync(__dirname + '/app.js', 'utf8');
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 function deferred() { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return {promise,resolve,reject}; }
 class Node {
-  constructor() { this.style={}; this.children=[]; this.events={}; this.parts={}; this.classes=new Set(); this.classList={add:(...x)=>x.forEach(v=>this.classes.add(v)),remove:(...x)=>x.forEach(v=>this.classes.delete(v)),contains:x=>this.classes.has(x)}; }
+  constructor() { this.style={setProperty(key,value){this[key]=value;}}; this.children=[]; this.events={}; this.parts={}; this.classes=new Set(); this.classList={add:(...x)=>x.forEach(v=>this.classes.add(v)),remove:(...x)=>x.forEach(v=>this.classes.delete(v)),contains:x=>this.classes.has(x)}; }
+  get valueAsNumber() { return Number(this.value); }
+  set valueAsNumber(value) { this.value=String(value); }
+  getAttribute(key) { return (this.attributes && this.attributes[key]) || ''; }
+  setAttribute(key, value) { (this.attributes ||= {})[key] = value; }
   set innerHTML(x) { this.children=[]; this.parts={}; }
   appendChild(n) { this.children.push(n); }
   querySelector(s) { return this.parts[s] || (this.parts[s]=new Node()); }
@@ -14,33 +18,44 @@ class Node {
   contains(n) { return !!n.inParam; }
 }
 function harness() {
-  const nodes={}, timers=new Map(), reads=[], saves=[], errors=[];
-  let clock=0;
+  const nodes={}, timers=new Map(), frames=new Map(), reads=[], saves=[], errors=[];
+  const windowEvents={};
+  let clock=0, frameTime=0;
   const el=id=>nodes[id] || (nodes[id]=new Node());
+  Object.assign(el('param-wheel-swipe-distance'), {min:'5',max:'50',value:'18'});
   const scope={el,document:{activeElement:null,createElement:()=>new Node()},lastState:null,sessions:{},paramState:null,paramOpenToken:0,paramTransition:null,
     PARAM_FIELDS:{res:{label:'分辨率',unit:'',tiers:[2560,1920,1080]},fps:{label:'帧率',unit:' FPS',tiers:[120,90,60]},bit:{label:'码率',unit:' Mbps',tiers:[120,80,60,40,15]}},
     PARAM_FALLBACK:{usb:{res:3200,fps:120,bitrate:60},wifi:{res:1920,fps:60,bitrate:15}},PARAM_NOTES:{res:'分辨率'},
     SCEZParamState:require('./param_state'),updateParamAudioRow(){},updateParamCodecRows(){},watchNativeDefaults(){},refreshNow(){},
     // rc23-UI1：三页签/角标/说明框相关辅助（这些函数本身由页面 DOM 驱动，独立验收在真实 GUI 里做）
     refreshParamNotes(){},showDialogTab(){},showAllDialogPages(){},currentDialogTab(){return 'display';},
-    clearDialogDirty(){},updateParamDirtyTabs(){},snapshotParamMode(){return {};},setTabDirty(){},setNote(){},
+    clearDialogDirty(){},setSwitchNode(node, on){node.checked=on;},updateParamDirtyTabs(){},snapshotParamMode(){return {};},setTabDirty(){},setNote(){},
     GetProfile(serial){const d=deferred();reads.push({serial,...d});return d.promise;},
     SaveProfileAndRestart(...args){saves.push(args);return Promise.resolve();},toast:x=>errors.push(x),
     setTimeout(fn,ms){const id=++clock;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id),
-    window:{GetRootRepairEnabled:()=>Promise.resolve(false),matchMedia:()=>({matches:false})}};
+    requestAnimationFrame(fn){const id=++clock;frames.set(id,fn);return id;},cancelAnimationFrame:id=>frames.delete(id),
+    window:{GetRootRepairEnabled:()=>Promise.resolve(false),matchMedia:()=>({matches:false}),addEventListener:(key,fn)=>{windowEvents[key]=fn;}}};
   vm.createContext(scope);
-  for(const name of ['nativeTiers','frameRateTiers','ladderTiers','baseValOf','curParam','curField','applyField','baselineOf','initField','makeParamState','renderParamRows','specContext','clearParamTransition','closeSpecModal','syncSpecModal','openSpecModal','renderParamModal']) {
+  for(const name of ['readWheelSwipe','wheelSwipeChanged','renderWheelSwipe','bindWheelSwipe','nativeTiers','frameRateTiers','ladderTiers','baseValOf','curParam','curField','applyField','baselineOf','initField','makeParamState','renderParamRows','specContext','clearParamTransition','closeSpecModal','syncSpecModal','openSpecModal','renderParamModal']) {
     const start=source.indexOf('  function '+name+'(');assert.ok(start>=0,name);
     const lineEnd=source.indexOf('\n',start);
     const end=source.slice(start,lineEnd).trimEnd().endsWith('}') ? lineEnd : source.indexOf('\n  }',lineEnd)+4;
     vm.runInContext(source.slice(start,end),scope);
   }
+  scope.bindWheelSwipe('param', () => scope.paramState, () => {});
   const start=source.indexOf("  el('param-save').addEventListener('click'");
   vm.runInContext(source.slice(start,source.indexOf('\n  // ---------- 指引弹窗',start)),scope);
   function timer() {const next=timers.entries().next().value;assert.ok(next,'expected transition timer');timers.delete(next[0]);next[1].fn();return next[1].ms;}
   function finish() {for(let n=0;timers.size;n++){assert.ok(n<20,'timer loop');timer();}}
+  function advanceFrame() {
+    const next=frames.entries().next().value;
+    if (!next) return false;
+    frames.delete(next[0]);
+    next[1](frameTime+=1000/60);
+    return true;
+  }
   el('param-modal').style.display='none';
-  return {scope,el,timers,reads,saves,errors,timer,finish};
+  return {scope,el,timers,reads,saves,errors,timer,finish,windowEvents,advanceFrame};
 }
 function snapshot(mode, serial='192.0.2.159:5555', identity='device:PHONE') {
   return {sessions:[{serial,identity,mode,devName:'手机',cast:{serial,mode,active:true}}],devices:[{serial:mode==='usb'?'PHONE':serial,wireless:serial,identity,name:'手机',state:'device',connType:mode}],profiles:[{key:identity,name:'手机',serials:['PHONE'],addrs:[serial]}]};
@@ -68,9 +83,47 @@ async function open(h, mode='wifi', serial='192.0.2.159:5555') {h.scope.lastStat
   s.lastState=snapshot('wifi');h.reads[0].resolve(profile());await flush();
   assert.equal(s.paramState.mode,'wifi','profile response uses the latest mode, not the mode when requested');
   const draft=s.paramState;
+  assert.equal(h.el('param-wheel-swipe').checked,false);
+  assert.equal(h.el('param-wheel-swipe-distance-row').hidden,true);
+  h.el('param-wheel-swipe').events.click();
+  assert.equal(h.el('param-wheel-swipe-distance-row').hidden,false);
+  assert.equal(h.el('param-wheel-swipe-distance').value,'18');
+  const distance=h.el('param-wheel-swipe-distance');
+  const track=h.el('param-wheel-swipe-track');
+  const position=()=>parseFloat(track.style['--wheel-swipe-progress']);
+  function settleMotion() {
+    for(let count=0;h.advanceFrame();count++) assert.ok(count<100,'continuous track should settle');
+  }
+  function dragStep(value) {
+    const before=position();
+    distance.events.pointerdown();
+    distance.valueAsNumber=value;distance.events.input();
+    h.advanceFrame();
+    const delta=Math.abs(position()-before);
+    h.windowEvents.pointerup();
+    settleMotion();
+    return delta;
+  }
+  const low=dragStep(24);
+  dragStep(40);
+  const high=dragStep(46);
+  const down=dragStep(40);
+  assert.ok(high<low*.6,'upward motion should be more damped at the top');
+  assert.ok(Math.abs(down-low)<1e-8,'descending should use normal damping');
+  distance.valueAsNumber=27.28;distance.events.input();
+  assert.equal(distance.valueAsNumber,27.28,'the badge must not round the physical slider value');
+  assert.equal(h.el('param-wheel-swipe-value').textContent,'27%');
+  settleMotion();
+  assert.ok(Math.abs(position()-(27.28-5)/45*100)<1e-8);
+  assert.equal(distance.getAttribute('aria-valuetext'),'27%');
+  const reverse=h.el('param-wheel-swipe-reverse');
+  assert.equal(reverse.getAttribute('aria-pressed'),'false');
+  reverse.events.click();
+  assert.equal(reverse.getAttribute('aria-pressed'),'true');
   draft.fields.wifi.res.edit=true;draft.fields.wifi.res.input='2048';draft.fields.wifi.res.val=2048;
   draft.audio.wifi='both';draft.vcodec.wifi='h265';draft.profile.wifi.lockFps=true;
   s.renderParamModal();
+  assert.equal(distance.valueAsNumber,27.28,'unrelated renders should preserve fractional placement');
   const oldInput=h.el('param-rows').children[0].querySelector('.chips').children.find(n=>n.type==='number');
   assert.ok(oldInput);
   oldInput.inParam=true;let blurred=false;
@@ -79,6 +132,7 @@ async function open(h, mode='wifi', serial='192.0.2.159:5555') {h.scope.lastStat
   s.lastState=snapshot('usb');s.syncSpecModal(s.lastState);
   assert.equal(blurred,true,'old field is committed before switching');
   assert.equal(s.paramState,draft,'switching must not recreate the two-mode state');
+  assert.equal(draft.wheelSwipe.wheelSwipePercent,27,'the amplitude follows the device across transports');
   assert.equal(draft.mode,'wifi','old content remains throughout fade-out');
   assert.equal(h.el('param-card').classes.has('param-mode-out'),true);
   assert.equal(h.el('param-card').inert,true,'keyboard focus is blocked during the transition');
@@ -107,6 +161,9 @@ async function open(h, mode='wifi', serial='192.0.2.159:5555') {h.scope.lastStat
   s.lastState=snapshot('wifi');s.syncSpecModal(s.lastState);h.finish();assert.equal(draft.mode,'wifi');
   h.el('param-save').events.click();await flush();
   assert.equal(h.saves.length,1);assert.equal(h.saves[0][1],'wifi');assert.equal(h.saves[0][2],2048);assert.equal(h.saves[0][6],'both');
+  assert.equal(h.saves[0][11].wheelSwipeEnabled,true);
+  assert.equal(h.saves[0][11].wheelSwipePercent,27);
+  assert.equal(h.saves[0][11].wheelSwipeReverse,true);
   assert.equal(s.paramState,null);
 
   // A closed dialog is never revived by a late animation or profile response.

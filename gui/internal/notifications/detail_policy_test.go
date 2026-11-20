@@ -13,7 +13,9 @@ func TestDetailSwitchKeepsDeviceCardsAndOTPCopiesIndependent(t *testing.T) {
 	m := NewManager(context.Background(), source, func() (Sink, error) { return sink, nil })
 	defer m.Close()
 	var opened atomic.Int32
+	clicks := make(chan OpenRequest, 2)
 	m.SetOpener(func(context.Context, OpenRequest) error { opened.Add(1); return nil })
+	m.SetOpenClickObserver(func(req OpenRequest) { clicks <- req })
 	targets := []Target{{Identity: "tablet", Serial: "wifi-tablet"}, {Identity: "phone", Serial: "usb-phone"}}
 	options := Options{Preview: true, Policies: map[string]Policy{"tablet": {Mode: ModeAll}, "phone": {Mode: ModeAll}}}
 	m.Reconcile(targets, options)
@@ -42,6 +44,24 @@ func TestDetailSwitchKeepsDeviceCardsAndOTPCopiesIndependent(t *testing.T) {
 	sink.mu.Unlock()
 	if tablet.Open == nil || phone.Open == nil || otp.Open != nil || otp.CopyCode == "" {
 		t.Fatal("default detail/copy routing failed")
+	}
+	if tablet.OpenClicked == nil || phone.OpenClicked == nil || otp.OpenClicked != nil {
+		t.Fatal("detail clicks and OTP copy must remain separate")
+	}
+	tablet.OpenClicked()
+	phone.OpenClicked()
+	for _, identity := range []string{"tablet", "phone"} {
+		select {
+		case got := <-clicks:
+			if got.Identity != identity || got.Package != ordinary.Package {
+				t.Fatalf("wrong recent-click metadata: %+v", got)
+			}
+		default:
+			t.Fatal("click reporting waited for opening the app")
+		}
+	}
+	if opened.Load() != 0 {
+		t.Fatal("click observer must not start the cast")
 	}
 	if err := tablet.Open(context.Background()); err != nil {
 		t.Fatal(err)

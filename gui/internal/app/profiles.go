@@ -135,15 +135,47 @@ func (p AppWinModeParams) EffectiveAppWinAudio() string {
 // Empty 判定该套是否未设置（零值）。
 func (p AppWinModeParams) Empty() bool { return p.Size == "" }
 
+// WheelSwipeSettings applies to both transports of a device or application.
+type WheelSwipeSettings struct {
+	WheelSwipeEnabled bool `json:"wheelSwipeEnabled,omitempty"`
+	WheelSwipePercent int  `json:"wheelSwipePercent,omitempty"`
+	WheelSwipeReverse bool `json:"wheelSwipeReverse,omitempty"`
+}
+
+func (s WheelSwipeSettings) normalized() WheelSwipeSettings {
+	if s.WheelSwipePercent < 5 || s.WheelSwipePercent > 50 {
+		s.WheelSwipePercent = 18
+	}
+	// Leave legacy/default profiles without a setting on disk.
+	if !s.WheelSwipeEnabled && !s.WheelSwipeReverse && s.WheelSwipePercent == 18 {
+		return WheelSwipeSettings{}
+	}
+	return s
+}
+
+// activePercent is signed for launch and live updates. Zero selects native scrolling.
+func (s WheelSwipeSettings) activePercent() int {
+	if !s.WheelSwipeEnabled {
+		return 0
+	}
+	percent := s.normalized().WheelSwipePercent
+	if s.WheelSwipeReverse {
+		return -percent
+	}
+	return percent
+}
+
 // AppWinParams 是单应用（pkg 键）的窗口参数：有线/无线两套分别记忆
 // （与主投屏"每设备两套"同构）。
 type AppWinParams struct {
+	WheelSwipeSettings
 	Usb  AppWinModeParams `json:"usb"`
 	Wifi AppWinModeParams `json:"wifi"`
 }
 
 // DeviceProfile 是一台设备的有线/无线两套独立参数。
 type DeviceProfile struct {
+	WheelSwipeSettings
 	Usb  ModeProfile `json:"usb"`
 	Wifi ModeProfile `json:"wifi"`
 }
@@ -307,7 +339,8 @@ type DeviceEntry struct {
 	Profiles       DeviceProfile `json:"profiles"`
 	// Apps = 应用列表（二期 Step 1；`scrcpy --list-apps` 枚举结果：名称+包名+系统/三方）。
 	// 就绪边沿自动入档；后续"应用窗口参数"将挂在对应应用条目上（Step 5）。
-	Apps []AppListItem `json:"apps,omitempty"`
+	Apps        []AppListItem       `json:"apps,omitempty"`
+	AppLauncher *AppLauncherProfile `json:"appLauncher,omitempty"`
 	// IconsFullAt = 上次"全量图标导出"完成时间（unix 秒；0=从未）。
 	// v2.1.16 列表 diff 的兜底判据：距上次全量 < 24h 且列表无变化 → 跳过图标导出。
 	IconsFullAt int64 `json:"iconsFullAt,omitempty"`
@@ -357,8 +390,9 @@ type legacyDeviceEntry struct {
 	Profiles       DeviceProfile     `json:"profiles"`
 	// v2.1.24 修复：Load 走本 legacy 中转——缺字段会把 apps/iconsFullAt 静默丢弃
 	//（写入侧正常、读盘丢），表现为"每次 GUI 重启都判全量超期 → 重导图标 9-14s"。
-	Apps        []AppListItem `json:"apps,omitempty"`
-	IconsFullAt int64         `json:"iconsFullAt,omitempty"`
+	Apps        []AppListItem       `json:"apps,omitempty"`
+	AppLauncher *AppLauncherProfile `json:"appLauncher,omitempty"`
+	IconsFullAt int64               `json:"iconsFullAt,omitempty"`
 	// AppParams（二期 Step 5）：同样必须带中转，否则老档案走 legacy 读路径时丢参数。
 	AppParams map[string]AppWinParams `json:"appParams,omitempty"`
 	// WeChatScanVerified 同样必须走 legacy 中转，否则老档案读路径会丢掉成功实证。
@@ -475,6 +509,7 @@ func legacyDeviceToEntry(le *legacyDeviceEntry) *DeviceEntry {
 		TlsGuid:        le.TlsGuid,
 		Profiles:       le.Profiles,
 		Apps:           le.Apps,
+		AppLauncher:    le.AppLauncher,
 		IconsFullAt:    le.IconsFullAt,
 		AppParams:      le.AppParams,
 		// 成功实证也必须搬进新条目（否则每次 Load 都被静默丢弃 = 老 bug 复现）。
@@ -703,7 +738,7 @@ func isOrphanIPPortArchiveLocked(key string, e *DeviceEntry) bool {
 	}
 	if e.Marketname != "" || e.Manufacturer != "" || e.Model != "" ||
 		e.DisplayName != "" || e.DisplayNameSet || e.Res != "" || len(e.Serials) != 0 || e.TlsGuid != "" ||
-		e.Profiles != DefaultProfile() && e.Profiles != (DeviceProfile{}) || len(e.Apps) != 0 || len(e.AppParams) != 0 || e.IconsFullAt != 0 {
+		e.Profiles != DefaultProfile() && e.Profiles != (DeviceProfile{}) || len(e.Apps) != 0 || e.AppLauncher != nil || len(e.AppParams) != 0 || e.IconsFullAt != 0 {
 		return false
 	}
 	return len(e.Addrs) == 1 && e.Addrs[0].Addr == key
@@ -934,10 +969,19 @@ func (s *ProfileStore) Get(key string) DeviceProfile {
 // Save 写入设备参数并落盘。key 为 serial 或 IP:port：
 // 已有档案 → 写入其 identity 档案；未知 → 按回退键新建档案（上线后归并）。
 func (s *ProfileStore) Save(key string, p DeviceProfile) error {
+	return s.updateProfile(key, func(old *DeviceProfile) bool {
+		*old = p
+		return true
+	})
+}
+
+func (s *ProfileStore) updateProfile(key string, update func(*DeviceProfile) bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e, ok := s.resolveLocked(key); ok {
-		e.Profiles = p
+		if !update(&e.Profiles) {
+			return nil
+		}
 	} else {
 		if strings.HasPrefix(key, "pending:") || IsIPPort(key) {
 			return errors.New("设备身份尚未确认，暂时无法保存参数")
@@ -948,6 +992,10 @@ func (s *ProfileStore) Save(key string, p DeviceProfile) error {
 		}
 		if s.hasSerialClaimLocked(serial) {
 			return errors.New("设备身份存在冲突，无法覆盖已有档案")
+		}
+		p := DefaultProfile()
+		if !update(&p) {
+			return nil
 		}
 		s.data.Devices["device:"+serial] = entryFromKey(serial, p)
 	}
@@ -1043,6 +1091,7 @@ func (s *ProfileStore) SetApps(key string, apps []AppListItem) error {
 		return nil
 	}
 	e.Apps = append([]AppListItem(nil), apps...)
+	updateLauncherCatalog(e, installedLauncherApps(apps))
 	return s.persistLocked()
 }
 
@@ -1158,13 +1207,18 @@ func (s *ProfileStore) SetPerspectiveCalib(key, pkg, geom string, m []float64) e
 // SetAppParams 写入单应用的窗口参数（identity 键；pkg → 有线/无线两套）。
 // 两套同时为零 → 删除该 pkg 条目（恢复默认的落盘形态；map 空则置 nil）。
 func (s *ProfileStore) SetAppParams(key, pkg string, p AppWinParams) error {
+	return s.updateAppParams(key, pkg, func(AppWinParams) AppWinParams { return p })
+}
+
+func (s *ProfileStore) updateAppParams(key, pkg string, update func(AppWinParams) AppWinParams) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.resolveLocked(key)
 	if !ok {
 		return errors.New("未找到设备档案: " + key)
 	}
-	if p.Usb.Empty() && p.Wifi.Empty() {
+	p := update(e.AppParams[pkg])
+	if p.Usb.Empty() && p.Wifi.Empty() && p.WheelSwipeSettings == (WheelSwipeSettings{}) {
 		if e.AppParams != nil {
 			delete(e.AppParams, pkg)
 			if len(e.AppParams) == 0 {
@@ -1257,6 +1311,16 @@ func cloneEntry(e *DeviceEntry) DeviceEntry {
 	c.Serials = append([]string{}, e.Serials...)
 	c.Addrs = append([]AddrEntry{}, e.Addrs...)
 	c.Apps = cloneAppAlpha(e.Apps)
+	if e.AppLauncher != nil {
+		l := *e.AppLauncher
+		l.Pins = append([]string(nil), l.Pins...)
+		l.Recent = append([]string(nil), l.Recent...)
+		if l.Capacity != nil {
+			capacity := *l.Capacity
+			l.Capacity = &capacity
+		}
+		c.AppLauncher = &l
+	}
 	return c
 }
 
@@ -1588,6 +1652,12 @@ func mergeEntryLocked(dest, src *DeviceEntry) bool {
 	sortAddrs(dest)
 	dest.Profiles.Usb = mergeMode(dest.Profiles.Usb, src.Profiles.Usb)
 	dest.Profiles.Wifi = mergeMode(dest.Profiles.Wifi, src.Profiles.Wifi)
+	if dest.AppLauncher == nil {
+		dest.AppLauncher = src.AppLauncher
+	}
+	if dest.Profiles.WheelSwipeSettings == (WheelSwipeSettings{}) {
+		dest.Profiles.WheelSwipeSettings = src.Profiles.WheelSwipeSettings
+	}
 	return true
 }
 

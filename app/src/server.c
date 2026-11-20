@@ -493,6 +493,11 @@ execute_server(struct sc_server *server,
     if (params->new_display) {
         VALIDATE_STRING(params->new_display);
         ADD_PARAM("new_display=%s", params->new_display);
+        const char *app = getenv("SCEZ_APP_POWER_SAVE_PACKAGE");
+        if (app && *app && params->control && params->cleanup) {
+            VALIDATE_STRING(app);
+            ADD_PARAM("app_power_save_package=%s", app);
+        }
         const char *follow_main = getenv("SCEZ_VD_FOLLOW_MAIN_ORIENTATION");
         if (follow_main && !strcmp(follow_main, "1")) ADD_PARAM("vd_follow_main_orientation=true");
         const char *reuse_app = getenv("SCEZ_REUSE_APP_TASK");

@@ -415,6 +415,9 @@ func (s *WindowsSink) run(appID, exe, shortcut string, initialized chan<- error)
 				TraceOpen("activation", code, "", "", 0, 0, 0, false)
 				if valid {
 					consumed.Record(click.token, time.Now())
+					if entry.clicked != nil {
+						entry.clicked()
+					}
 					if !opener.Enqueue(entry) {
 						go func() {
 							_ = s.Show(Card{Group: entry.group, Tag: "open-status", Title: "通知打开请求较多", Body: "请稍后重试或在手机上查看"})

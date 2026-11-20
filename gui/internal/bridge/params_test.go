@@ -247,7 +247,7 @@ func TestCastEnvParamOverlayCoexists(t *testing.T) {
 func TestCastEnvVirtualDisplay(t *testing.T) {
 	vdKeys := []string{"SCEZ_VD_SIZE", "SCEZ_VD_DPI", "SCEZ_VD_FLEX", "SCEZ_VD_AUTO_DPI", "SCEZ_VD_IME",
 		"SCEZ_VD_NO_DECOR", "SCEZ_VD_KEEP_CONTENT", "SCEZ_VD_AUDIO",
-		"SCEZ_START_APP", "SCEZ_WIN_TITLE"}
+		"SCEZ_START_APP", "SCEZ_APP_POWER_SAVE_PACKAGE", "SCEZ_WIN_TITLE"}
 
 	// ① 未设置：整组不注入（普通投屏 bat 行为与历史完全一致）。
 	env := envMap(castEnv(CastParams{}, "tag-vd"))
@@ -298,6 +298,24 @@ func TestCastEnvVirtualDisplay(t *testing.T) {
 	env = envMap(castEnv(CastParams{VdSize: "1280x720"}, "tag-vd"))
 	if _, ok := env["SCEZ_VD_DPI"]; ok {
 		t.Fatalf("VdDpi=0 时不应注入 SCEZ_VD_DPI（env=%v）", env)
+	}
+}
+
+func TestCastEnvWheelSwipeReverse(t *testing.T) {
+	values := envMap(castEnv(CastParams{WheelSwipePercent: -27}, "app"))
+	if values["SCEZ_WHEEL_SWIPE_PERCENT"] != "-27" {
+		t.Fatalf("reverse direction missing from startup environment: %q", values["SCEZ_WHEEL_SWIPE_PERCENT"])
+	}
+	values = envMap(castEnv(CastParams{}, "app"))
+	if values["SCEZ_WHEEL_SWIPE_PERCENT"] != "0" {
+		t.Fatal("default settings must select native wheel input")
+	}
+}
+
+func TestCastEnvNotificationPowerSave(t *testing.T) {
+	values := envMap(castEnv(CastParams{VdSize: "1280x720", AppPowerSavePackage: "com.example.mail"}, "notification"))
+	if values["SCEZ_APP_POWER_SAVE_PACKAGE"] != "com.example.mail" || values["SCEZ_START_APP"] != "" {
+		t.Fatal("notification casts must send the power-save package without requesting an app launch")
 	}
 }
 

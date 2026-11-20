@@ -138,6 +138,9 @@ var appIconCacheJS string
 //go:embed web/app_search.js
 var appSearchJS string
 
+//go:embed web/app_launcher.js
+var appLauncherJS string
+
 //go:embed web/notification_icons.js
 var notificationIconsJS string
 
@@ -166,7 +169,7 @@ var githubMarkPNG []byte
 var giteeMarkSVG []byte
 
 const (
-	version = "v2.5.0"
+	version = "v2.5.1"
 )
 
 // appDir gui53 产品级修复：返回 exe 所在目录（发行包内 bat 与 GUI 同级解压）。
@@ -309,6 +312,7 @@ func main() {
 	notificationManager.SetOpener(func(ctx context.Context, request notifications.OpenRequest) error {
 		return a.OpenNotification(ctx, request, notificationSource)
 	})
+	notificationManager.SetOpenClickObserver(a.RecordNotificationOpenClick)
 	a.SetNotificationService(notificationManager)
 	// 轮 B 多会话：工厂按 serial 创建独立 bat 实例；onLine/onExit 由 App 侧
 	// 绑定到对应会话（每个会话一个 bridge 读 goroutine 对，N≤5 无压力）。
@@ -322,7 +326,7 @@ func main() {
 	// v2.1.18：pinyin_pro（拼音库，全局 pinyinPro）+ app_search（搜索过滤模块）
 	// 在业务脚本前内联（app.js 依赖 SCEZAppSearch）。
 	pageTemplate := strings.NewReplacer("/*__GITHUB_ICON__*/", base64.StdEncoding.EncodeToString(githubMarkPNG), "/*__GITEE_ICON__*/", base64.StdEncoding.EncodeToString(giteeMarkSVG)).Replace(indexHTML)
-	html, err := ui.BuildIndex(pageTemplate, styleCSS, updateUIJS+"\n"+appLaunchUIJS+"\n"+pinyinProJS+"\n"+appSearchJS+"\n"+appIconCacheJS+"\n"+appWinTextJS+"\n"+appWinBarJS+"\n"+scanIconJS+"\n"+sessionMapJS+"\n"+paramStateJS+"\n"+appsettingStateJS+"\n"+dragOrderJS+"\n"+pairUIJS+"\n"+notificationIconsJS+"\n"+appJS)
+	html, err := ui.BuildIndex(pageTemplate, styleCSS, updateUIJS+"\n"+appLaunchUIJS+"\n"+pinyinProJS+"\n"+appSearchJS+"\n"+appLauncherJS+"\n"+appIconCacheJS+"\n"+appWinTextJS+"\n"+appWinBarJS+"\n"+scanIconJS+"\n"+sessionMapJS+"\n"+paramStateJS+"\n"+appsettingStateJS+"\n"+dragOrderJS+"\n"+pairUIJS+"\n"+notificationIconsJS+"\n"+appJS)
 	if err != nil {
 		log.Fatalf("界面资源组装失败: %v", err)
 	}

@@ -7,6 +7,7 @@ import com.genymobile.scrcpy.model.CodecOption;
 import com.genymobile.scrcpy.model.NewDisplay;
 import com.genymobile.scrcpy.model.Orientation;
 import com.genymobile.scrcpy.model.Size;
+import com.genymobile.scrcpy.power.PowerSaveLeaseStore;
 import com.genymobile.scrcpy.util.Ln;
 import com.genymobile.scrcpy.video.CameraAspectRatio;
 import com.genymobile.scrcpy.video.CameraFacing;
@@ -72,6 +73,7 @@ public class Options {
     private boolean powerOn = true;
 
     private NewDisplay newDisplay;
+    private String appPowerSavePackage;
     private boolean vdDestroyContent = true;
     private boolean vdSystemDecorations = true;
     private boolean flexDisplay;
@@ -289,6 +291,10 @@ public class Options {
 
     public NewDisplay getNewDisplay() {
         return newDisplay;
+    }
+
+    public String getAppPowerSavePackage() {
+        return appPowerSavePackage;
     }
 
     public Orientation getCaptureOrientation() {
@@ -640,6 +646,12 @@ public class Options {
                     break;
                 case "new_display":
                     options.newDisplay = parseNewDisplay(value);
+                    break;
+                case "app_power_save_package":
+                    if (!PowerSaveLeaseStore.validPackage(value)) {
+                        throw new IllegalArgumentException("Invalid app power-save package name");
+                    }
+                    options.appPowerSavePackage = value;
                     break;
                 case "vd_destroy_content":
                     options.vdDestroyContent = Boolean.parseBoolean(value);

@@ -68,6 +68,7 @@ func TestNativeOpenQueuesSecondApplicationClick(t *testing.T) {
 	}
 	sink := testNativeSink(t)
 	started := make(chan int, 2)
+	clicked := make(chan int, 2)
 	release := make(chan struct{})
 	defer func() {
 		select {
@@ -78,17 +79,18 @@ func TestNativeOpenQueuesSecondApplicationClick(t *testing.T) {
 	}()
 	for n := 1; n <= 2; n++ {
 		id := n
-		card := Card{Group: "queued-detail", Tag: strconv.Itoa(n), Title: "合成通知连续点击测试", Open: func(ctx context.Context) error {
-			started <- id
-			if id == 1 {
-				select {
-				case <-release:
-				case <-ctx.Done():
-					return ctx.Err()
+		card := Card{Group: "queued-detail", Tag: strconv.Itoa(n), Title: "合成通知连续点击测试",
+			OpenClicked: func() { clicked <- id }, Open: func(ctx context.Context) error {
+				started <- id
+				if id == 1 {
+					select {
+					case <-release:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
 				}
-			}
-			return nil
-		}}
+				return nil
+			}}
 		if err := sink.Show(card); err != nil {
 			t.Fatal(err)
 		}
@@ -115,6 +117,16 @@ func TestNativeOpenQueuesSecondApplicationClick(t *testing.T) {
 	}
 	// After consumption a native request barrier also finishes that handler.
 	_ = sink.call(nativeRequest{op: "count"})
+	for want := 1; want <= 2; want++ {
+		select {
+		case got := <-clicked:
+			if got != want {
+				t.Fatal("click observer changed activation order")
+			}
+		default:
+			t.Fatal("a click waited for the previous application to finish")
+		}
+	}
 	close(release)
 	select {
 	case id := <-started:

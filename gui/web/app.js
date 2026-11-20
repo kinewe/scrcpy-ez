@@ -864,6 +864,7 @@
             scanBtn.setAttribute('aria-label', '微信扫一扫');
             scanBtn.addEventListener('click', function (ev) {
               ev.stopPropagation();
+              rememberAppLauncherClick(d.serial, 'com.tencent.mm');
               window.StartWeChatScanner(d.serial).then(refreshNow).catch(function (e) {
                 toast('启动微信扫一扫失败：' + (e && e.message ? e.message : e));
               });
@@ -1016,6 +1017,8 @@
   var appWins = {}; // serial → {name, tab, pane, apps, loaded, pollLeft, identity}（蓝灯表；收编/升级态 tab/pane=null）
   var appWinModalSerial = null; // 当前浮窗展示的 serial（null=浮窗关闭）
   var appWinNotificationView = false;
+  var appLauncherDraft = null;
+  var appLauncherDrag = null;
   var notificationOptionsOpen = false;
   var notificationSaving = false;
   var notificationBatchTargets = [];
@@ -1803,6 +1806,10 @@
   }
 
   function closeAppWinModal(afterClose) {
+    if (appLauncherDraft) {
+      closeAppLauncherOptions(function () { closeAppWinModal(afterClose); });
+      return;
+    }
     leaveNotificationView(function () {
       var w = appWins[appWinModalSerial];
       if (w) {
@@ -1817,16 +1824,28 @@
     });
   }
 
+  bindWheelSwipe('appset', function () { return appSetState; }, updateAppsetDirtyTabs);
+  bindAppLauncher();
   // 浮窗交互（顶层绑定；同参数浮窗模式）：✕ / 点遮罩关闭；搜索过滤。
   el('appwin-modal-close').addEventListener('click', closeAppWinModal);
   el('appwin-modal').addEventListener('click', function (ev) {
     if (ev.target === el('appwin-modal')) closeAppWinModal();
   });
   el('appwin-modal').addEventListener('keydown', function (ev) {
-    if (ev.key === 'Escape') { ev.preventDefault(); closeAppWinModal(); }
+    if (ev.key !== 'Escape') return;
+    ev.preventDefault();
+    if (appLauncherDraft) {
+      closeAppLauncherOptions(function () {
+        renderAppWinGrid(appWinModalSerial);
+        el('appwin-launcher-options').focus({preventScroll:true});
+      });
+    } else closeAppWinModal();
   });
   el('appwin-modal-search').addEventListener('input', function () {
-    if (appWinModalSerial) renderAppWinGrid(appWinModalSerial);
+    if (appWinModalSerial) {
+      el('appwin-modal-grid').scrollTop = 0;
+      renderAppWinGrid(appWinModalSerial, true);
+    }
   });
 
   // activateAppWinTab：跳到蓝灯标签页（问题3）——会话标签/面板全退，显示该标签页
@@ -1991,6 +2010,132 @@
     DIALOG_TABS.forEach(function (t) { setTabDirty(prefix, t, false); });
   }
   function setNote(id, text) { var node = el(id); if (node && typeof text === 'string') node.textContent = text.replace(/[。.]\s*$/, ''); }
+  function readWheelSwipe(values) {
+    var percent = values && values.wheelSwipePercent;
+    return {
+      wheelSwipeEnabled: !!(values && values.wheelSwipeEnabled),
+      wheelSwipePercent: Number.isInteger(percent) && percent >= 5 && percent <= 50 ? percent : 18,
+      wheelSwipeReverse: !!(values && values.wheelSwipeReverse)
+    };
+  }
+  function wheelSwipeChanged(state) {
+    var current = state.wheelSwipe, original = state.initialWheelSwipe;
+    return current && original && (current.wheelSwipeEnabled !== original.wheelSwipeEnabled ||
+      current.wheelSwipePercent !== original.wheelSwipePercent ||
+      current.wheelSwipeReverse !== original.wheelSwipeReverse);
+  }
+  function renderWheelSwipe(prefix, state) {
+    var wheel = state.wheelSwipe;
+    setSwitchNode(el(prefix + '-wheel-swipe'), wheel.wheelSwipeEnabled);
+    el(prefix + '-wheel-swipe-distance-row').hidden = !wheel.wheelSwipeEnabled;
+    el(prefix + '-wheel-swipe-distance').__syncWheelSwipe(state);
+    el(prefix + '-wheel-swipe-reverse').setAttribute('aria-pressed', String(wheel.wheelSwipeReverse));
+  }
+  function bindWheelSwipe(prefix, currentState, onChange) {
+    var id = prefix + '-wheel-swipe';
+    var slider = el(id + '-distance');
+    var track = el(id + '-track');
+    var badge = el(id + '-value');
+    var min = Number(slider.min), max = Number(slider.max);
+    var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    var frame = 0, lastFrame = 0, target = 0, shown = 0;
+    var increasing = false, dragging = false, renderedState = null;
+
+    function paint() {
+      track.style.setProperty('--wheel-swipe-progress', (shown * 100) + '%');
+    }
+    function setReadout(percent) {
+      var text = percent + '%';
+      if (badge.textContent !== text) badge.textContent = text;
+      if (slider.getAttribute('aria-valuetext') !== text) slider.setAttribute('aria-valuetext', text);
+    }
+    function settle() {
+      if (frame) cancelAnimationFrame(frame);
+      frame = lastFrame = 0;
+      shown = target;
+      paint();
+    }
+    function animate(now) {
+      var elapsed = lastFrame ? Math.min(now - lastFrame, 32) : 1000 / 60;
+      lastFrame = now;
+      // Ease in stronger resistance in the upper range on an upward drag.
+      var high = Math.max(0, (target - 0.45) / 0.55);
+      var weight = high * high * (3 - 2 * high);
+      var damping = 30 + (increasing ? (dragging ? 95 : 25) * weight : 0);
+      shown += (target - shown) * -Math.expm1(-elapsed / damping);
+      frame = 0;
+      if (reducedMotion.matches || Math.abs(target - shown) < 0.0005) {
+        settle();
+        return;
+      }
+      paint();
+      frame = requestAnimationFrame(animate);
+    }
+    slider.__syncWheelSwipe = function (state) {
+      var percent = state.wheelSwipe.wheelSwipePercent;
+      if (renderedState === state && Math.round(slider.valueAsNumber) === percent) return;
+      renderedState = state;
+      dragging = false;
+      slider.valueAsNumber = percent;
+      target = (percent - min) / (max - min);
+      setReadout(percent);
+      settle();
+    };
+    function updateDistance() {
+      var state = currentState();
+      if (!state) return;
+      var raw = slider.valueAsNumber;
+      var percent = Math.round(raw);
+      var next = (raw - min) / (max - min);
+      if (next !== target) increasing = next > target;
+      target = next;
+      setReadout(percent);
+      if (reducedMotion.matches) settle();
+      else if (!frame && target !== shown) frame = requestAnimationFrame(animate);
+      if (percent !== state.wheelSwipe.wheelSwipePercent) {
+        state.wheelSwipe = Object.assign({}, state.wheelSwipe, { wheelSwipePercent: percent });
+        onChange();
+      }
+    }
+    slider.addEventListener('input', updateDistance);
+    slider.addEventListener('pointerdown', function () { dragging = true; });
+    function stopDragging() { dragging = false; }
+    window.addEventListener('pointerup', stopDragging, true);
+    window.addEventListener('pointercancel', stopDragging, true);
+    window.addEventListener('blur', stopDragging);
+    slider.addEventListener('keydown', function (event) {
+      var step = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 }[event.key];
+      if (!step) return;
+      event.preventDefault();
+      slider.valueAsNumber = Math.max(min, Math.min(max, Math.round(slider.valueAsNumber) + step));
+      updateDistance();
+    });
+
+    el(id).addEventListener('click', function () {
+      var state = currentState();
+      if (!state) return;
+      state.wheelSwipe = Object.assign({}, state.wheelSwipe, {
+        wheelSwipeEnabled: !state.wheelSwipe.wheelSwipeEnabled
+      });
+      renderWheelSwipe(prefix, state);
+      onChange();
+    });
+    el(id + '-reverse').addEventListener('click', function () {
+      var state = currentState();
+      if (!state) return;
+      state.wheelSwipe = Object.assign({}, state.wheelSwipe, {
+        wheelSwipeReverse: !state.wheelSwipe.wheelSwipeReverse
+      });
+      renderWheelSwipe(prefix, state);
+      onChange();
+    });
+    [id + '-row', id + '-distance-row'].forEach(function (rowID) {
+      var row = el(rowID);
+      function showNote() { setNote(prefix + '-note-feature', row.getAttribute('data-note')); }
+      row.addEventListener('click', showNote);
+      row.addEventListener('focusin', showNote);
+    });
+  }
   // 功能页静态说明（默认文案）在打开时记住，切回页签/未点击具体项时复位。
   var PARAM_FEATURE_NOTE_DEFAULT = el('param-note-feature') ? el('param-note-feature').textContent : '';
   var APPSET_FEATURE_NOTE_DEFAULT = el('appset-note-feature') ? el('appset-note-feature').textContent : '';
@@ -2050,17 +2195,21 @@
     if (!appSetState || !appSetState.initial) return;
     var s = appSetState, i = s.initial;
     var touch = s.touched || {};
-    setTabDirty('appset', 'display', !!touch.display &&
+    var displayDirty = !!touch.display &&
       (appsetEffectiveField('size') !== i.size || appsetEffectiveField('fps') !== i.fps ||
       appsetEffectiveField('bit') !== i.bit || appsetEffectiveField('dpi') !== i.dpi ||
       (s.ratioW || '') !== (i.ratioW || '') || (s.ratioH || '') !== (i.ratioH || '') ||
       s.vcodec !== i.vcodec || !!s.ownVCodec !== i.ownVCodec ||
-      !!s.lockFps !== i.lockFps || !!s.lockBitrate !== i.lockBitrate));
-    setTabDirty('appset', 'audio', !!touch.audio &&
-      (s.audio !== i.audio || s.acodec !== i.acodec || !!s.ownACodec !== i.ownACodec));
-    setTabDirty('appset', 'feature', !!touch.feature &&
-      (!!s.flex !== i.flex || !!s.perspective !== i.perspective ||
-      s.perspectiveInputFps !== i.perspectiveInputFps));
+      !!s.lockFps !== i.lockFps || !!s.lockBitrate !== i.lockBitrate);
+    var audioDirty = !!touch.audio && (s.audio !== i.audio || s.acodec !== i.acodec || !!s.ownACodec !== i.ownACodec);
+    var featureDirty = !!touch.feature && (!!s.flex !== i.flex || !!s.perspective !== i.perspective ||
+      s.perspectiveInputFps !== i.perspectiveInputFps);
+    var wheelDirty = wheelSwipeChanged(s);
+    s.wheelSwipeOnly = !!wheelDirty && !displayDirty && !audioDirty && !featureDirty;
+    if (el('appset-save')) el('appset-save').textContent = s.wheelSwipeOnly ? '保存设置' : '保存并重新投屏';
+    setTabDirty('appset', 'display', displayDirty);
+    setTabDirty('appset', 'audio', audioDirty);
+    setTabDirty('appset', 'feature', featureDirty || wheelDirty);
   }
   function resetAppsetPageNote(name) {
     if (name === 'display') setNote('appset-note-display', APPSET_NOTES.size);
@@ -2100,8 +2249,12 @@
         : (f === 'bit' ? (cur.bitrate || def.bit) : (cur.dpi || 0)));
       return SCEZAppSetState.infer({ val: val, base: def[f], custom: isSet, edit: false, input: '' }, tiers[f]);
     }
+    var initialWheelSwipe = readWheelSwipe(v);
+    var wheelSwipe = opts.keepTab && prev && wheelSwipeChanged(prev) ? prev.wheelSwipe : initialWheelSwipe;
     appSetState = {
       serial: serial, pkg: pkg,
+      initialWheelSwipe: initialWheelSwipe,
+      wheelSwipe: wheelSwipe,
       name: opts.name || (prev && prev.name) || pkg,
       identity: (v && v.identity) || (prev && prev.identity) || serial,
       mode: mode, nativeFPS: nativeFPS,
@@ -2261,7 +2414,8 @@
     setSwitchNode(el('appset-flex'), appSetState.flex);
     setSwitchNode(el('appset-perspective'), appSetState.perspective);
     el('appset-perspective-fps').value = String(appSetState.perspectiveInputFps);
-    el('appset-perspective-fps-row').style.display = appSetState.perspective ? '' : 'none';
+    el('appset-perspective-fps-row').hidden = !appSetState.perspective;
+    renderWheelSwipe('appset', appSetState);
     renderAudioSlider(el('appset-audio'), appSetState.audio);
     el('appset-audio-note').textContent = audioNote(appSetState.audio);
     el('appset-audio-label').innerHTML = '声音输出 (<b>' + SCEZ_AUDIO_LABELS[appSetState.audio] + '</b>)';
@@ -2594,21 +2748,21 @@
       return;
     }
     // v2.1.74：size=长边数字 → 字符串（对齐后端 string 字段；后端按设备宽高比换算 WxH 注入）。
-    var payload = JSON.stringify({
-      mode: s.mode, size: String(rSize.value), fps: rFps.value, bitrate: rBit.value,
+    var payload = JSON.stringify(Object.assign({
+      mode: s.mode, wheelSwipeEdited: !!wheelSwipeChanged(s), wheelSwipeOnly: !!s.wheelSwipeOnly, size: String(rSize.value), fps: rFps.value, bitrate: rBit.value,
       ratioW: ratio.width, ratioH: ratio.height,
       dpi: rDpi.value, flex: s.flex, audio: s.audio, perspective: !!s.perspective, perspectiveInputFps: s.perspectiveInputFps,
       lockFps: !!s.lockFps, lockBitrate: !!s.lockBitrate,
       // v2.1.95：编码（未持有且未改动 → 空 = 保持继承设备档案；否则固化当前值）
       vcodec: s.ownVCodec ? s.vcodec : '',
       acodec: s.ownACodec ? s.acodec : ''
-    });
+    }, s.wheelSwipe));
     clearDialogDirty('appset');
     ++appsetOpenToken;
     clearAppSetTransition();
     el('appset-modal').style.display = 'none';
     appSetState = null;
-    toast('正在应用设置…');
+    toast(s.wheelSwipeOnly ? '正在更新滚轮设置…' : '正在应用设置…');
     if (typeof window.SaveAppWinParams !== 'function') return;
     window.SaveAppWinParams(s.serial, s.pkg, payload).then(function () {
       refreshNow();
@@ -2768,21 +2922,31 @@
     if (appWinModalSerial !== serial) return;
     var w = appWins[serial], status = w && w.readStatus;
     var bar = el('appwin-read-status'), message = el('appwin-read-message'), retry = el('appwin-read-retry');
-    if (!bar || !message || !retry) return;
-    var text = '', failed = status && (status.phase === 'error' || status.phase === 'partial');
+    var count = el('appwin-catalog-count');
     var notificationView = typeof appWinNotificationView !== 'undefined' && appWinNotificationView;
+    var editing = typeof appLauncherDraft !== 'undefined' && appLauncherDraft;
+    var hasCatalog = w && (w.loaded || (status && status.hasCatalog));
+    count.hidden = notificationView || !hasCatalog;
+    if (!count.hidden) {
+      var total = status && status.hasCatalog ? (status.appCount || 0) : (w.apps || []).length;
+      var countText = '应用 ' + total;
+      if (count.textContent !== countText) count.textContent = countText;
+    }
+    var text = '', failed = status && (status.phase === 'error' || status.phase === 'partial');
     if (failed) text = status.error || '读取尚未完成，可重试';
-    else if (!notificationView && status && status.busy && status.hasCatalog) text = '应用 ' + (status.appCount || 0) + (status.iconTotal ? ' · 图标 ' + (status.iconDone || 0) + '/' + status.iconTotal : '');
-    else if (!notificationView && status && status.busy) text = status.total ? '正在读取 ' + (status.current || 0) + '/' + status.total : '正在读取应用…';
+    else if (!notificationView && !editing && status && status.busy) {
+      if (!status.hasCatalog) text = status.total ? '正在读取 ' + (status.current || 0) + '/' + status.total : '正在读取应用…';
+      else if (status.iconTotal) text = '正在读取图标 ' + (status.iconDone || 0) + '/' + status.iconTotal;
+    }
     if (!text) {
       var hide = function () {
         bar.scezReadFadeTimer = null;
-        bar.style.display = 'none';
+        bar.hidden = true;
         bar.classList.remove('read-fading');
         message.textContent = ''; message.title = '';
       };
       var reduceMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      if (notificationView || reduceMotion || bar.style.display === 'none' || !message.textContent) {
+      if (notificationView || editing || reduceMotion || bar.hidden || !message.textContent) {
         if (bar.scezReadFadeTimer != null) clearTimeout(bar.scezReadFadeTimer);
         bar.scezReadFadeToken = (bar.scezReadFadeToken || 0) + 1;
         hide();
@@ -2797,7 +2961,7 @@
     bar.scezReadFadeTimer = null;
     bar.scezReadFadeToken = (bar.scezReadFadeToken || 0) + 1;
     bar.classList.remove('read-fading');
-    bar.style.display = 'flex';
+    bar.hidden = false;
     bar.classList.toggle('read-error', !!failed);
     if (message.textContent !== text) { message.textContent = text; message.title = text; }
     retry.style.display = failed ? '' : 'none';
@@ -2884,17 +3048,361 @@
     });
   }
 
-  // renderAppWinGrid：渲染应用网格到浮窗（仅当该 serial 正在浮窗展示；搜索过滤；点击=占位）。
-  function renderAppWinGrid(serial) {
+  function appLauncherProfileItem(serial, w) {
+    var identity = w.identity || deviceIdentityOf(serial);
+    return ((lastState && lastState.profiles) || []).find(function (profile) { return profile.key === identity; });
+  }
+
+  function appLauncherProfile(serial, w) {
+    var profile = appLauncherProfileItem(serial, w);
+    return profile && profile.appLauncher;
+  }
+
+  function rememberAppLauncherClick(serial, pkg) {
+    var item = appLauncherProfileItem(serial, appWins[serial] || {});
+    if (!item) return;
+    var prior = item.appLauncher || {};
+    var recent = (prior.recent || []).filter(function (key) { return key !== pkg; });
+    // A snapshot requested before this click cannot wipe out the local reorder.
+    appliedStateRequest = ++nextStateRequest;
+    item.appLauncher = Object.assign({}, prior, {recent: [pkg].concat(recent)});
+  }
+
+  function appLauncherSelection(w) {
+    return SCEZAppLauncher.options(w.apps || [], appLauncherDraft);
+  }
+
+  function renderAppLauncherControls(serial) {
+    var w = appWins[serial], draft = appLauncherDraft;
+    var trigger = el('appwin-launcher-options');
+    trigger.hidden = appWinNotificationView || !w.loaded || !appLauncherProfileItem(serial, w);
+    trigger.disabled = !!(draft && draft.saving);
+    trigger.setAttribute('aria-expanded', String(!!draft));
+    el('appwin-launcher-panel').hidden = !draft;
+    el('appwin-modal-hint').closest('.appwin-bottom').classList.toggle('launcher-editing', !!draft);
+    if (!draft) return;
+    var cfg = appLauncherSelection(w);
+    var selected = Math.min(cfg.pins.length, cfg.capacity);
+    var hint = draft.saving ? '正在保存应用窗口选项…' : draft.message || (cfg.capacity ?
+      '已置顶 ' + selected + ' / ' + cfg.capacity + (selected < cfg.capacity ? ' · 若还有空位，将留给「最近打开应用」' : '') :
+      '置顶栏已关闭');
+    el('appwin-modal-hint').textContent = hint;
+    el('appwin-modal-hint').title = hint;
+    [4, 8].forEach(function (value) {
+      var button = el('appwin-launcher-' + value);
+      var active = !draft.custom && cfg.capacity === value;
+      button.disabled = draft.saving || cfg.maximum < value;
+      button.classList.toggle('sel', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    el('appwin-launcher-custom').hidden = draft.custom;
+    el('appwin-launcher-custom').disabled = draft.saving;
+    var input = el('appwin-launcher-number'), limit = el('appwin-launcher-limit');
+    input.hidden = limit.hidden = !draft.custom;
+    el('appwin-launcher-reset').disabled = input.disabled = draft.saving;
+    if (draft.custom) {
+      var invalid = SCEZAppLauncher.parseCapacity(input.value, cfg.maximum) === null;
+      input.setAttribute('aria-invalid', String(invalid));
+      limit.textContent = invalid ? '请输入 0–' + cfg.maximum + ' 的整数' : '最多 ' + cfg.maximum + ' 个应用';
+    }
+  }
+
+  function openAppLauncherOptions() {
+    var serial = appWinModalSerial, w = appWins[serial];
+    if (!w || !w.loaded || appWinNotificationView) return;
+    var profile = appLauncherProfileItem(serial, w);
+    if (!profile) return;
+    var cfg = SCEZAppLauncher.options(w.apps || [], profile.appLauncher);
+    var grid = el('appwin-modal-grid');
+    var card = grid.closest('.appwin-card');
+    var bounds = card.getBoundingClientRect();
+    var mask = el('appwin-modal');
+    card.style.setProperty('--appwin-launcher-top', Math.max(0, bounds.top - mask.getBoundingClientRect().top + mask.scrollTop) + 'px');
+    card.style.setProperty('--appwin-launcher-grid', grid.getBoundingClientRect().height + 'px');
+    card.classList.add('launcher-options-open');
+    appLauncherDraft = {identity: profile.key, capacity: cfg.capacity, pins: cfg.pins.slice(), custom: cfg.custom, waveStart: performance.now()};
+    el('appwin-launcher-number').value = String(cfg.capacity);
+    renderAppWinGrid(serial, true);
+  }
+
+  function closeAppLauncherOptions(done) {
+    var draft = appLauncherDraft;
+    if (!draft) { done(); return; }
+    if (draft.saving) return;
+    var serial = appWinModalSerial, w = appWins[serial];
+    if (!w) return;
+    var input = el('appwin-launcher-number');
+    var cfg = appLauncherSelection(w);
+    if (draft.custom) {
+      var typed = SCEZAppLauncher.parseCapacity(input.value, cfg.maximum);
+      if (typed === null) { input.focus(); return; }
+      input.value = String(typed);
+      draft.capacity = typed;
+      cfg = appLauncherSelection(w);
+    }
+    var pins = cfg.capacity ? cfg.pins.slice(0, cfg.capacity) : cfg.pins;
+    var prior = SCEZAppLauncher.options(w.apps || [], appLauncherProfile(serial, w));
+    function finish() {
+      if (appLauncherDraft !== draft || appWinModalSerial !== serial) return;
+      var search = el('appwin-modal-search');
+      if (search.value) el('appwin-modal-grid').scrollTop = 0;
+      search.value = '';
+      appLauncherDraft = null;
+      clearAppLauncherDrag(el('appwin-modal-grid'), false);
+      el('appwin-modal-grid').closest('.appwin-card').classList.remove('launcher-options-open');
+      el('appwin-modal').scrollTop = 0;
+      done();
+    }
+    if (cfg.capacity === prior.capacity && cfg.custom === prior.custom &&
+        JSON.stringify(pins) === JSON.stringify(prior.pins)) { finish(); return; }
+    draft.saving = true;
+    renderAppLauncherControls(serial);
+    window.SaveAppLauncherOptions(draft.identity, cfg.capacity, cfg.custom, pins).then(function (saved) {
+      // Older in-flight snapshots must not overwrite the acknowledged config.
+      appliedStateRequest = ++nextStateRequest;
+      var item = ((lastState && lastState.profiles) || []).find(function (p) { return p.key === draft.identity; });
+      if (item) item.appLauncher = saved;
+      finish();
+      refreshNow();
+    }).catch(function (error) {
+      draft.saving = false;
+      draft.message = '保存失败：' + (error && error.message ? error.message : error);
+      if (appLauncherDraft === draft) renderAppLauncherControls(serial);
+      toast(draft.message);
+    });
+  }
+
+  function setAppLauncherCapacity(capacity, custom) {
+    if (!appLauncherDraft || appLauncherDraft.saving) return;
+    appLauncherDraft.capacity = capacity;
+    appLauncherDraft.custom = custom;
+    appLauncherDraft.message = '';
+    renderAppWinGrid(appWinModalSerial, true);
+  }
+
+  function toggleAppLauncherPin(pkg, remove) {
+    var draft = appLauncherDraft, serial = appWinModalSerial;
+    if (!draft || draft.saving) return;
+    var cfg = appLauncherSelection(appWins[serial]);
+    var pins = cfg.pins.slice(0, cfg.capacity);
+    var index = pins.indexOf(pkg);
+    if (index >= 0) pins.splice(index, 1);
+    else if (remove) return;
+    else if (pins.length >= cfg.capacity) {
+      draft.message = cfg.capacity ? '已达 ' + cfg.capacity + ' 个置顶上限' : '选择栏位数后可设置置顶';
+      renderAppLauncherControls(serial);
+      return;
+    } else pins.push(pkg);
+    draft.pins = pins;
+    draft.message = '';
+    renderAppWinGrid(serial, false, {pinEdit:true});
+  }
+
+  function moveAppLauncherPin(pkg, target, from) {
+    var draft = appLauncherDraft, serial = appWinModalSerial;
+    if (!draft || draft.saving) return false;
+    var cfg = appLauncherSelection(appWins[serial]);
+    var count = Math.min(cfg.capacity, cfg.pins.length);
+    var index = cfg.pins.indexOf(pkg);
+    if (index < 0 || index >= count || target < 0 || target >= count || target === index) return false;
+    cfg.pins.splice(index, 1);
+    cfg.pins.splice(target, 0, pkg);
+    draft.pins = cfg.pins;
+    draft.message = '';
+    renderAppWinGrid(serial, false, {pinEdit:true, dragFrom:from});
+    return true;
+  }
+
+  function clearAppLauncherDrag(grid, returnToSlot) {
+    var drag = appLauncherDrag;
+    if (!drag) return;
+    appLauncherDrag = null;
+    if (drag.target) drag.target.classList.remove('drop-target');
+    drag.tile.style.transform = '';
+    drag.tile.classList.remove('dragging');
+    grid.classList.remove('launcher-dragging');
+    if (grid.hasPointerCapture(drag.id)) grid.releasePointerCapture(drag.id);
+    if (returnToSlot && drag.moved) animateAppLauncherTile(drag.tile, drag.x, drag.y);
+  }
+
+  function animateAppLauncherTile(tile, x, y) {
+    if (typeof tile.animate !== 'function' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (tile.launcherAnimation) tile.launcherAnimation.cancel();
+    tile.launcherAnimation = tile.animate(
+      [{transform:'translate(' + x + 'px,' + y + 'px)'}, {transform:'translate(0,0)'}],
+      {duration:230,easing:'cubic-bezier(.2,.75,.28,1)'});
+  }
+
+  function bindAppLauncher() {
+    var grid = el('appwin-modal-grid');
+    var input = el('appwin-launcher-number');
+    var rerender = function () { renderAppWinGrid(appWinModalSerial); };
+    el('appwin-launcher-options').addEventListener('click', function () {
+      if (appLauncherDraft) closeAppLauncherOptions(rerender);
+      else openAppLauncherOptions();
+    });
+    [4, 8].forEach(function (value) {
+      el('appwin-launcher-' + value).addEventListener('click', function () { setAppLauncherCapacity(value, false); });
+    });
+    el('appwin-launcher-reset').addEventListener('click', function () {
+      if (appLauncherDraft) setAppLauncherCapacity(Math.min(4, appLauncherSelection(appWins[appWinModalSerial]).maximum), false);
+    });
+    el('appwin-launcher-custom').addEventListener('click', function () {
+      if (!appLauncherDraft || appLauncherDraft.saving) return;
+      input.value = String(appLauncherSelection(appWins[appWinModalSerial]).capacity);
+      setAppLauncherCapacity(Number(input.value), true);
+      input.focus();
+      input.select();
+    });
+    input.addEventListener('input', function () {
+      if (!appLauncherDraft || appLauncherDraft.saving) return;
+      var cfg = appLauncherSelection(appWins[appWinModalSerial]);
+      var typed = SCEZAppLauncher.parseCapacity(input.value, cfg.maximum);
+      if (typed === null) { renderAppLauncherControls(appWinModalSerial); return; }
+      if (Number(input.value) > cfg.maximum) input.value = String(typed);
+      setAppLauncherCapacity(typed, true);
+    });
+    grid.addEventListener('pointerdown', function (event) {
+      var tile = event.target.closest('.appwin-launcher-cell');
+      if (!appLauncherDraft || appLauncherDraft.saving || appLauncherDrag || event.button !== 0 ||
+          !tile || event.target.closest('.appwin-unpin')) return;
+      if (tile.launcherAnimation) tile.launcherAnimation.cancel();
+      appLauncherDrag = {tile:tile, pkg:tile.dataset.launcherPkg, target:null, id:event.pointerId,
+        startX:event.clientX, startY:event.clientY, scroll:grid.scrollTop, x:0, y:0, moved:false};
+      grid.setPointerCapture(event.pointerId);
+    });
+    function detectDropTarget(event) {
+      var node = document.elementFromPoint(event.clientX, event.clientY);
+      var tile = node && node.closest('[data-launcher-key]');
+      return tile && grid.contains(tile) && (tile.dataset.launcherZone === 'pin' || tile.dataset.launcherZone === 'slot') ? tile : null;
+    }
+    grid.addEventListener('pointermove', function (event) {
+      var drag = appLauncherDrag;
+      if (!drag || drag.id !== event.pointerId) return;
+      var x = event.clientX - drag.startX, y = event.clientY - drag.startY;
+      if (!drag.moved && Math.hypot(x, y) < 5) return;
+      drag.moved = true;
+      drag.x = x;
+      drag.y = y + grid.scrollTop - drag.scroll;
+      drag.tile.classList.add('dragging');
+      grid.classList.add('launcher-dragging');
+      drag.tile.style.transform = 'translate(' + drag.x + 'px,' + drag.y + 'px)';
+      var target = detectDropTarget(event);
+      if (target === drag.target) return;
+      if (drag.target) drag.target.classList.remove('drop-target');
+      drag.target = target;
+      if (target) target.classList.add('drop-target');
+    });
+    grid.addEventListener('pointerup', function (event) {
+      var drag = appLauncherDrag;
+      if (!drag || drag.id !== event.pointerId) return;
+      var tile = drag.moved ? detectDropTarget(event) : null;
+      if (!tile || !appLauncherDraft) { clearAppLauncherDrag(grid, true); return; }
+      var cfg = appLauncherSelection(appWins[appWinModalSerial]);
+      var index = tile.dataset.launcherZone === 'slot' ? Math.min(cfg.capacity, cfg.pins.length) - 1 : cfg.pins.indexOf(tile.dataset.launcherPkg);
+      var from = {key:drag.tile.dataset.launcherKey, bounds:drag.tile.getBoundingClientRect()};
+      clearAppLauncherDrag(grid, false);
+      if (!moveAppLauncherPin(drag.pkg, index, from)) animateAppLauncherTile(drag.tile, drag.x, drag.y);
+    });
+    function cancelPointer(event) {
+      if (appLauncherDrag && appLauncherDrag.id === event.pointerId) clearAppLauncherDrag(grid, true);
+    }
+    grid.addEventListener('pointercancel', cancelPointer);
+    grid.addEventListener('lostpointercapture', cancelPointer);
+    grid.addEventListener('keydown', function (event) {
+      var tile = event.target.closest('.appwin-launcher-cell');
+      if (!event.altKey || !tile || !appLauncherDraft) return;
+      var columns = appLauncherColumns(grid);
+      var steps = {ArrowLeft:-1, ArrowRight:1, ArrowUp:-columns, ArrowDown:columns};
+      if (!steps[event.key]) return;
+      event.preventDefault();
+      var cfg = appLauncherSelection(appWins[appWinModalSerial]);
+      moveAppLauncherPin(tile.dataset.launcherPkg, cfg.pins.indexOf(tile.dataset.launcherPkg) + steps[event.key]);
+    });
+    if (typeof ResizeObserver === 'function') {
+      new ResizeObserver(function () {
+        drawAppLauncherFrames(grid);
+        updateAppLauncherWave(grid);
+      }).observe(grid);
+    }
+  }
+
+  function appLauncherColumns(grid) {
+    var tracks = getComputedStyle(grid).gridTemplateColumns;
+    return tracks ? Math.max(1, tracks.trim().split(/\s+/).length) : 1;
+  }
+
+  function updateAppLauncherWave(grid) {
+    if (!appLauncherDraft || !grid.launcherArrangement) return;
+    var wave = grid.querySelectorAll('.appwin-app.launcher-wave');
+    if (!wave.length) return;
+    var columns = appLauncherColumns(grid);
+    // Keep the cadence independent of how many apps are below the viewport.
+    var period = 1500, elapsed = performance.now() - appLauncherDraft.waveStart;
+    Array.prototype.forEach.call(wave, function (tile) {
+      var index = Number(tile.dataset.launcherIndex) - Math.floor(grid.launcherArrangement.pins / columns) * columns;
+      var diagonal = Math.floor(index / columns) + index % columns;
+      var key = appLauncherDraft.waveStart + ':' + diagonal;
+      if (tile.launcherWaveKey === key) return;
+      if (!tile.launcherWaveKey) tile.launcherWaveElapsedAtStart = elapsed;
+      tile.launcherWaveKey = key;
+      var phase = ((tile.launcherWaveElapsedAtStart - 70 * diagonal) % period + period) % period;
+      tile.style.setProperty('--launcher-wave-period', period + 'ms');
+      tile.style.setProperty('--launcher-wave-delay', -phase + 'ms');
+    });
+  }
+
+  function drawAppLauncherFrames(grid) {
+    var arrangement = grid.launcherArrangement;
+    if (!arrangement || (!arrangement.recents && !arrangement.pins)) return;
+    var tile = grid.querySelector('[data-launcher-key]');
+    if (!tile) return;
+    var bounds = tile.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+    var columns = appLauncherColumns(grid);
+    var css = getComputedStyle(grid);
+    var gapX = Number.parseFloat(css.columnGap) || 0, gapY = Number.parseFloat(css.rowGap) || 0;
+    function outline(kind, start, count) {
+      var frame = grid.querySelector('.appwin-launcher-frame.' + kind);
+      if (!count) { if (frame) frame.remove(); return; }
+      if (!frame) {
+        frame = document.createElement('div');
+        frame.className = 'appwin-launcher-frame ' + kind;
+        frame.setAttribute('aria-hidden', 'true');
+        grid.appendChild(frame);
+      }
+      var height = Math.ceil((start + count) / columns) * (bounds.height + gapY) - gapY;
+      frame.style.height = height + 'px';
+      frame.style.clipPath = 'path(evenodd, "' + SCEZAppLauncher.outlinePath(start, count, columns, bounds.width, bounds.height, gapX, gapY) + '")';
+    }
+    outline('recent', 0, arrangement.recents);
+    outline('pin', arrangement.recents, arrangement.pins);
+  }
+
+  function syncAppLauncherGrid() {
+    var serial = appWinModalSerial, w = serial && appWins[serial];
+    if (w && !appLauncherDraft && w.launcherRenderKey !== JSON.stringify(appLauncherProfile(serial, w))) renderAppWinGrid(serial);
+  }
+
+  // Render the same filtered catalog in both application and notification views.
+  function renderAppWinGrid(serial, revealSearch, renderOptions) {
     var w = appWins[serial];
     if (!w || appWinModalSerial !== serial) return;
     var box = el('appwin-modal-grid');
+    clearAppLauncherDrag(box, false);
     var generation = (w.gridGeneration || 0) + 1; w.gridGeneration = generation;
     if (w.iconObserver) { w.iconObserver.disconnect(); w.iconObserver = null; }
     renderAppReadStatus(serial);
     renderAppNotificationControls(serial);
+    var profile = appLauncherProfile(serial, w);
+    w.launcherRenderKey = JSON.stringify(profile);
     var notificationPolicy = notificationPolicyFor(w.identity || deviceIdentityOf(serial));
-    el('appwin-modal-search').disabled = !!w.initialIconBusy && !w.loaded;
+    var search = el('appwin-modal-search');
+    search.disabled = !!w.initialIconBusy && !w.loaded;
+    var legend = el('appwin-launcher-legend');
+    legend.hidden = true;
+    var previous = box.launcherArrangement;
+    box.launcherArrangement = null;
     if (w.initialIconBusy && !w.loaded) {
       box.innerHTML = '<div class="appwin-loading">' + (appWinNotificationView ? '通知来源准备中…' : '正在读取应用图标…') + '</div>';
       return;
@@ -2903,81 +3411,258 @@
       box.innerHTML = '<div class="appwin-loading">' + (w.readStatus && w.readStatus.phase === 'error' ? '未能读取应用列表，请点击重试' : appWinNotificationView ? '通知来源准备中…' : '正在读取应用列表…') + '</div>';
       return;
     }
-    // v2.1.18 搜索升级：名称/包名子串（原有）+ 拼音模糊（app_search.js：
-    // 全拼/首字母/混拼/部分前缀——「文件」← wenjian / wenj / wj / jian）。
-    // 模块缺失时降级=原名称/包名子串（同 build 内嵌，理论不可达，防御）。
-    var filtered = appWinVisibleApps(w);
-    if (filtered.length === 0) {
+    // Keep the existing text, package name and pinyin matching. Only order the
+    // results after the shared matcher has determined which apps are visible.
+    var draft = appWinNotificationView ? null : appLauncherDraft;
+    var arrangement = SCEZAppLauncher.arrange(w.apps || [], appWinVisibleApps(w), profile, draft);
+    var entries = arrangement.entries;
+    box.launcherArrangement = arrangement;
+    legend.hidden = !arrangement.recents && !arrangement.pins;
+    el('appwin-launcher-recent-legend').hidden = !arrangement.recents;
+    el('appwin-launcher-pin-legend').hidden = !arrangement.pins;
+    if (entries.length === 0) {
       box.innerHTML = '<div class="appwin-loading">' + ((w.apps || []).length ? '没有匹配的应用' : '此设备暂无可启动应用') + '</div>';
       return;
     }
-    box.innerHTML = '';
+
+    var pinEdit = !!(renderOptions && renderOptions.pinEdit);
+    var dragFrom = renderOptions && renderOptions.dragFrom;
+    var scroll = box.scrollTop;
+    var before = new Map(), reusable = new Map(), loadedIcons = new Map();
+    var obsolete = [];
+    var identity = iconIdentity(serial);
+    var focused = document.activeElement;
+    var focusKey = focused && focused.closest('[data-launcher-key]');
+    var focusPart = focused && focused.classList.contains('appwin-unpin') ? '.appwin-unpin' : '.appwin-app';
+    var animate = (draft || arrangement.recents || arrangement.pins || previous && (previous.recents || previous.pins)) &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var desired = new Map(entries.map(function (entry) { return [entry.key, entry]; }));
+    function tileMode(entry) {
+      if (!entry.app) return 'slot';
+      if (appWinNotificationView) return 'notification';
+      return draft ? (entry.zone === 'pin' ? 'edit-pin' : 'edit-app') : 'launch';
+    }
+    Array.prototype.slice.call(box.children).forEach(function (tile) {
+      var key = tile.dataset.launcherKey, entry = desired.get(key);
+      if (key && tile.launcherIdentity === identity) {
+        // The catalog keeps its order while editing pins. Move only the shelf
+        // tiles, even when adding or removing one backfills a placeholder.
+        if (animate && (!draft || tile.dataset.launcherZone !== 'catalog')) {
+          before.set(key, tile.getBoundingClientRect());
+        }
+        if (tile.launcherAnimation) tile.launcherAnimation.cancel();
+        if (tile.launcherIcon && tile.launcherIcon.classList.contains('has-img')) {
+          loadedIcons.set(tile.dataset.launcherPkg, tile.launcherIcon.style.backgroundImage);
+        }
+        if (entry && tile.launcherSerial === serial && tile.launcherMode === tileMode(entry) &&
+            (!entry.app || (tile.launcherApp && tile.launcherApp.name === entry.app.name))) {
+          reusable.set(key, tile);
+          return;
+        }
+      }
+      if ((arrangement.recents && tile.classList.contains('recent') || arrangement.pins && tile.classList.contains('pin')) &&
+          tile.classList.contains('appwin-launcher-frame')) return;
+      obsolete.push(tile);
+    });
+    obsolete.forEach(function (tile) { tile.remove(); });
+    if (dragFrom) before.set(dragFrom.key, dragFrom.bounds);
+    function nextTile(node) {
+      while (node && !node.dataset.launcherKey) node = node.nextElementSibling;
+      return node;
+    }
+    var anchor = nextTile(box.firstElementChild);
     if (typeof deviceIcons.prune === 'function') deviceIcons.prune();
-    var observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(function (entries) {
+    var observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(function (observed) {
       if (appWins[serial] !== w || w.gridGeneration !== generation || appWinModalSerial !== serial) return;
-      entries.forEach(function (entry) {
+      observed.forEach(function (entry) {
         if (entry.isIntersecting) { observer.unobserve(entry.target); requestIcon(serial, entry.target.scezPkg, entry.target); }
       });
     }, {root:box, rootMargin:'180px'}) : null;
     w.iconObserver = observer;
+
+    var reveal = !!(revealSearch && draft && search.value.trim());
+    var firstMatch = null, revealed = false;
+    var activePins = new Set(draft ? appLauncherSelection(w).pins.slice(0, arrangement.pins) : []);
     var cursor = 0;
-    function appendBatch() {
-      if (appWins[serial] !== w || w.gridGeneration !== generation || appWinModalSerial !== serial) return;
-      var end = Math.min(cursor + 48, filtered.length);
-      filtered.slice(cursor, end).forEach(function (a) {
-      var card = document.createElement('button');
-      card.type = 'button';
-      card.className = 'appwin-app';
-      card.title = a.notificationOther ? '应用列表之外的通知来源，与列表内应用互为补集' : a.pkg;
-      if (appWinNotificationView) {
-        var allowed = notificationPolicy.mode === 'all' || notificationPolicy.mode === 'otp' || notificationPolicy.mode === 'whitelist' && (a.notificationOther ? !!notificationPolicy.other : (notificationPolicy.packages || []).indexOf(a.pkg) >= 0);
-        card.setAttribute('role', 'checkbox');
-        card.setAttribute('aria-checked', String(allowed));
-        card.setAttribute('aria-label', (a.name || a.pkg) + (allowed ? '，已允许通知' : '，未允许通知'));
-        card.dataset.notificationPkg = a.pkg;
-        card.dataset.notificationOther = String(!!a.notificationOther);
-        card.disabled = notificationSaving || !w.identity || !a.pkg;
-      } else card.setAttribute('aria-label', '打开 ' + (a.name || a.pkg) + ' 应用窗口');
-      var iconWrap = document.createElement('div');
-      iconWrap.className = 'appwin-icon-wrap';
-      var icon = document.createElement('div');
-      icon.className = 'appwin-icon';
-      // 必须用 backgroundColor 独立属性：background 简写会把 background-size/
-      // background-position 重置为初始值（内联优先级高于 CSS 类），令 .has-img 的
-      // cover/center 失效、真图标按"原图左上角 1:1 裁切"显示（v2.1.13 修复）。
-      icon.style.backgroundColor = appColor(a.pkg || a.name || '?');
-      icon.textContent = (a.name || '?').charAt(0);
-      if (a.notificationOther) {
-        icon.classList.add('notification-other-icon');
-        icon.style.backgroundColor = '#26382f';
-        icon.innerHTML = SCEZNotificationIcons.svg('moon-star');
-      } else if (a.pkg) { icon.scezPkg = a.pkg; if (observer) observer.observe(icon); else requestIcon(serial, a.pkg, icon); } // 有 PNG 则替换彩块（懒加载+缓存）
-      var label = document.createElement('span');
-      label.textContent = a.name || a.pkg;
-      iconWrap.appendChild(icon);
-      if (appWinNotificationView) {
-        var check = document.createElement('span'); check.className = 'appwin-check'; check.innerHTML = allowed ? SCEZNotificationIcons.svg('check') : ''; check.setAttribute('aria-hidden', 'true'); iconWrap.appendChild(check);
-      }
-      card.appendChild(iconWrap);
-      card.appendChild(label);
-      card.addEventListener('click', function () {
-        if (appWinNotificationView) { toggleNotificationApp(serial, a.pkg, !!a.notificationOther); return; }
-        // v2.1.21：点击应用 = 开窗（虚拟屏会话）+ 浮窗退出 + 卡片出现。
-        // 乐观加卡（立即可见）；启动失败回滚卡片并提示。
-        closeAppWinModal();
-        if (!addOpenAppCard(serial, a.pkg, a.name || a.pkg)) return; // 已在运行=去重
-        var openedCard = (openAppCards[serial] || []).find(function (card) { return card.pkg === a.pkg; });
-        if (typeof window.StartAppWin === 'function') {
-          window.StartAppWin(serial, a.pkg, a.name || a.pkg).catch(function (e) {
-            toast('打开失败：' + (e && e.message ? e.message : e));
-            if ((openAppCards[serial] || []).indexOf(openedCard) >= 0) removeOpenAppCard(serial, a.pkg);
+    function liftSearchResult() {
+      if (!reveal || revealed || !firstMatch) return;
+      var view = box.getBoundingClientRect(), match = firstMatch.getBoundingClientRect();
+      if (match.bottom > view.bottom || match.top < view.top) box.scrollTop += match.top - view.top - 4;
+      revealed = true;
+    }
+    function renderTile(entry, index) {
+      var a = entry.app;
+      var mode = tileMode(entry);
+      var tile = reusable.get(entry.key);
+      if (!tile) {
+        var card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'appwin-app';
+        tile = card;
+        if (!a) {
+          card.classList.add('appwin-launcher-slot');
+          card.setAttribute('aria-label', '选择应用填入空栏位');
+          card.innerHTML = '<div class="appwin-launcher-slot-icon" aria-hidden="true">＋</div>';
+          card.addEventListener('click', function () {
+            var first = box.querySelector('.launcher-wave');
+            if (first) first.focus();
+            else search.focus();
+          });
+        } else {
+          var name = a.name || a.pkg;
+          card.title = a.notificationOther ? '应用列表之外的通知来源，与列表内应用互为补集' : a.pkg;
+          var iconWrap = document.createElement('div');
+          iconWrap.className = 'appwin-icon-wrap';
+          var icon = document.createElement('div');
+          icon.className = 'appwin-icon';
+          icon.style.backgroundColor = appColor(a.pkg || a.name || '?');
+          icon.textContent = (a.name || '?').charAt(0);
+          if (a.notificationOther) {
+            icon.classList.add('notification-other-icon');
+            icon.style.backgroundColor = '#26382f';
+            icon.innerHTML = SCEZNotificationIcons.svg('moon-star');
+          } else icon.scezPkg = a.pkg;
+          iconWrap.appendChild(icon);
+          var badge = null;
+          if (mode === 'notification' || mode === 'edit-app') {
+            badge = document.createElement('span');
+            badge.setAttribute('aria-hidden', 'true');
+            badge.className = mode === 'notification' ? 'appwin-check' : 'appwin-pin-badge';
+            if (mode === 'edit-app') badge.innerHTML = SCEZNotificationIcons.svg('pin');
+            iconWrap.appendChild(badge);
+          }
+          var label = document.createElement('span');
+          label.textContent = name;
+          card.appendChild(iconWrap);
+          card.appendChild(label);
+          var remove = null;
+          if (mode === 'edit-pin') {
+            tile = document.createElement('div');
+            tile.className = 'appwin-launcher-cell';
+            remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'appwin-unpin';
+            remove.innerHTML = SCEZNotificationIcons.svg('x');
+            remove.setAttribute('aria-label', '取消置顶 ' + name);
+            remove.addEventListener('click', function () { toggleAppLauncherPin(a.pkg, true); });
+            tile.appendChild(card);
+            tile.appendChild(remove);
+          }
+          tile.launcherIcon = icon;
+          tile.launcherBadge = badge;
+          tile.launcherRemove = remove;
+          tile.launcherApp = a;
+          card.addEventListener('click', function () {
+            if (appWinNotificationView) { toggleNotificationApp(serial, a.pkg, !!a.notificationOther); return; }
+            if (appLauncherDraft) {
+              if (tile.dataset.launcherZone === 'catalog') toggleAppLauncherPin(a.pkg, false);
+              return;
+            }
+            rememberAppLauncherClick(serial, a.pkg);
+            closeAppWinModal();
+            var added = addOpenAppCard(serial, a.pkg, name);
+            var openedCard = (openAppCards[serial] || []).find(function (item) { return item.pkg === a.pkg; });
+            if (typeof window.StartAppWin === 'function') {
+              window.StartAppWin(serial, a.pkg, name).catch(function (error) {
+                toast('打开失败：' + (error && error.message ? error.message : error));
+                if (added && (openAppCards[serial] || []).includes(openedCard)) removeOpenAppCard(serial, a.pkg);
+              });
+            }
           });
         }
-      });
-      box.appendChild(card);
+        tile.launcherButton = card;
+        tile.launcherMode = mode;
+        tile.launcherSerial = serial;
+        tile.launcherIdentity = identity;
+        tile.dataset.launcherKey = entry.key;
+      }
+      var button = tile.launcherButton;
+      if (a) {
+        var appName = a.name || a.pkg;
+        if (mode === 'notification') {
+          var allowed = notificationPolicy.mode === 'all' || notificationPolicy.mode === 'otp' || notificationPolicy.mode === 'whitelist' &&
+            (a.notificationOther ? !!notificationPolicy.other : (notificationPolicy.packages || []).indexOf(a.pkg) >= 0);
+          button.setAttribute('role', 'checkbox');
+          button.setAttribute('aria-checked', String(allowed));
+          button.setAttribute('aria-label', appName + (allowed ? '，已允许通知' : '，未允许通知'));
+          button.dataset.notificationPkg = a.pkg;
+          button.dataset.notificationOther = String(!!a.notificationOther);
+          button.disabled = notificationSaving || !w.identity || !a.pkg;
+          if (tile.launcherAllowed !== allowed) {
+            tile.launcherAllowed = allowed;
+            tile.launcherBadge.innerHTML = allowed ? SCEZNotificationIcons.svg('check') : '';
+          }
+        } else if (mode === 'edit-app') {
+          var selected = activePins.has(a.pkg);
+          button.disabled = draft.saving;
+          button.setAttribute('aria-label', appName);
+          button.setAttribute('aria-pressed', String(selected));
+          var waving = !selected && !!arrangement.pins;
+          button.classList.toggle('launcher-wave', waving);
+          if (!waving) button.launcherWaveKey = null;
+          tile.launcherBadge.hidden = !selected;
+        } else if (mode === 'edit-pin') {
+          button.disabled = tile.launcherRemove.disabled = draft.saving;
+          button.setAttribute('aria-label', appName + '，已置顶，可拖动排序');
+        } else {
+          button.setAttribute('aria-label', '打开 ' + appName + ' 应用窗口');
+        }
+        var appIcon = tile.launcherIcon;
+        if (!a.notificationOther && a.pkg && !appIcon.classList.contains('has-img')) {
+          if (!deviceIcons.paintCached(identity, a.pkg, appIcon)) {
+            var previousImage = loadedIcons.get(a.pkg);
+            if (previousImage) {
+              appIcon.style.backgroundImage = previousImage;
+              appIcon.textContent = '';
+              appIcon.classList.add('has-img');
+            }
+            if (observer) observer.observe(appIcon); else requestIcon(serial, a.pkg, appIcon);
+          }
+        }
+      }
+      if (!a) button.disabled = !!(draft && draft.saving);
+      button.dataset.launcherIndex = String(index);
+      tile.dataset.launcherZone = entry.zone;
+      if (a) tile.dataset.launcherPkg = a.pkg;
+      if (entry.zone === 'catalog' && !firstMatch) firstMatch = tile;
+      return tile;
+    }
+
+    function appendBatch() {
+      if (appWins[serial] !== w || w.gridGeneration !== generation || appWinModalSerial !== serial) return;
+      // A pin edit can replace a slot beyond the first batch. Reconcile the
+      // whole shelf in one frame so the catalog never shifts into the gap.
+      var end = Math.min(Math.max(cursor + 48, pinEdit ? arrangement.pins : 0), entries.length);
+      var batch = entries.slice(cursor, end).map(function (entry, i) { return renderTile(entry, cursor + i); });
+      batch.forEach(function (tile) {
+        if (tile === anchor) anchor = nextTile(tile.nextElementSibling);
+        else box.insertBefore(tile, anchor);
       });
       cursor = end;
-      if (cursor < filtered.length) {
+      if (cursor === entries.length && draft && search.value.trim() && !arrangement.matches) {
+        firstMatch = document.createElement('div');
+        firstMatch.className = 'appwin-loading';
+        firstMatch.textContent = '没有匹配的应用';
+        box.appendChild(firstMatch);
+      }
+      drawAppLauncherFrames(box);
+      if (!revealed) box.scrollTop = scroll;
+      liftSearchResult();
+      updateAppLauncherWave(box);
+      batch.forEach(function (tile) {
+        if (focusKey && focusKey.dataset.launcherKey === tile.dataset.launcherKey) {
+          var control = tile.matches(focusPart) ? tile :
+            tile.querySelector(focusPart) || (tile.classList.contains('appwin-app') ? tile : tile.firstElementChild);
+          if (control && !control.disabled) control.focus({preventScroll: true});
+        }
+        var old = before.get(tile.dataset.launcherKey);
+        if (!old || typeof tile.animate !== 'function') return;
+        var now = tile.getBoundingClientRect(), x = old.left - now.left, y = old.top - now.top;
+        if (Math.abs(x) + Math.abs(y) >= 1 && now.bottom >= 0 && now.top < window.innerHeight) {
+          animateAppLauncherTile(tile, x, y);
+        }
+      });
+      if (cursor < entries.length) {
         if (typeof requestAnimationFrame === 'function') requestAnimationFrame(appendBatch);
         else setTimeout(appendBatch, 0);
       }
@@ -5005,6 +5690,8 @@
       mode: mode,
       activeField: 'res',
       profile: { usb: usb, wifi: wifi },
+      initialWheelSwipe: readWheelSwipe(p),
+      wheelSwipe: readWheelSwipe(p),
       nativeFPS: usbFB.fps,
       // v2.1.78：声音档位（两套独立记忆；后端 GetProfile 已归一为最终值，空兜底 pc）
       audio: { usb: (usb.audio || 'pc'), wifi: (wifi.audio || 'pc') },
@@ -5071,8 +5758,7 @@
     setTabDirty('param', 'audio', !!touch.audio && (
       (s.audio[s.mode] || 'pc') !== i.audio ||
       (s.acodec[s.mode] || 'opus') !== i.acodec));
-    // 功能页只有“即时生效”的 root 自动修复，不计未保存草稿。
-    setTabDirty('param', 'feature', false);
+    setTabDirty('param', 'feature', wheelSwipeChanged(s));
   }
   function resetParamPageNote(name) {
     var af = paramState && paramState.activeField;
@@ -5414,10 +6100,13 @@
       showAllDialogPages('param', false);
       return;
     }
+    renderWheelSwipe('param', paramState);
     renderParamRows(paramState, el('param-rows'), renderParamModal);
     showDialogTab('param', currentDialogTab('param'));
     updateParamDirtyTabs();
   }
+
+  bindWheelSwipe('param', function () { return paramState; }, updateParamDirtyTabs);
 
   // v2.1.78：声音滑条（静态元素一次性绑定）——拖动只刷新本行，不重建面板（手感与
   // 应用屏滑条一致；此前的动态重建版本拖动会断链）。
@@ -5490,7 +6179,7 @@
     // 保存失败时面板已关：仅错误 toast（参数未生效，用户可重新打开浮窗重试）。
     closeSpecModal();
     toast('已保存，正在以新参数重新投屏…');
-    SaveProfileAndRestart(savingState.serial, savingState.mode, r.value, s2.value, b.value, custom, savingState.audio[savingState.mode], !!p.lockFps, !!p.lockBitrate, savingState.vcodec[savingState.mode], savingState.acodec[savingState.mode]).then(function () {
+    SaveProfileAndRestart(savingState.serial, savingState.mode, r.value, s2.value, b.value, custom, savingState.audio[savingState.mode], !!p.lockFps, !!p.lockBitrate, savingState.vcodec[savingState.mode], savingState.acodec[savingState.mode], wheelSwipeChanged(savingState) ? savingState.wheelSwipe : null).then(function () {
       refreshNow();
     }).catch(function (e) {
       toast('保存失败：' + (e && e.message ? e.message : e));
@@ -5570,6 +6259,7 @@
     var copyMinutes = notificationDraft ? notificationDraft.copyMinutes : settingsState.notificationCopyMinutes;
     Array.prototype.forEach.call(el('notification-copy-minutes').querySelectorAll('input'), function (input) { input.checked = input.value === String(copyMinutes); });
     el('notification-copy-minutes').disabled = notificationSaving;
+    renderAppLauncherControls(serial);
   }
 
   function notificationWrite(request, success) {
@@ -5646,6 +6336,7 @@
     // Update badges in place so cached app artwork and keyboard focus stay put.
     Array.prototype.forEach.call(el('appwin-modal-grid').querySelectorAll('[data-notification-pkg]'), function (card) {
       var allowed = policy.mode === 'all' || policy.mode === 'otp' || policy.mode === 'whitelist' && (card.dataset.notificationOther === 'true' ? !!policy.other : (policy.packages || []).indexOf(card.dataset.notificationPkg) >= 0);
+      card.launcherAllowed = allowed;
       card.setAttribute('aria-checked', String(allowed));
       var label = card.lastElementChild;
       card.setAttribute('aria-label', label.textContent + (allowed ? '，已允许通知' : '，未允许通知'));
@@ -5753,7 +6444,11 @@
   el('appwin-notifications').addEventListener('click', function () {
     if (!appWinModalSerial || notificationSaving) return;
     if (appWinNotificationView) leaveNotificationView(function () { appWinNotificationView = false; renderAppWinGrid(appWinModalSerial); });
-    else { beginNotificationDraft(); appWinNotificationView = true; renderAppWinGrid(appWinModalSerial); }
+    else closeAppLauncherOptions(function () {
+      beginNotificationDraft();
+      appWinNotificationView = true;
+      renderAppWinGrid(appWinModalSerial);
+    });
   });
   el('notification-options').addEventListener('click', function () {
     notificationOptionsOpen = !notificationOptionsOpen;
@@ -6015,6 +6710,7 @@
       else if (!scanNotice) { lastWeChatScanNotice = ''; }
       syncSettings(st);
       syncAppWins(st.appWins || []);
+      syncAppLauncherGrid();
       appLaunchDialog.sync(st.appWins || []);
       cameraPermissionDialog.sync((st.appWins || []).filter(function (w) { return w.cameraPermissionID > 0; }).map(function (w) {
         return Object.assign({}, w, {notificationWindow: false, launchFailureID: w.cameraPermissionID, phase: 'app-camera-permission'});
@@ -6053,6 +6749,7 @@
       renderSessions(st);
       renderNewDevice(st);
       renderPairStatus(st);
+      syncAppLauncherGrid();
     }).catch(function () {});
   });
 

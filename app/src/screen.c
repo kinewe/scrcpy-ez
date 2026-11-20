@@ -30,10 +30,18 @@
 
 #ifdef _WIN32
 static WNDPROC screen_original_wndproc;
+static UINT screen_wheel_swipe_message;
 
 static LRESULT CALLBACK
 screen_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
-    if (msg == WM_CLOSE) {
+    if (msg && msg == screen_wheel_swipe_message) {
+        struct sc_screen *screen = GetPropW(hwnd, L"scrcpy-ez.Screen");
+        return screen && sc_input_manager_set_wheel_swipe(&screen->im,
+                                                         (intptr_t) wparam);
+    }
+    if (msg == WM_NCDESTROY) {
+        RemovePropW(hwnd, L"scrcpy-ez.Screen");
+    } else if (msg == WM_CLOSE) {
         // Hide before SDL processes the close and tears down the renderer.
         ShowWindow(hwnd, SW_HIDE);
     } else if (msg == WM_ERASEBKGND) {
@@ -44,8 +52,8 @@ screen_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 }
 
 static void
-install_close_hide(SDL_Window *window) {
-    SDL_PropertiesID props = SDL_GetWindowProperties(window);
+install_close_hide(struct sc_screen *screen) {
+    SDL_PropertiesID props = SDL_GetWindowProperties(screen->window);
     HWND hwnd = (HWND) SDL_GetPointerProperty(
         props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
     if (!hwnd) {
@@ -72,6 +80,8 @@ install_close_hide(SDL_Window *window) {
         hwnd, GWLP_WNDPROC, (LONG_PTR) screen_window_proc);
     if (previous) {
         screen_original_wndproc = previous;
+        screen_wheel_swipe_message = RegisterWindowMessageW(L"scrcpy-ez.WheelSwipe");
+        SetPropW(hwnd, L"scrcpy-ez.Screen", screen);
     }
 }
 #endif
@@ -937,10 +947,6 @@ sc_screen_init(struct sc_screen *screen,
         LOGE("Could not create window: %s", SDL_GetError());
         goto error_destroy_fps_counter;
     }
-#ifdef _WIN32
-    install_close_hide(screen->window);
-#endif
-
     screen->renderer = SDL_CreateRenderer(screen->window, params->perspective_socket != SC_SOCKET_NONE ? "direct3d11" : NULL);
     if (!screen->renderer) {
         LOGE("Could not create renderer: %s", SDL_GetError());
@@ -1044,6 +1050,9 @@ sc_screen_init(struct sc_screen *screen,
     };
 
     sc_input_manager_init(&screen->im, &im_params);
+#ifdef _WIN32
+    install_close_hide(screen);
+#endif
 
     // Initialize even if not used for simplicity
     sc_mouse_capture_init(&screen->mc, screen->window, params->shortcut_mods);
@@ -1367,6 +1376,7 @@ sc_screen_set_orientation(struct sc_screen *screen,
         return;
     }
 
+    sc_input_manager_cancel_wheel_swipe(&screen->im);
     struct sc_size new_content_size =
         get_oriented_size(screen->frame_size, orientation);
 
@@ -1505,6 +1515,7 @@ sc_screen_set_paused(struct sc_screen *screen, bool paused) {
 
     screen->paused = paused;
     if (paused) {
+        sc_input_manager_cancel_wheel_swipe(&screen->im);
         sc_fps_overlay_reset(&screen->fps_overlay);
     }
     if (screen->window_shown) {
@@ -2444,6 +2455,7 @@ sc_screen_handle_event(struct sc_screen *screen, const SDL_Event *event) {
 #endif
             return;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
+            sc_input_manager_cancel_wheel_swipe(&screen->im);
 #ifdef _WIN32
             if (screen->hid_keyboard) {
                 if (screen->tsf_ime_blocked) {

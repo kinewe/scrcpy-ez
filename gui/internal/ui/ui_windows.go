@@ -271,6 +271,9 @@ func Run(a *app.App, html string) error {
 			return a.GetAppIcon(serial, pkg)
 		}},
 		// ---------- 应用窗口（二期）· Step 3：启动/停止（虚拟屏会话）----------
+		{"SaveAppLauncherOptions", func(serial string, capacity int, custom bool, pins []string) (app.AppLauncherProfile, error) {
+			return a.SaveAppLauncherOptions(serial, capacity, custom, pins)
+		}},
 		{"StartAppWin", func(serial, pkg, name string) error {
 			bridge.DebugLog("[js] StartAppWin serial=%q pkg=%q", serial, pkg)
 			return a.StartAppWin(serial, pkg, name)
@@ -324,10 +327,13 @@ func Run(a *app.App, html string) error {
 			bridge.DebugLog("[js] GetProfile serial=%q", serial)
 			return a.GetProfile(serial), nil
 		}},
-		{"SaveProfileAndRestart", func(serial, mode string, res, fps, bitrate int, custom bool, audio string, lockFps, lockBitrate bool, vcodec, acodec string) error {
+		{"SaveProfileAndRestart", func(serial, mode string, res, fps, bitrate int, custom bool, audio string, lockFps, lockBitrate bool, vcodec, acodec string, wheel *app.WheelSwipeSettings) error {
 			bridge.DebugLog("[js] SaveProfileAndRestart serial=%q mode=%s res=%d fps=%d bitrate=%d custom=%v audio=%s lockFps=%v lockBitrate=%v vcodec=%s acodec=%s",
 				serial, mode, res, fps, bitrate, custom, audio, lockFps, lockBitrate, vcodec, acodec)
-			return a.SaveProfileAndRestart(serial, mode, res, fps, bitrate, custom, audio, lockFps, lockBitrate, vcodec, acodec)
+			if wheel == nil {
+				return a.SaveProfileAndRestart(serial, mode, res, fps, bitrate, custom, audio, lockFps, lockBitrate, vcodec, acodec)
+			}
+			return a.SaveProfileAndRestart(serial, mode, res, fps, bitrate, custom, audio, lockFps, lockBitrate, vcodec, acodec, *wheel)
 		}},
 		// 设备参数管理页：仅保存 profiles.json（不重投）
 		{"SaveProfile", func(serial, mode string, res, fps, bitrate int, custom bool, audio string, lockFps, lockBitrate bool, vcodec, acodec string) error {

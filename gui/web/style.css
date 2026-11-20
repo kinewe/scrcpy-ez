@@ -619,10 +619,10 @@ body {
 }
 .appwin-hint { font-size: 11px; color: var(--muted); margin-top: 10px; text-align: center; }
 .appwin-loading { grid-column: 1 / -1; text-align: center; font-size: 12px; color: var(--muted); padding: 18px 0; }
-.appwin-read-status { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex: 0 1 auto; min-width: 0; font-size: 11px; line-height: 20px; color: var(--muted); opacity: 1; transition: opacity 180ms ease-out; }
+.appwin-read-status { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 11px; line-height: 16px; color: var(--muted); opacity: 1; transition: opacity 180ms ease-out; }
 .appwin-read-status.read-fading { opacity: 0; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .appwin-read-status { transition: none; } }
-.appwin-read-status #appwin-read-message { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.appwin-read-status #appwin-read-message { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .appwin-read-status .btn { flex: none; padding: 1px 6px; font-size: 11px; line-height: 18px; }
 .appwin-read-status.read-error { color: #a45b20; }
 /* 浮窗版（二期 Step 2 rework：模态、站最前；比默认 modal 稍宽以排得好） */
@@ -632,7 +632,6 @@ body {
 #appwin-modal.fade-in { animation: appwin-modal-in 200ms ease-out; }
 #appset-modal.fade-in { animation: appwin-modal-in 200ms ease-out; }
 @keyframes appwin-modal-in { from { opacity: 0; } to { opacity: 1; } }
-.appwin-card .appwin-grid { max-height: 380px; }
 
 .session-pane.fading { opacity: 0; transition: opacity .3s ease; }
 .session-pane.entering { animation: pane-in .3s ease; }
@@ -801,6 +800,69 @@ body {
 .smoothing-help { margin-top: 8px; }
 .notification-device-select { max-width: 130px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); }
 
+.dpage .set-row button.switch { border: 0; padding: 0; }
+.dpage .switch:focus-visible { outline: 2px solid var(--green-dark); outline-offset: 2px; }
+.setting-child {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 0 0 8px 13px; padding: 5px 0 5px 11px;
+  border-left: 2px solid #d3e9de;
+}
+.setting-child[hidden] { display: none; }
+.setting-child-title { min-width: 0; color: var(--muted); font-size: 12px; }
+.setting-child .perspective-fps-select { min-height: 30px; padding-block: 4px; }
+.wheel-swipe-controls {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 12px; align-items: center;
+}
+.wheel-swipe-range-label { grid-column: 1 / -1; }
+.wheel-swipe-range { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.wheel-swipe-value {
+  flex: none; min-width: 40px; padding: 3px 5px; border-radius: 6px;
+  border: 1px solid #d6e9e0; background: #edf7f1; color: var(--green-dark);
+  text-align: center; font-size: 12px; line-height: 1.2; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.wheel-swipe-track-area {
+  --wheel-swipe-progress: 28.8889%;
+  position: relative; flex: 1; min-width: 0; height: 24px;
+}
+.wheel-swipe-track {
+  position: absolute; inset-inline: 7px; top: 50%; height: 3px;
+  transform: translateY(-50%); border-radius: 999px; background: #e3e3e3;
+  pointer-events: none;
+}
+.wheel-swipe-fill {
+  position: absolute; inset-inline-start: 0; top: 50%; width: var(--wheel-swipe-progress);
+  height: 7px; transform: translateY(-50%); border-radius: 999px; background: var(--green);
+}
+.wheel-swipe-fill::after {
+  content: ""; position: absolute; inset-inline-end: 0; top: 50%;
+  box-sizing: border-box; width: 14px; height: 14px; transform: translate(50%, -50%);
+  border: 2px solid var(--card); border-radius: 50%; background: var(--green);
+  box-shadow: 0 0 0 2px rgba(67,168,132,.23); transition: box-shadow 120ms ease;
+}
+.wheel-swipe-track-area:has(.wheel-swipe-slider:active) .wheel-swipe-fill::after {
+  box-shadow: 0 0 0 4px rgba(67,168,132,.22);
+}
+.wheel-swipe-slider {
+  position: relative; appearance: none; display: block; width: 100%; height: 24px;
+  margin: 0; background: transparent; cursor: pointer;
+}
+.wheel-swipe-slider::-webkit-slider-runnable-track { height: 14px; background: transparent; }
+.wheel-swipe-slider::-webkit-slider-thumb {
+  appearance: none; width: 14px; height: 14px; border: 0;
+  background: transparent; forced-color-adjust: none;
+}
+@media (prefers-reduced-motion: reduce) { .wheel-swipe-fill::after { transition: none; } }
+.wheel-swipe-reverse {
+  flex: none; align-self: center; padding: 5px 8px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+  color: var(--muted); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer;
+}
+.wheel-swipe-reverse:hover { border-color: var(--green); color: var(--green-dark); }
+.wheel-swipe-reverse[aria-pressed="true"] { border-color: var(--green); background: #edf7f1; color: var(--green-dark); }
+.wheel-swipe-reverse:focus-visible, .wheel-swipe-slider:focus-visible { outline: 2px solid var(--green-dark); outline-offset: 2px; }
+
 .perspective-fps-select {
   flex: none;
   width: 106px;
@@ -870,7 +932,7 @@ body {
 /* Device notification controls share the existing app grid and bulk toolbar. */
 .appwin-card .modal-head { gap: 8px; }
 #appwin-modal-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.appwin-card { display: flex; flex-direction: column; max-width: 450px; max-height: 90vh; }
+.appwin-card { display: flex; flex-direction: column; max-width: 450px; max-height: calc(100vh - 12px); }
 .appwin-card .modal-head, .appwin-card .appwin-search, .appwin-bottom { flex: none; }
 .appwin-card .appwin-grid { flex: 0 1 auto; min-height: 72px; }
 .appwin-notification-toggle { display: inline-flex; align-items: center; gap: 5px; flex: none; border: 1px solid var(--green); border-radius: 999px; background: var(--card); color: var(--green-dark); padding: 6px 10px; }
@@ -883,14 +945,95 @@ body {
 .notification-other-icon .notification-symbol { width: 30px; height: 30px; stroke-width: 1.8; }
 .appwin-app:disabled { opacity: .65; cursor: wait; }
 .appwin-bottom { display: flex; gap: 8px; align-items: center; justify-content: space-between; min-height: 22px; margin-top: 10px; }
-.appwin-bottom .appwin-hint { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; margin: 0; }
-.appwin-bottom-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: 0 1 auto; min-width: 0; max-width: 50%; margin-left: auto; }
+.appwin-bottom-copy { display: grid; align-items: center; flex: 1; min-width: 0; }
+.appwin-bottom-copy > * { grid-area: 1 / 1; }
+.appwin-bottom .appwin-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; margin: 0; }
+.appwin-read-status:not([hidden]) + .appwin-hint { visibility: hidden; }
+.appwin-bottom-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: none; margin-left: auto; }
+.appwin-catalog-count { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .notification-symbol, .notification-chevron { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .notification-options-trigger { display: inline-flex; align-items: center; gap: 4px; flex: none; border: 1px solid transparent; border-radius: 8px; padding: 5px 6px; background: transparent; color: var(--green-dark); font: inherit; font-size: 11px; cursor: pointer; }
 .notification-options-trigger:hover, .notification-options-trigger[aria-expanded="true"] { background: #edf7f1; border-color: #d3e9de; }
 .notification-chevron { width: 13px; height: 13px; transition: transform .16s; }
 .notification-options-trigger[aria-expanded="true"] .notification-chevron { transform: rotate(180deg); }
 .notification-options-panel { flex: none; max-height: 48vh; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 9px; margin-top: 8px; }
+#appwin-modal { overflow-y: auto; overscroll-behavior-y: contain; }
+.appwin-card.launcher-options-open { max-height: none; align-self: flex-start; margin-top: var(--appwin-launcher-top, 0); margin-bottom: 12px; }
+.appwin-card.launcher-options-open .appwin-grid { flex: none; height: var(--appwin-launcher-grid, 360px); max-height: none; }
+.appwin-card .appwin-grid {
+  --appwin-app-row: 96px; --appwin-row-gap: 8px;
+  position: relative; isolation: isolate; align-content: start;
+  grid-auto-rows: var(--appwin-app-row); gap: var(--appwin-row-gap) 6px;
+  max-height: calc(4 * var(--appwin-app-row) + 3 * var(--appwin-row-gap));
+}
+.appwin-app { justify-content: center; min-width: 0; }
+.appwin-launcher-legend { display: flex; flex: none; gap: 12px; padding: 0 3px 5px; font-size: 11px; font-weight: 600; }
+.appwin-launcher-legend > span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.appwin-launcher-legend .notification-symbol { width: 14px; height: 14px; }
+.appwin-launcher-recent { color: #24796d; }
+.appwin-launcher-pin { color: #32689a; }
+.appwin-launcher-frame {
+  position: absolute; top: 0; left: 0; width: 100%; height: 0;
+  z-index: -1; pointer-events: none; clip-path: inset(50%);
+  transition: clip-path 230ms cubic-bezier(.2,.7,.25,1);
+}
+.appwin-launcher-frame.recent { background: #82b9ae; }
+.appwin-launcher-frame.pin { background: #8db4de; }
+.appwin-launcher-cell { position: relative; min-width: 0; border-radius: 10px; }
+.appwin-launcher-cell .appwin-app { width: 100%; height: 100%; cursor: grab; touch-action: none; user-select: none; }
+.appwin-launcher-cell.dragging { z-index: 4; pointer-events: none; }
+.appwin-grid.launcher-dragging { cursor: grabbing; }
+.appwin-app[data-launcher-zone="recent"]:hover,
+.appwin-app[data-launcher-zone="pin"]:hover,
+.appwin-launcher-cell .appwin-app:hover,
+.appwin-launcher-slot:hover { background: transparent; }
+.appwin-app[data-launcher-zone="recent"]:hover .appwin-icon,
+.appwin-app[data-launcher-zone="pin"]:hover .appwin-icon,
+.appwin-launcher-cell .appwin-app:hover .appwin-icon,
+.appwin-launcher-cell.drop-target .appwin-icon { outline: 2px solid #a8c7db; outline-offset: 3px; }
+.appwin-launcher-slot:hover .appwin-launcher-slot-icon,
+.appwin-launcher-slot.drop-target .appwin-launcher-slot-icon { background: #edf5fd; border-color: #658fbb; }
+.appwin-launcher-slot-icon {
+  width: 46px; height: 46px; display: grid; place-items: center;
+  border: 1.5px dashed #8db4de; border-radius: 13px; color: #32689a; font-size: 21px;
+}
+.appwin-pin-badge, .appwin-unpin {
+  position: absolute; top: -5px; right: -6px; z-index: 1; display: grid; place-items: center;
+  width: 21px; height: 21px; padding: 0; border-radius: 50%; border: 1px solid #8db4de; background: var(--card); color: #32689a;
+}
+.appwin-app .appwin-pin-badge { color: #32689a; }
+.appwin-pin-badge svg { width: 12px; height: 12px; }
+.appwin-unpin {
+  top: 11px; right: calc(50% - 30px); width: 23px; height: 23px;
+  border-color: #c9d7e4; color: #3d5b75; box-shadow: 0 1px 3px #2c496322; cursor: pointer;
+}
+.appwin-unpin svg { width: 16px; height: 16px; stroke-width: 3; }
+.appwin-unpin:hover { background: #fdf1ee; color: #a43530; border-color: #e1b5ad; }
+.appwin-app.launcher-wave .appwin-icon { animation: appwin-launcher-ripple var(--launcher-wave-period, 1500ms) ease-in-out var(--launcher-wave-delay, 0ms) infinite; }
+@keyframes appwin-launcher-ripple {
+  0%, 24%, 100% { transform: translateY(0) rotate(0); }
+  6% { transform: translateY(-1.5px) rotate(-2.4deg); }
+  12% { transform: translateY(-.5px) rotate(2.1deg); }
+  18% { transform: rotate(-1.2deg); }
+}
+.appwin-launcher-panel { flex: none; margin-top: 8px; padding-top: 9px; border-top: 1px solid var(--border); }
+.appwin-launcher-panel-head, .appwin-launcher-capacity, .appwin-launcher-custom { display: flex; align-items: center; gap: 6px; }
+.appwin-launcher-panel-head { justify-content: space-between; font-size: 12px; }
+.appwin-launcher-capacity { flex-wrap: wrap; margin-top: 5px; }
+.appwin-launcher-custom { flex-wrap: wrap; }
+.appwin-launcher-capacity .chip { min-width: 40px; }
+#appwin-launcher-number { width: 64px; text-align: center; padding: 4px; border: 1px solid var(--green); border-radius: 7px; font: inherit; color: var(--green-dark); }
+#appwin-launcher-number[aria-invalid="true"] { border-color: #ad443d; color: #ad443d; }
+#appwin-launcher-limit { margin: 0; }
+.appwin-card [hidden] { display: none !important; }
+.appwin-bottom.launcher-editing { flex-wrap: wrap; justify-content: flex-end; }
+.appwin-bottom.launcher-editing .appwin-bottom-copy { flex: 1 0 auto; }
+.appwin-bottom.launcher-editing .appwin-hint { overflow: visible; }
+.appwin-bottom.launcher-editing .appwin-catalog-count { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .appwin-launcher-frame { transition: none; }
+  .appwin-app.launcher-wave .appwin-icon { animation: none; }
+}
 .notification-device-options { padding-bottom: 9px; margin-bottom: 9px; border-bottom: 1px solid var(--border); }
 .notification-device-options .notification-option-group { margin-bottom: 0; }
 .notification-open-row { display: grid; grid-template-columns: minmax(0, 1fr) 34px; align-items: center; column-gap: 16px; row-gap: 3px; margin-bottom: 7px; }

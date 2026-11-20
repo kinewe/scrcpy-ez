@@ -23,6 +23,7 @@ type State struct {
 	identity     string
 	session      string
 	opener       func(context.Context, OpenRequest) error
+	openClicked  func(OpenRequest)
 	group        string
 	device       string
 	connection   string
@@ -120,6 +121,9 @@ func (s *State) show(r Record, silent bool, sink Sink) error {
 		req := OpenRequest{Identity: s.identity, Session: s.session, Key: r.Key, Token: r.OpenToken, Package: pkg, OwnerPackage: r.Package, DisplayPackage: r.DisplayPackage, App: r.App}
 		open := s.opener // Capture the callback; manager reconciliation may update state.
 		card.Open = func(ctx context.Context) error { return open(ctx, req) }
+		if clicked := s.openClicked; clicked != nil {
+			card.OpenClicked = func() { clicked(req) }
+		}
 	}
 	return sink.Show(card)
 }

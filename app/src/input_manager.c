@@ -32,6 +32,10 @@
 
 // Interval of the Windows clipboard polling timer
 #define SC_CLIPBOARD_WATCH_INTERVAL_MS 300
+#define SC_WHEEL_SWIPE_MIN_PERCENT 5
+#define SC_WHEEL_SWIPE_MAX_PERCENT 50
+#define SC_WHEEL_SWIPE_TICK_MS 12
+#define SC_WHEEL_SWIPE_IDLE_MS 55
 
 // On Windows, SDL3 does not send SDL_EVENT_CLIPBOARD_UPDATE when the clipboard
 // is changed by another application (it is only checked when the window gains
@@ -166,6 +170,16 @@ sc_input_manager_init(struct sc_input_manager *im,
     im->vfinger_invert_y = false;
 
     im->mouse_buttons_state = 0;
+    im->touch_count = 0;
+    memset(&im->wheel, 0, sizeof(im->wheel));
+    const char *wheel_percent = getenv("SCEZ_WHEEL_SWIPE_PERCENT");
+    if (wheel_percent) {
+        char *end;
+        long percent = strtol(wheel_percent, &end, 10);
+        if (end != wheel_percent && !*end) {
+            sc_input_manager_set_wheel_swipe(im, percent);
+        }
+    }
 
     im->last_keycode = SDLK_UNKNOWN;
     im->last_mod = 0;
@@ -1743,8 +1757,9 @@ sc_input_manager_process_mouse_motion(struct sc_input_manager *im,
         return;
     }
 
-    if (event->which == SDL_TOUCH_MOUSEID) {
-        // simulated from touch events, so it's a duplicate
+    if (event->which == SDL_TOUCH_MOUSEID || im->wheel.down) {
+        // Ignore duplicate touch-generated mouse input and keep hover out of
+        // the touchscreen stream while the synthetic finger is down.
         return;
     }
 
@@ -1787,6 +1802,14 @@ sc_input_manager_process_touch(struct sc_input_manager *im,
         return;
     }
 
+    if (event->type == SDL_EVENT_FINGER_DOWN) {
+        sc_input_manager_cancel_wheel_swipe(im);
+        ++im->touch_count;
+    } else if ((event->type == SDL_EVENT_FINGER_UP
+                    || event->type == SDL_EVENT_FINGER_CANCELED) && im->touch_count) {
+        --im->touch_count;
+    }
+
     struct sc_size window_size = sc_sdl_get_window_size(im->screen->window);
 
     // SDL touch event coordinates are normalized in the range [0; 1]
@@ -1799,7 +1822,8 @@ sc_input_manager_process_touch(struct sc_input_manager *im,
             .point =
                 sc_screen_convert_window_to_frame_coords(im->screen, x, y),
         },
-        .action = sc_touch_action_from_sdl(event->type),
+        .action = event->type == SDL_EVENT_FINGER_CANCELED
+                ? SC_TOUCH_ACTION_UP : sc_touch_action_from_sdl(event->type),
         .pointer_id = event->fingerID,
         .pressure = event->pressure,
     };
@@ -2000,31 +2024,199 @@ sc_input_manager_process_mouse_button(struct sc_input_manager *im,
 }
 
 static void
+wheel_swipe_send(struct sc_input_manager *im, enum sc_touch_action action) {
+    struct sc_touch_event event = {
+        .position = im->wheel.position,
+        .action = action,
+        .pointer_id = SC_POINTER_ID_WHEEL_FINGER,
+        .pressure = action == SC_TOUCH_ACTION_UP ? 0.0f : 1.0f,
+    };
+    im->mp->ops->process_touch(im->mp, &event);
+}
+
+static void
+wheel_swipe_release(struct sc_input_manager *im) {
+    if (!im->wheel.down) {
+        return;
+    }
+    // A resize may have changed the server's expected positional dimensions.
+    struct sc_size size = im->screen->frame_size;
+    struct sc_position *p = &im->wheel.position;
+    if (size.width && size.height) {
+        p->point.x = (int64_t) p->point.x * size.width / p->screen_size.width;
+        p->point.y = (int64_t) p->point.y * size.height / p->screen_size.height;
+        p->screen_size = size;
+    }
+    wheel_swipe_send(im, SC_TOUCH_ACTION_UP);
+    im->wheel.down = false;
+}
+
+void
+sc_input_manager_cancel_wheel_swipe(struct sc_input_manager *im) {
+    if (im->wheel.timer) {
+        SDL_RemoveTimer(im->wheel.timer);
+        im->wheel.timer = 0;
+    }
+    wheel_swipe_release(im);
+    im->wheel.pending = 0;
+}
+
+bool
+sc_input_manager_set_wheel_swipe(struct sc_input_manager *im, int64_t percent) {
+    if (percent < -SC_WHEEL_SWIPE_MAX_PERCENT
+            || percent > SC_WHEEL_SWIPE_MAX_PERCENT
+            || (percent && percent > -SC_WHEEL_SWIPE_MIN_PERCENT
+                && percent < SC_WHEEL_SWIPE_MIN_PERCENT)) {
+        return false;
+    }
+    sc_input_manager_cancel_wheel_swipe(im);
+    im->wheel.reverse = percent < 0;
+    im->wheel.percent = percent < 0 ? -percent : percent;
+    return true;
+}
+
+static Uint32 SDLCALL
+wheel_swipe_timer(void *userdata, SDL_TimerID id, Uint32 interval) {
+    (void) userdata;
+    // The timer thread owns no input state. Carry its ID so a queued event
+    // from an earlier gesture cannot advance a later gesture.
+    SDL_Event event = {
+        .user = {
+            .type = SC_EVENT_WHEEL_SWIPE,
+            .code = (Sint32) id,
+        },
+    };
+    SDL_PushEvent(&event);
+    return interval;
+}
+
+static void
+wheel_swipe_step(struct sc_input_manager *im) {
+    if (im->screen->paused || im->disconnected) {
+        sc_input_manager_cancel_wheel_swipe(im);
+        return;
+    }
+    struct sc_size frame = im->screen->frame_size;
+    struct sc_position *p = &im->wheel.position;
+    if (frame.width != p->screen_size.width
+            || frame.height != p->screen_size.height) {
+        sc_input_manager_cancel_wheel_swipe(im);
+        return;
+    }
+
+    bool swap = sc_orientation_is_swap(im->screen->orientation);
+    int span = swap ? frame.width : frame.height;
+    int amount = (int) im->wheel.pending;
+    int min_start_distance = SDL_max(2, span / 50);
+    if (!amount || (!im->wheel.down && abs(amount) < min_start_distance)) {
+        if (SDL_GetTicks() - im->wheel.last_activity >= SC_WHEEL_SWIPE_IDLE_MS) {
+            sc_input_manager_cancel_wheel_swipe(im);
+        }
+        return;
+    }
+
+    int edge = 1;
+    int end = span - 2;
+    int distance = SDL_max(2, span * im->wheel.percent / 500);
+    int32_t *axis = swap ? &p->point.x : &p->point.y;
+    if (!im->wheel.down) {
+        // Start under the cursor. At the edge, leave enough travel for the
+        // touch to be recognized as a swipe rather than a tap.
+        p->point = im->wheel.anchor;
+        p->point.x = SDL_clamp(p->point.x, edge, frame.width - 2);
+        p->point.y = SDL_clamp(p->point.y, edge, frame.height - 2);
+        int lead = SDL_min(abs(amount), min_start_distance * 2);
+        *axis = amount > 0 ? SDL_clamp(*axis, edge, end - lead)
+                           : SDL_clamp(*axis, edge + lead, end);
+        wheel_swipe_send(im, SC_TOUCH_ACTION_DOWN);
+        im->wheel.down = true;
+    }
+
+    int delta = SDL_clamp(amount, -distance, distance);
+    int next = SDL_clamp(*axis + delta, edge, end);
+    if (next == *axis) {
+        // A continuous scroll can travel further than one touch can. Lift at
+        // the edge and resume at the cursor with the remaining travel.
+        wheel_swipe_release(im);
+        return;
+    }
+    im->wheel.pending -= next - *axis;
+    *axis = next;
+    wheel_swipe_send(im, SC_TOUCH_ACTION_MOVE);
+    im->wheel.last_activity = SDL_GetTicks();
+}
+
+static bool
+wheel_swipe_queue(struct sc_input_manager *im, struct sc_position position,
+                  float ticks) {
+    int width = position.screen_size.width;
+    int height = position.screen_size.height;
+    if (width < 8 || height < 8 || position.point.x < 0
+            || position.point.x >= width || position.point.y < 0
+            || position.point.y >= height) {
+        // Outside the displayed Android content (including letterbox bars).
+        sc_input_manager_cancel_wheel_swipe(im);
+        return true;
+    }
+    if (im->mouse_buttons_state || im->vfinger_down || im->touch_count) {
+        return true;
+    }
+
+    enum sc_orientation orientation = im->screen->orientation;
+    bool runs_backward = orientation == SC_ORIENTATION_180
+                      || orientation == SC_ORIENTATION_270
+                      || orientation == SC_ORIENTATION_FLIP_90
+                      || orientation == SC_ORIENTATION_FLIP_180;
+    if (im->wheel.reverse != runs_backward) {
+        ticks = -ticks;
+    }
+    if (im->wheel.timer && (width != im->wheel.position.screen_size.width
+            || height != im->wheel.position.screen_size.height
+            || abs(position.point.x - im->wheel.anchor.x) > width / 20
+            || abs(position.point.y - im->wheel.anchor.y) > height / 20
+            || ticks * im->wheel.pending < 0)) {
+        sc_input_manager_cancel_wheel_swipe(im);
+    }
+    int span = sc_orientation_is_swap(orientation) ? width : height;
+    float pixels = ticks * span * im->wheel.percent / 100.0f;
+    im->wheel.pending = SDL_clamp(im->wheel.pending + pixels, -span, span);
+    im->wheel.last_activity = SDL_GetTicks();
+    if (!im->wheel.timer) {
+        im->wheel.timer = SDL_AddTimer(SC_WHEEL_SWIPE_TICK_MS, wheel_swipe_timer, NULL);
+        if (!im->wheel.timer) {
+            sc_input_manager_cancel_wheel_swipe(im);
+            LOGW("Could not start wheel swipe timer: %s", SDL_GetError());
+            return false;
+        }
+        im->wheel.position = position;
+        im->wheel.anchor = position.point;
+        wheel_swipe_step(im);
+    }
+    return true;
+}
+
+static void
 sc_input_manager_process_mouse_wheel(struct sc_input_manager *im,
                                      const SDL_MouseWheelEvent *event) {
-    if (im->camera || !im->kp || im->screen->paused || im->disconnected) {
+    if (im->camera || !im->mp || im->screen->paused || im->disconnected) {
         return;
     }
-
-    if (!im->mp->ops->process_mouse_scroll) {
-        // The mouse processor does not support scroll events
-        return;
-    }
-
-    // mouse_x and mouse_y are expressed in pixels relative to the window
-    float mouse_x;
-    float mouse_y;
-    uint32_t buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
-    (void) buttons; // Actual buttons are tracked manually to ignore shortcuts
 
     struct sc_mouse_scroll_event evt = {
-        .position = sc_input_manager_get_position(im, mouse_x, mouse_y),
+        .position = sc_input_manager_get_position(im, event->mouse_x, event->mouse_y),
         .hscroll = event->x,
         .vscroll = event->y,
         .buttons_state = im->mouse_buttons_state,
     };
 
-    im->mp->ops->process_mouse_scroll(im->mp, &evt);
+    if (evt.vscroll && im->wheel.percent && !im->mp->relative_mode
+            && im->mp->ops->process_touch
+            && wheel_swipe_queue(im, evt.position, evt.vscroll)) {
+        evt.vscroll = 0;
+    }
+    if ((evt.hscroll || evt.vscroll) && im->mp->ops->process_mouse_scroll) {
+        im->mp->ops->process_mouse_scroll(im->mp, &evt);
+    }
 }
 
 static void
@@ -2148,6 +2340,7 @@ sc_input_manager_process_file(struct sc_input_manager *im,
 
 static void
 sc_input_manager_on_device_disconnected(struct sc_input_manager *im) {
+    sc_input_manager_cancel_wheel_swipe(im);
     im->disconnected = true;
 
     struct sc_fps_counter *fps_counter = &im->screen->fps_counter;
@@ -2173,13 +2366,21 @@ sc_input_manager_handle_event(struct sc_input_manager *im,
         case SDL_EVENT_MOUSE_WHEEL:
             sc_input_manager_process_mouse_wheel(im, &event->wheel);
             break;
+        case SC_EVENT_WHEEL_SWIPE:
+            if (im->wheel.timer && im->wheel.timer == (SDL_TimerID) event->user.code) {
+                wheel_swipe_step(im);
+            }
+            break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            sc_input_manager_cancel_wheel_swipe(im);
+            // fall through
         case SDL_EVENT_MOUSE_BUTTON_UP:
             sc_input_manager_process_mouse_button(im, &event->button);
             break;
         case SDL_EVENT_FINGER_MOTION:
         case SDL_EVENT_FINGER_DOWN:
         case SDL_EVENT_FINGER_UP:
+        case SDL_EVENT_FINGER_CANCELED:
             sc_input_manager_process_touch(im, &event->tfinger);
             break;
         case SDL_EVENT_GAMEPAD_ADDED:

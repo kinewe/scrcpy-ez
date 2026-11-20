@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_keycode.h>
+#include <SDL3/SDL_timer.h>
 
 #include "controller.h"
 #include "file_pusher.h"
@@ -50,6 +51,18 @@ struct sc_input_manager {
     bool vfinger_invert_y;
 
     uint8_t mouse_buttons_state; // OR of enum sc_mouse_button values
+    unsigned touch_count;
+
+    struct {
+        unsigned percent;
+        bool reverse;
+        SDL_TimerID timer;
+        uint64_t last_activity;
+        struct sc_position position;
+        struct sc_point anchor;
+        float pending;
+        bool down;
+    } wheel;
 
     // Tracks the number of identical consecutive shortcut key down events.
     // Not to be confused with event->repeat, which counts the number of
@@ -90,6 +103,12 @@ sc_input_manager_init(struct sc_input_manager *im,
 void
 sc_input_manager_handle_event(struct sc_input_manager *im,
                               const SDL_Event *event);
+
+bool
+sc_input_manager_set_wheel_swipe(struct sc_input_manager *im, int64_t percent);
+
+void
+sc_input_manager_cancel_wheel_swipe(struct sc_input_manager *im);
 
 // Return true when the device screen is currently turned off by a shortcut
 bool

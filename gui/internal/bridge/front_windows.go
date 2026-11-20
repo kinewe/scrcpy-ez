@@ -4,6 +4,7 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -128,21 +129,23 @@ func listScrcpyProcsCached(ctx context.Context, fresh bool) ([]scrcpyProc, error
 }
 
 var (
-	user32Front              = syscall.NewLazyDLL("user32.dll")
-	kernel32Front            = syscall.NewLazyDLL("kernel32.dll")
-	procEnumWindowsFront     = user32Front.NewProc("EnumWindows")
-	procGetWindowThreadPID   = user32Front.NewProc("GetWindowThreadProcessId")
-	procSetWindowPosFront    = user32Front.NewProc("SetWindowPos")
-	procShowWindowFront      = user32Front.NewProc("ShowWindow")
-	procIsIconicFront        = user32Front.NewProc("IsIconic")
-	procIsWindowVisibleFront = user32Front.NewProc("IsWindowVisible")
-	procGetWindowFront       = user32Front.NewProc("GetWindow")
-	procGetWindowRectFront   = user32Front.NewProc("GetWindowRect")
-	procSetForegroundWin     = user32Front.NewProc("SetForegroundWindow")
-	procGetForegroundWin     = user32Front.NewProc("GetForegroundWindow")
-	procAttachThreadInput    = user32Front.NewProc("AttachThreadInput")
-	procGetCurrentThreadID   = kernel32Front.NewProc("GetCurrentThreadId")
-	procGetCurrentProcessID  = kernel32Front.NewProc("GetCurrentProcessId")
+	user32Front               = syscall.NewLazyDLL("user32.dll")
+	kernel32Front             = syscall.NewLazyDLL("kernel32.dll")
+	procRegisterClientMessage = user32Front.NewProc("RegisterWindowMessageW")
+	procSendClientMessage     = user32Front.NewProc("SendMessageTimeoutW")
+	procEnumWindowsFront      = user32Front.NewProc("EnumWindows")
+	procGetWindowThreadPID    = user32Front.NewProc("GetWindowThreadProcessId")
+	procSetWindowPosFront     = user32Front.NewProc("SetWindowPos")
+	procShowWindowFront       = user32Front.NewProc("ShowWindow")
+	procIsIconicFront         = user32Front.NewProc("IsIconic")
+	procIsWindowVisibleFront  = user32Front.NewProc("IsWindowVisible")
+	procGetWindowFront        = user32Front.NewProc("GetWindow")
+	procGetWindowRectFront    = user32Front.NewProc("GetWindowRect")
+	procSetForegroundWin      = user32Front.NewProc("SetForegroundWindow")
+	procGetForegroundWin      = user32Front.NewProc("GetForegroundWindow")
+	procAttachThreadInput     = user32Front.NewProc("AttachThreadInput")
+	procGetCurrentThreadID    = kernel32Front.NewProc("GetCurrentThreadId")
+	procGetCurrentProcessID   = kernel32Front.NewProc("GetCurrentProcessId")
 )
 
 // frontEzHwnd 是 ez GUI 宿主窗口句柄（UiReady 时由 ui 层捕获注入）；
@@ -426,7 +429,7 @@ func raiseFrontWindow(sel frontWinInfo) {
 }
 
 // The PID comes from this owned client's ready signal, without shell inventory.
-func BringClientToFront(pid int) error {
+func clientWindows(pid int) []frontWinInfo {
 	if pid <= 0 {
 		return nil
 	}
@@ -439,11 +442,38 @@ func BringClientToFront(pid int) error {
 		}
 		return 1
 	}), 0)
-	selected := selectFrontMainWin(infos)
+	return infos
+}
+
+func BringClientToFront(pid int) error {
+	selected := selectFrontMainWin(clientWindows(pid))
 	if selected.ok && !selected.fallback {
 		raiseFrontWindowWithFocus(selected.main, false)
 	}
 	return nil
+}
+
+// SetClientWheelSwipe updates a running client without replacing its display.
+// A negative percent reverses the gesture direction.
+func SetClientWheelSwipe(pid, percent int) error {
+	if pid <= 0 {
+		return nil
+	}
+	name := syscall.StringToUTF16Ptr("scrcpy-ez.WheelSwipe")
+	message, _, _ := procRegisterClientMessage.Call(uintptr(unsafe.Pointer(name)))
+	if message != 0 {
+		// A replacement client emits READY before its window is shown.
+		for _, win := range clientWindows(pid) {
+			var handled uintptr
+			const abortIfHung = 0x0002
+			ok, _, _ := procSendClientMessage.Call(win.hwnd, message, uintptr(percent),
+				0, abortIfHung, 125, uintptr(unsafe.Pointer(&handled)))
+			if ok != 0 && handled == 1 {
+				return nil
+			}
+		}
+	}
+	return errors.New("滚轮设置已保存，重新打开投屏后生效")
 }
 
 func raiseFrontWindowWithFocus(sel frontWinInfo, restoreEZ bool) {

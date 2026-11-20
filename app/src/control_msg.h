@@ -29,6 +29,7 @@
 
 // Used for injecting an additional virtual pointer for pinch-to-zoom
 #define SC_POINTER_ID_VIRTUAL_FINGER UINT64_C(-3)
+#define SC_POINTER_ID_WHEEL_FINGER UINT64_C(-4)
 
 enum sc_control_msg_type {
     SC_CONTROL_MSG_TYPE_INJECT_KEYCODE,

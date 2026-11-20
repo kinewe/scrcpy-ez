@@ -76,7 +76,7 @@
         </div>
         <span class="modal-close" id="param-close">✕</span>
       </div>
-      <div class="param-sub" id="param-sub">投屏参数 · 每设备分别记忆有线 / 无线两套 · 保存后重新投屏</div>
+      <div class="param-sub" id="param-sub">画面与声音参数按设备和连接方式分别记忆 · 保存后重新投屏</div>
       <div class="dialog-tabs" id="param-tabs" role="tablist" aria-label="主投屏设置分类">
         <button class="dtab active" type="button" data-tab="display" id="param-tab-display" role="tab" aria-selected="true" aria-controls="param-page-display">画面</button>
         <button class="dtab" type="button" data-tab="audio" id="param-tab-audio" role="tab" aria-selected="false" aria-controls="param-page-audio" tabindex="-1">声音</button>
@@ -143,7 +143,24 @@
             </span>
           </label>
 
-          <div class="param-note" id="param-note-feature">有线与无线的参数分别记忆：本页改动只作用于当前连接方式，切换后会自动切换到另一套。托盘、保持唤醒、自动平滑等应用级设置请在右上角齿轮的「设置」中调整</div>
+          <div class="fgroup-title">输入操作</div>
+          <div class="set-row" id="param-wheel-swipe-row" data-note="开启后，纵向滚轮会在鼠标所在位置模拟手指滑动，适合只响应触摸滑动的页面；每台设备单独保存，有线与无线共用">
+            <div class="set-main"><span class="set-title" id="param-wheel-swipe-title">滚轮兼容模式</span></div>
+            <button class="switch" id="param-wheel-swipe" type="button" role="switch" aria-checked="false" aria-labelledby="param-wheel-swipe-title" aria-controls="param-wheel-swipe-distance-row"><span class="knob"></span></button>
+          </div>
+          <div class="setting-child wheel-swipe-controls" id="param-wheel-swipe-distance-row" data-note="每格滚轮的滑动距离按投屏画面高度计算，默认 18%；开启反向会对调上下滑动方向" hidden>
+            <label class="setting-child-title wheel-swipe-range-label" for="param-wheel-swipe-distance">滑动幅度</label>
+            <div class="wheel-swipe-range">
+              <div class="wheel-swipe-track-area" id="param-wheel-swipe-track">
+                <span class="wheel-swipe-track" aria-hidden="true"><span class="wheel-swipe-fill"></span></span>
+                <input class="wheel-swipe-slider" id="param-wheel-swipe-distance" type="range" min="5" max="50" step="any" value="18" aria-valuetext="18%">
+              </div>
+              <span class="wheel-swipe-value" id="param-wheel-swipe-value" aria-hidden="true">18%</span>
+            </div>
+            <button class="wheel-swipe-reverse" id="param-wheel-swipe-reverse" type="button" aria-pressed="false"><span aria-hidden="true">⇅</span> 反向</button>
+          </div>
+
+          <div class="param-note" id="param-note-feature">画面和声音参数按有线与无线分别记忆，滚轮兼容模式为同一台设备共用。托盘、保持唤醒、自动平滑等应用级设置可在右上角齿轮的「设置」中调整</div>
         </div>
 
         <div class="param-pending" id="param-pending" style="display:none">连接方式确认后，自动显示对应模式的参数</div>
@@ -182,14 +199,34 @@
       <span class="modal-close" id="appwin-modal-close"><svg class="notification-symbol" viewBox="0 0 24 24" data-notification-icon="x" aria-hidden="true"></svg></span>
     </div>
     <input class="appwin-search" id="appwin-modal-search" placeholder="搜索应用…">
+    <div class="appwin-launcher-legend" id="appwin-launcher-legend" hidden>
+      <span id="appwin-launcher-recent-legend" class="appwin-launcher-recent" hidden><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="history"></svg>最近打开应用</span>
+      <span id="appwin-launcher-pin-legend" class="appwin-launcher-pin" hidden><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="pin"></svg>手动置顶</span>
+    </div>
     <div class="appwin-grid" id="appwin-modal-grid"><div class="appwin-loading">正在读取应用列表…</div></div>
     <div class="appwin-bottom">
-      <div class="appwin-hint" id="appwin-modal-hint" role="status">点击应用 → 在独立窗口打开</div>
+      <div class="appwin-bottom-copy">
+        <div class="appwin-read-status" id="appwin-read-status" hidden><span id="appwin-read-message" role="status"></span><button class="btn tiny" id="appwin-read-retry" type="button" style="display:none">重试</button></div>
+        <div class="appwin-hint" id="appwin-modal-hint" role="status">点击应用 → 在独立窗口打开</div>
+      </div>
       <div class="appwin-bottom-actions">
-        <div class="appwin-read-status" id="appwin-read-status" style="display:none" role="status" aria-live="polite"><span id="appwin-read-message"></span><button class="btn tiny" id="appwin-read-retry" type="button" style="display:none">重试</button></div>
+        <span class="appwin-catalog-count" id="appwin-catalog-count" hidden></span>
+        <button class="notification-options-trigger" id="appwin-launcher-options" type="button" aria-expanded="false" aria-controls="appwin-launcher-panel" hidden><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="sliders-horizontal"></svg>应用窗口选项<svg class="notification-chevron" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="chevron-down"></svg></button>
         <button class="notification-options-trigger" id="notification-options" type="button" aria-expanded="false" aria-controls="notification-options-panel" style="display:none"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="sliders-horizontal"></svg>通知选项<svg class="notification-chevron" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="chevron-down"></svg></button>
       </div>
     </div>
+    <section id="appwin-launcher-panel" class="appwin-launcher-panel" aria-label="应用窗口选项" hidden>
+      <div class="appwin-launcher-panel-head"><b>置顶栏位</b><button class="btn ghost tiny" id="appwin-launcher-reset" type="button">重置</button></div>
+      <div class="appwin-launcher-capacity">
+        <button class="chip" id="appwin-launcher-4" type="button" aria-pressed="false">4</button>
+        <button class="chip" id="appwin-launcher-8" type="button" aria-pressed="false">8</button>
+        <span class="appwin-launcher-custom">
+          <button class="chip custom" id="appwin-launcher-custom" type="button">＋ 自定义</button>
+          <input id="appwin-launcher-number" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" aria-label="自定义栏位数" aria-describedby="appwin-launcher-limit" hidden>
+          <span class="param-inline-tag" id="appwin-launcher-limit" hidden></span>
+        </span>
+      </div>
+    </section>
     <div id="notification-options-panel" class="notification-options-panel" style="display:none">
       <div class="notification-device-options" role="group" aria-label="当前设备通知选项">
         <div class="notification-open-row">
@@ -402,7 +439,7 @@
       </div>
       <span class="modal-close" id="appset-close">✕</span>
     </div>
-    <div class="param-sub">窗口设置 · 每应用分别记忆有线 / 无线两套 · 保存后重新投屏</div>
+    <div class="param-sub">画面与声音参数按应用和连接方式分别记忆</div>
     <div class="dialog-tabs" id="appset-tabs" role="tablist" aria-label="应用窗口设置分类">
       <button class="dtab active" type="button" data-tab="display" id="appset-tab-display" role="tab" aria-selected="true" aria-controls="appset-page-display">画面</button>
       <button class="dtab" type="button" data-tab="audio" id="appset-tab-audio" role="tab" aria-selected="false" aria-controls="appset-page-audio" tabindex="-1">声音</button>
@@ -462,15 +499,31 @@
           </div>
           <div class="switch on" id="appset-flex" role="switch" aria-checked="true"><span class="knob"></span></div>
         </div>
+        <div class="fgroup-title">输入操作</div>
+        <div class="set-row" id="appset-wheel-swipe-row" data-note="开启后，纵向滚轮会在鼠标所在位置模拟手指滑动，适合只响应触摸滑动的页面；每个应用单独保存，有线与无线共用">
+          <div class="set-main"><span class="set-title" id="appset-wheel-swipe-title">滚轮兼容模式</span></div>
+          <button class="switch" id="appset-wheel-swipe" type="button" role="switch" aria-checked="false" aria-labelledby="appset-wheel-swipe-title" aria-controls="appset-wheel-swipe-distance-row"><span class="knob"></span></button>
+        </div>
+        <div class="setting-child wheel-swipe-controls" id="appset-wheel-swipe-distance-row" data-note="每格滚轮的滑动距离按投屏画面高度计算，默认 18%；开启反向会对调上下滑动方向" hidden>
+          <label class="setting-child-title wheel-swipe-range-label" for="appset-wheel-swipe-distance">滑动幅度</label>
+          <div class="wheel-swipe-range">
+            <div class="wheel-swipe-track-area" id="appset-wheel-swipe-track">
+              <span class="wheel-swipe-track" aria-hidden="true"><span class="wheel-swipe-fill"></span></span>
+              <input class="wheel-swipe-slider" id="appset-wheel-swipe-distance" type="range" min="5" max="50" step="any" value="18" aria-valuetext="18%">
+            </div>
+            <span class="wheel-swipe-value" id="appset-wheel-swipe-value" aria-hidden="true">18%</span>
+          </div>
+          <button class="wheel-swipe-reverse" id="appset-wheel-swipe-reverse" type="button" aria-pressed="false"><span aria-hidden="true">⇅</span> 反向</button>
+        </div>
         <div class="fgroup-title">实验功能</div>
         <div class="set-row" id="appset-perspective-row" data-note="开启后，将投屏窗口背后的桌面作为应用的相机画面；拖动或缩放时，电脑上的画面会即时跟随。需要 Android 16 或以上及可用的虚拟相机服务，重新打开应用投屏后生效">
           <div class="set-main">
             <div class="set-title">透视相机 <span class="param-inline-tag">Android 16+</span></div>
           </div>
-          <div class="switch on" id="appset-perspective" role="switch" tabindex="0" aria-label="透视相机" aria-checked="true"><span class="knob"></span></div>
+          <div class="switch on" id="appset-perspective" role="switch" tabindex="0" aria-label="透视相机" aria-checked="true" aria-controls="appset-perspective-fps-row"><span class="knob"></span></div>
         </div>
-        <div class="set-row" id="appset-perspective-fps-row" data-note="送给手机识别的桌面画面更新频率，默认 6 FPS。拖动窗口时，本地预览仍即时跟随" style="display:none">
-          <div class="set-main"><label class="set-title" for="appset-perspective-fps">桌面送帧</label></div>
+        <div class="setting-child" id="appset-perspective-fps-row" data-note="送给手机识别的桌面画面更新频率，默认 6 FPS；拖动窗口时，本地预览仍即时跟随" hidden>
+          <label class="setting-child-title" for="appset-perspective-fps">桌面送帧</label>
           <select class="perspective-fps-select" id="appset-perspective-fps">
             <option value="0.5" data-detail="两秒一帧">0.5 FPS</option>
             <option value="1">1 FPS</option>

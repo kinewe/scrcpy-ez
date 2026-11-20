@@ -1316,6 +1316,7 @@ end:
     // Restore the device screen if it was turned off by Ctrl+H. The
     // device-side cleanup process is a second safety net for abnormal exits.
     if (screen_initialized && controller_started) {
+        sc_input_manager_cancel_wheel_swipe(&s->screen.im);
         sc_input_manager_turn_screen_on(&s->screen.im);
     }
     if (controller_started) {

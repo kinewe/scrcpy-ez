@@ -129,6 +129,7 @@ type Card struct {
 	CopyFallback time.Duration
 	CopyIssuedAt time.Time
 	Open         func(context.Context) error
+	OpenClicked  func()
 	OpenToken    string // PC-only random activation capability; never the phone token.
 }
 

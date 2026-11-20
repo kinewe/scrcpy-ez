@@ -61,7 +61,7 @@ assert.equal(wired.fields.fps.val,144);assert.equal(wired.fields.fps.base,144);
 Object.assign(scope,{SCEZParamState:require('./param_state.js'),PARAM_NOTES:{},
   updateParamAudioRow(){},updateParamCodecRows(){},refreshParamNotes(){}});
 scope.PARAM_FIELDS.bit={label:'码率',unit:'',tiers:[120,80,60,40,15]};
-for (const name of ['ladderTiers','baseValOf','initField','makeParamState','curParam','curField','baselineOf','renderParamRows']) {
+for (const name of ['readWheelSwipe','ladderTiers','baseValOf','initField','makeParamState','curParam','curField','baselineOf','renderParamRows']) {
   const start=source.indexOf('  function '+name+'(');
   vm.runInContext(source.slice(start,source.indexOf('\n  }',start)+4),scope);
 }

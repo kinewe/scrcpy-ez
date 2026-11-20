@@ -36,7 +36,8 @@ async function main() {
   assert.ok(batches.every(b=>b[1].length<=24));
   assert.equal(nodes[64].style.backgroundImage,'url("data:device:A:pkg64")');
   const constructed=node();constructed.isConnected=false;
-  await batched.request('device:A','WIFI_A','pkg0',constructed);
+  assert.equal(batched.paintCached('device:A','pkg0',constructed),true);
+  assert.equal(batched.paintCached('device:C','pkg0',node()),false);
   assert.equal(constructed.style.backgroundImage,nodes[0].style.backgroundImage,'cache hit must populate a new card before DOM insertion');
   const original=nodes[1].style.backgroundImage;
   await batched.refresh('device:A',['pkg0']);

@@ -63,11 +63,18 @@ const referenced = new Set([...app.matchAll(/\bel\('([A-Za-z0-9_]+)'\)/g)].map(m
 const missing = [...referenced].filter(id => !ids.has(id));
 ok('app.js el() 引用的 id 都存在于 index.html', missing.length === 0, missing.slice(0, 10).join(','));
 
+for (const prefix of ['param', 'appset']) {
+  ok(prefix + ' 滑条范围 5%–50% 且连续移动', new RegExp('id="' + prefix + '-wheel-swipe-distance" type="range" min="5" max="50" step="any"').test(html));
+  ok(prefix + ' 幅度徽标在滑条之后', new RegExp('id="' + prefix + '-wheel-swipe-distance"[^>]*>\\s*</div>\\s*<span class="wheel-swipe-value" id="' + prefix + '-wheel-swipe-value"').test(html));
+  ok(prefix + ' 反向初始关闭', new RegExp('id="' + prefix + '-wheel-swipe-reverse" type="button" aria-pressed="false"').test(html));
+}
+
 // ---------- dirty 纯逻辑：appset ----------
 {
-  const ctx = { setTabDirty: (prefix, tab, dirty) => { ctx.__dirty[tab] = !!dirty; }, __dirty: {}, console };
+  const saveButton = {};
+  const ctx = { el: () => saveButton, setTabDirty: (prefix, tab, dirty) => { ctx.__dirty[tab] = !!dirty; }, __dirty: {}, console };
   vm.createContext(ctx);
-  for (const name of ['appsetEffectiveField', 'snapshotAppSetState', 'updateAppsetDirtyTabs']) {
+  for (const name of ['readWheelSwipe', 'wheelSwipeChanged', 'appsetEffectiveField', 'snapshotAppSetState', 'updateAppsetDirtyTabs']) {
     vm.runInContext(slice(name), ctx);
   }
   const base = { size: 3200, fps: 60, bit: 15, dpi: 0, ratioW: '', ratioH: '', flex: true, perspective: true, perspectiveInputFps: 10, audio: 'phone', vcodec: 'h264', ownVCodec: false, acodec: 'opus', ownACodec: false, lockFps: false, lockBitrate: false };
@@ -105,13 +112,17 @@ ok('app.js el() 引用的 id 都存在于 index.html', missing.length === 0, mis
   ctx.updateAppsetDirtyTabs(); ok('appset 关窗口跟随 → 功能页橙点', ctx.__dirty.feature === true);
   ctx.appSetState.flex = true;
   ctx.updateAppsetDirtyTabs(); ok('appset 恢复窗口跟随 → 橙点消失', ctx.__dirty.feature === false);
+  ctx.appSetState.initialWheelSwipe = ctx.readWheelSwipe({wheelSwipeEnabled: true, wheelSwipePercent: 28});
+  ctx.appSetState.wheelSwipe = ctx.readWheelSwipe({wheelSwipeEnabled: true, wheelSwipePercent: 28, wheelSwipeReverse: true});
+  ctx.updateAppsetDirtyTabs();
+  ok('appset 滚轮反向单项立即保存', ctx.__dirty.feature && ctx.appSetState.wheelSwipeOnly && saveButton.textContent === '保存设置');
 }
 
 // ---------- dirty 纯逻辑：param ----------
 {
   const ctx = { setTabDirty: (prefix, tab, dirty) => { ctx.__dirty[tab] = !!dirty; }, __dirty: {}, console };
   vm.createContext(ctx);
-  for (const name of ['paramEffectiveFieldFor', 'updateParamDirtyTabs']) vm.runInContext(slice(name), ctx);
+  for (const name of ['wheelSwipeChanged', 'paramEffectiveFieldFor', 'updateParamDirtyTabs']) vm.runInContext(slice(name), ctx);
   const modeBase = { res: 3200, fps: 60, bit: 15, audio: 'pc', vcodec: 'h264', acodec: 'opus', lockFps: false, lockBitrate: false };
   ctx.paramState = {
     mode: 'wifi', initial: { usb: modeBase, wifi: modeBase },

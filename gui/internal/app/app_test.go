@@ -830,7 +830,7 @@ func TestSaveProfileAndRestartInjectsParams(t *testing.T) {
 	a.SetRunnerFactory(func(string, func(string), func(int)) (Runner, error) { return f, nil })
 	_ = a.StartCast("X")
 
-	if err := a.SaveProfileAndRestart("X", "usb", 2400, 75, 55, true, "pc", false, false, "", ""); err != nil {
+	if err := a.SaveProfileAndRestart("X", "usb", 2400, 75, 55, true, "pc", false, false, "", "", WheelSwipeSettings{WheelSwipeEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	a.OnBatExit("X", 1) // 模拟 waitLoop 回调 → restartAfterExit 重跑
@@ -845,7 +845,7 @@ func TestSaveProfileAndRestartInjectsParams(t *testing.T) {
 		// 设置面板开关 A：GUI 会话总是显式注入参数控件启动可见性（默认=显示）
 		OverlayVisible: true, OverlayVisibleSet: true,
 		KeepDeviceAwake: true, KeepDeviceAwakeSet: true, AutoBlackoutMainCast: true,
-		VideoSmoothingSet: true, VideoSmoothingFrames: 2,
+		VideoSmoothingSet: true, VideoSmoothingFrames: 2, WheelSwipePercent: 18,
 	}
 	// 两次 Start 的 goroutine 调度顺序不定：重启那一次必须带该模式覆盖参数
 	// （usb 套；wifi 未保存自定义 → 不注入）

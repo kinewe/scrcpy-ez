@@ -75,14 +75,28 @@
         if (queue.length) setTimeout(schedule, 0);
       });
     }
-    function request(identity, serial, pkg, node) {
-      identity = identity || serial;
-      var k = key(identity, pkg);
+    function attach(k, node) {
       var nodes = (attached[k] || []).filter(live);
       if (node && nodes.indexOf(node) < 0) nodes.push(node);
       attached[k] = nodes;
-      if (cache[k] !== undefined) { touch(k); apply(node, cache[k]); return Promise.resolve(); }
-      if (pending[k]) { pending[k].nodes.push(node); return pending[k].promise; }
+    }
+    function paintCached(identity, pkg, node) {
+      var k = key(identity, pkg);
+      if (cache[k] === undefined) return false;
+      attach(k, node);
+      touch(k);
+      apply(node, cache[k]);
+      return true;
+    }
+    function request(identity, serial, pkg, node) {
+      identity = identity || serial;
+      if (paintCached(identity, pkg, node)) return Promise.resolve();
+      var k = key(identity, pkg);
+      attach(k, node);
+      if (pending[k]) {
+        if (pending[k].nodes.indexOf(node) < 0) pending[k].nodes.push(node);
+        return pending[k].promise;
+      }
       var generation = generations[k] || 0;
       var job = { nodes: [node], key: k, identity: identity, pkg: pkg, generation: generation };
       pending[k] = job;
@@ -124,7 +138,7 @@
         if (!attached[k].length) delete attached[k];
       });
     }
-    return { request: request, invalidate: invalidate, refresh: refresh, prune: prune };
+    return { request: request, paintCached: paintCached, invalidate: invalidate, refresh: refresh, prune: prune };
   }
   return { create: create };
 });

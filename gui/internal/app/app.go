@@ -129,11 +129,12 @@ type DiscoveryStatus struct {
 // Key=identity（档案键）；Name=展示名（市场名 → 型号 → 首个 serial → 首个 addr → 键）；
 // Serials/Addrs 供前端匹配在线设备与投屏会话（Addrs 按 active 优先排序）。
 type ProfileItem struct {
-	Key     string   `json:"key"`
-	Name    string   `json:"name"`
-	Model   string   `json:"model,omitempty"`
-	Serials []string `json:"serials,omitempty"`
-	Addrs   []string `json:"addrs,omitempty"`
+	AppLauncher *AppLauncherProfile `json:"appLauncher,omitempty"`
+	Key         string              `json:"key"`
+	Name        string              `json:"name"`
+	Model       string              `json:"model,omitempty"`
+	Serials     []string            `json:"serials,omitempty"`
+	Addrs       []string            `json:"addrs,omitempty"`
 }
 
 // PendingDevice 是无线调试接入向导的"待配对"设备卡（gui12）：
@@ -5400,10 +5401,11 @@ func (a *App) listProfiles() []ProfileItem {
 	out := make([]ProfileItem, 0, len(entries))
 	for key, e := range entries {
 		item := ProfileItem{
-			Key:     key,
-			Model:   e.Model,
-			Serials: append([]string{}, e.Serials...),
-			Addrs:   make([]string, 0, len(e.Addrs)),
+			AppLauncher: e.AppLauncher,
+			Key:         key,
+			Model:       e.Model,
+			Serials:     append([]string{}, e.Serials...),
+			Addrs:       make([]string, 0, len(e.Addrs)),
 		}
 		for i := range e.Addrs {
 			item.Addrs = append(item.Addrs, e.Addrs[i].Addr)
@@ -5723,6 +5725,7 @@ func (a *App) StartCast(serial string) error {
 		profileKey = serial
 	}
 	p := a.profiles.Get(profileKey)
+	params.WheelSwipePercent = p.activePercent()
 	// StartCast holds a.mu here; use only the separate physical-cache lock.
 	a.physMu.Lock()
 	native := a.physCache[profileKey].native
@@ -7461,13 +7464,14 @@ func (a *App) updateBaseline(serial, mode string, b Baseline) {
 	if serial == "" || b.Res <= 0 || b.FPS <= 0 || b.Bitrate <= 0 {
 		return
 	}
-	p := a.profiles.Get(serial)
-	if mode == "wifi" {
-		p.Wifi.Baseline = b
-	} else {
-		p.Usb.Baseline = b
-	}
-	_ = a.profiles.Save(serial, p)
+	_ = a.profiles.updateProfile(serial, func(p *DeviceProfile) bool {
+		if mode == "wifi" {
+			p.Wifi.Baseline = b
+		} else {
+			p.Usb.Baseline = b
+		}
+		return true
+	})
 }
 
 // SaveProfile 设备参数管理页保存：仅写入该设备该模式的参数档（profiles.json），
@@ -7482,30 +7486,40 @@ func (a *App) SaveProfile(serial, mode string, res, fps, bitrate int, custom boo
 }
 
 // saveProfileOnly 校验并写入参数档（基线随保存持久化）。
-func (a *App) saveProfileOnly(serial, mode string, res, fps, bitrate int, custom bool, audio string, lockFps, lockBitrate bool, vcodec, acodec string) error {
+func (a *App) saveProfileOnly(serial, mode string, res, fps, bitrate int, custom bool, audio string, lockFps, lockBitrate bool, vcodec, acodec string, wheel ...WheelSwipeSettings) error {
 	if err := validateProfileParams(res, fps, bitrate); err != nil {
 		return err
 	}
-	p := a.effectiveProfile(serial) // 保留/推导 baseline（动态默认值随保存持久化）
+	effective := a.effectiveProfile(serial) // 未记录时使用推导出的基线
 	mp := ModeProfile{Res: res, FPS: fps, Bitrate: bitrate, Custom: custom, Audio: mainAudioMode(audio),
 		LockFps: lockFps, LockBitrate: lockBitrate,
 		VCodec: NormalizeVCodec(vcodec), ACodec: NormalizeACodec(acodec)}
-	if mode == "wifi" {
-		mp.Baseline = p.Wifi.Baseline
-		p.Wifi = mp
-	} else {
-		mp.Baseline = p.Usb.Baseline
-		p.Usb = mp
-	}
-	return a.profiles.Save(a.profileKeyForSession(serial), p)
+	return a.profiles.updateProfile(a.profileKeyForSession(serial), func(p *DeviceProfile) bool {
+		if p.Usb.Baseline.Res == 0 {
+			p.Usb.Baseline = effective.Usb.Baseline
+		}
+		if p.Wifi.Baseline.Res == 0 {
+			p.Wifi.Baseline = effective.Wifi.Baseline
+		}
+		dest := &p.Usb
+		if mode == "wifi" {
+			dest = &p.Wifi
+		}
+		mp.Baseline = dest.Baseline
+		*dest = mp
+		if len(wheel) > 0 {
+			p.WheelSwipeSettings = wheel[0].normalized()
+		}
+		return true
+	})
 }
 
 // SaveProfileAndRestart 参数浮窗保存：写入该设备该模式的参数档，
 // custom=true 时以该模式覆盖参数（SCEZ_*_USB/SCEZ_*_WIFI 对应套）重启该会话；
 // false=自动档重启（另一模式仍按记忆独立注入）。参数覆盖按 serial 存放，
 // 多会话互不串（每个会话的下一次 StartCast 只消费自己的覆盖）。
-func (a *App) SaveProfileAndRestart(serial, mode string, res, fps, bitrate int, custom bool, audio string, lockFps, lockBitrate bool, vcodec, acodec string) error {
-	if err := a.saveProfileOnly(serial, mode, res, fps, bitrate, custom, audio, lockFps, lockBitrate, vcodec, acodec); err != nil {
+func (a *App) SaveProfileAndRestart(serial, mode string, res, fps, bitrate int, custom bool, audio string, lockFps, lockBitrate bool, vcodec, acodec string, wheel ...WheelSwipeSettings) error {
+	if err := a.saveProfileOnly(serial, mode, res, fps, bitrate, custom, audio, lockFps, lockBitrate, vcodec, acodec, wheel...); err != nil {
 		return err
 	}
 	a.mu.Lock()

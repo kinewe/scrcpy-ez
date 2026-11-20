@@ -12,6 +12,7 @@ type openEntry struct {
 	until      time.Time
 	order      uint64
 	open       func(context.Context) error
+	clicked    func()
 }
 type openStore struct {
 	entries map[string]openEntry
@@ -58,7 +59,7 @@ func (s *openStore) Issue(card Card, now time.Time) string {
 	}
 	s.order++
 	token := hex.EncodeToString(entropy[:])
-	s.entries[token] = openEntry{group: card.Group, tag: card.Tag, until: now.Add(24 * time.Hour), order: s.order, open: card.Open}
+	s.entries[token] = openEntry{group: card.Group, tag: card.Tag, until: now.Add(24 * time.Hour), order: s.order, open: card.Open, clicked: card.OpenClicked}
 	return token
 }
 func (s *openStore) Take(token string, now time.Time) (openEntry, bool) {
