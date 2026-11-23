@@ -5726,6 +5726,7 @@ func (a *App) StartCast(serial string) error {
 	}
 	p := a.profiles.Get(profileKey)
 	params.WheelSwipePercent = p.activePercent()
+	params.WheelSwipeHorizontal = p.WheelSwipeHorizontal
 	// StartCast holds a.mu here; use only the separate physical-cache lock.
 	a.physMu.Lock()
 	native := a.physCache[profileKey].native

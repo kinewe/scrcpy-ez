@@ -301,13 +301,16 @@ func TestCastEnvVirtualDisplay(t *testing.T) {
 	}
 }
 
-func TestCastEnvWheelSwipeReverse(t *testing.T) {
-	values := envMap(castEnv(CastParams{WheelSwipePercent: -27}, "app"))
+func TestCastEnvWheelSwipeDirection(t *testing.T) {
+	values := envMap(castEnv(CastParams{WheelSwipePercent: -27, WheelSwipeHorizontal: true}, "app"))
 	if values["SCEZ_WHEEL_SWIPE_PERCENT"] != "-27" {
 		t.Fatalf("reverse direction missing from startup environment: %q", values["SCEZ_WHEEL_SWIPE_PERCENT"])
 	}
+	if values["SCEZ_WHEEL_SWIPE_HORIZONTAL"] != "1" {
+		t.Fatal("horizontal direction missing from startup environment")
+	}
 	values = envMap(castEnv(CastParams{}, "app"))
-	if values["SCEZ_WHEEL_SWIPE_PERCENT"] != "0" {
+	if values["SCEZ_WHEEL_SWIPE_PERCENT"] != "0" || values["SCEZ_WHEEL_SWIPE_HORIZONTAL"] != "0" {
 		t.Fatal("default settings must select native wheel input")
 	}
 }

@@ -174,6 +174,7 @@ func Quit() {
 func Run(a *app.App, html string) error {
 	w := webview.New(false)
 	defer w.Destroy()
+	startup := currentLoginStartup()
 
 	w.SetTitle("scrcpy-ez")
 	// v2.1.95：高度 760→900——应用窗口设置弹窗加编码两行后，最长形态全高可见。
@@ -372,6 +373,8 @@ func Run(a *app.App, html string) error {
 			bridge.DebugLog("[js] SetSettings showParamOverlay=%v closeToTray=%v", showParamOverlay, closeToTray)
 			return a.SetSettings(showParamOverlay, closeToTray)
 		}},
+		{"GetLaunchAtLogin", startup.enabled},
+		{"SetLaunchAtLogin", startup.setEnabled},
 		{"SetOtherAppWinSystemDecorations", func(enabled bool) error {
 			return a.SetOtherAppWinSystemDecorations(enabled)
 		}},

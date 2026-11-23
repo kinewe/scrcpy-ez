@@ -2010,25 +2010,62 @@
     DIALOG_TABS.forEach(function (t) { setTabDirty(prefix, t, false); });
   }
   function setNote(id, text) { var node = el(id); if (node && typeof text === 'string') node.textContent = text.replace(/[。.]\s*$/, ''); }
+  function setSettingsDisclosure(panel, open, trigger) {
+    if (panel.inert === !open) return;
+    var focused = document.activeElement;
+    if (!open && focused && panel.contains(focused) && !trigger.hidden && !trigger.disabled) {
+      trigger.focus({preventScroll:true});
+    }
+    panel.inert = !open;
+  }
+  function revealSettingsDisclosure(panel) {
+    if (panel.inert) return;
+    var scroller = panel.closest('.settings-body, .param-body');
+    if (!scroller) return;
+    var initialScroll = scroller.scrollTop;
+    function reveal() {
+      if (panel.inert || !panel.getClientRects().length || Math.abs(scroller.scrollTop - initialScroll) > 1) return;
+      var panelBounds = panel.getBoundingClientRect();
+      var visibleTop = scroller.getBoundingClientRect().top + scroller.clientTop;
+      var hiddenHeight = panelBounds.bottom - (visibleTop + scroller.clientHeight);
+      var offset = Math.ceil(Math.min(hiddenHeight, panelBounds.top - visibleTop));
+      if (offset <= 0) return;
+      var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      scroller.scrollBy({top: offset, behavior: reducedMotion ? 'instant' : 'smooth'});
+    }
+    var expansion = panel.getAnimations().find(function (animation) {
+      return animation.transitionProperty === 'grid-template-rows';
+    });
+    if (expansion) expansion.finished.then(reveal, function () {});
+    else reveal();
+  }
   function readWheelSwipe(values) {
     var percent = values && values.wheelSwipePercent;
     return {
       wheelSwipeEnabled: !!(values && values.wheelSwipeEnabled),
-      wheelSwipePercent: Number.isInteger(percent) && percent >= 5 && percent <= 50 ? percent : 18,
-      wheelSwipeReverse: !!(values && values.wheelSwipeReverse)
+      wheelSwipePercent: Number.isInteger(percent) && percent >= 5 && percent <= 100 ? percent : 18,
+      wheelSwipeReverse: !!(values && values.wheelSwipeReverse),
+      wheelSwipeHorizontal: !!(values && values.wheelSwipeHorizontal)
     };
   }
   function wheelSwipeChanged(state) {
     var current = state.wheelSwipe, original = state.initialWheelSwipe;
     return current && original && (current.wheelSwipeEnabled !== original.wheelSwipeEnabled ||
       current.wheelSwipePercent !== original.wheelSwipePercent ||
-      current.wheelSwipeReverse !== original.wheelSwipeReverse);
+      current.wheelSwipeReverse !== original.wheelSwipeReverse ||
+      current.wheelSwipeHorizontal !== original.wheelSwipeHorizontal);
   }
   function renderWheelSwipe(prefix, state) {
     var wheel = state.wheelSwipe;
-    setSwitchNode(el(prefix + '-wheel-swipe'), wheel.wheelSwipeEnabled);
-    el(prefix + '-wheel-swipe-distance-row').hidden = !wheel.wheelSwipeEnabled;
+    var toggle = el(prefix + '-wheel-swipe');
+    var settings = el(prefix + '-wheel-swipe-distance-row');
+    setSwitchNode(toggle, wheel.wheelSwipeEnabled);
+    setSettingsDisclosure(settings, wheel.wheelSwipeEnabled, toggle);
+    settings.setAttribute('data-axis', wheel.wheelSwipeHorizontal ? 'horizontal' : 'vertical');
+    settings.setAttribute('data-note', '每格滚轮的滑动距离按投屏画面' +
+      (wheel.wheelSwipeHorizontal ? '宽度计算，默认 18%。开启反向会对调左右滑动方向' : '高度计算，默认 18%。开启反向会对调上下滑动方向'));
     el(prefix + '-wheel-swipe-distance').__syncWheelSwipe(state);
+    el(prefix + '-wheel-swipe-horizontal').setAttribute('aria-pressed', String(wheel.wheelSwipeHorizontal));
     el(prefix + '-wheel-swipe-reverse').setAttribute('aria-pressed', String(wheel.wheelSwipeReverse));
   }
   function bindWheelSwipe(prefix, currentState, onChange) {
@@ -2118,16 +2155,20 @@
         wheelSwipeEnabled: !state.wheelSwipe.wheelSwipeEnabled
       });
       renderWheelSwipe(prefix, state);
+      revealSettingsDisclosure(el(id + '-distance-row'));
       onChange();
     });
-    el(id + '-reverse').addEventListener('click', function () {
-      var state = currentState();
-      if (!state) return;
-      state.wheelSwipe = Object.assign({}, state.wheelSwipe, {
-        wheelSwipeReverse: !state.wheelSwipe.wheelSwipeReverse
+    [['horizontal', 'wheelSwipeHorizontal'], ['reverse', 'wheelSwipeReverse']].forEach(function (option) {
+      var field = option[1];
+      el(id + '-' + option[0]).addEventListener('click', function () {
+        var state = currentState();
+        if (!state || !state.wheelSwipe.wheelSwipeEnabled) return;
+        var wheel = Object.assign({}, state.wheelSwipe);
+        wheel[field] = !wheel[field];
+        state.wheelSwipe = wheel;
+        renderWheelSwipe(prefix, state);
+        onChange();
       });
-      renderWheelSwipe(prefix, state);
-      onChange();
     });
     [id + '-row', id + '-distance-row'].forEach(function (rowID) {
       var row = el(rowID);
@@ -2412,9 +2453,10 @@
     el('appset-title').textContent = appSetState.name + ' · 窗口设置';
     el('appset-mode').textContent = modeName;
     setSwitchNode(el('appset-flex'), appSetState.flex);
-    setSwitchNode(el('appset-perspective'), appSetState.perspective);
+    var perspective = el('appset-perspective');
+    setSwitchNode(perspective, appSetState.perspective);
     el('appset-perspective-fps').value = String(appSetState.perspectiveInputFps);
-    el('appset-perspective-fps-row').hidden = !appSetState.perspective;
+    setSettingsDisclosure(el('appset-perspective-fps-row'), appSetState.perspective, perspective);
     renderWheelSwipe('appset', appSetState);
     renderAudioSlider(el('appset-audio'), appSetState.audio);
     el('appset-audio-note').textContent = audioNote(appSetState.audio);
@@ -2673,7 +2715,9 @@
   function togglePerspective() {
     if (!appSetState) return;
     appSetState.touched.feature = true;
-    appSetState.perspective = !appSetState.perspective; renderAppSetModal();
+    appSetState.perspective = !appSetState.perspective;
+    renderAppSetModal();
+    revealSettingsDisclosure(el('appset-perspective-fps-row'));
   }
   el('appset-perspective').addEventListener('click', togglePerspective);
   el('appset-perspective').addEventListener('keydown', function (event) {
@@ -3078,7 +3122,7 @@
     trigger.hidden = appWinNotificationView || !w.loaded || !appLauncherProfileItem(serial, w);
     trigger.disabled = !!(draft && draft.saving);
     trigger.setAttribute('aria-expanded', String(!!draft));
-    el('appwin-launcher-panel').hidden = !draft;
+    setSettingsDisclosure(el('appwin-launcher-panel'), !!draft, trigger);
     el('appwin-modal-hint').closest('.appwin-bottom').classList.toggle('launcher-editing', !!draft);
     if (!draft) return;
     var cfg = appLauncherSelection(w);
@@ -3149,8 +3193,21 @@
       search.value = '';
       appLauncherDraft = null;
       clearAppLauncherDrag(el('appwin-modal-grid'), false);
-      el('appwin-modal-grid').closest('.appwin-card').classList.remove('launcher-options-open');
-      el('appwin-modal').scrollTop = 0;
+      var panel = el('appwin-launcher-panel');
+      var trigger = el('appwin-launcher-options');
+      trigger.disabled = false;
+      setSettingsDisclosure(panel, false, trigger);
+      // Keep the grid at its original height until the panel has folded away.
+      var collapse = panel.getAnimations && panel.getAnimations().find(function (animation) {
+        return animation.transitionProperty === 'grid-template-rows';
+      });
+      function releaseLayout() {
+        if (appLauncherDraft) return;
+        el('appwin-modal-grid').closest('.appwin-card').classList.remove('launcher-options-open');
+        el('appwin-modal').scrollTop = 0;
+      }
+      if (collapse) collapse.finished.then(releaseLayout, releaseLayout);
+      else releaseLayout();
       done();
     }
     if (cfg.capacity === prior.capacity && cfg.custom === prior.custom &&
@@ -6237,9 +6294,11 @@
     toggle.setAttribute('aria-label', appWinNotificationView ? '返回应用窗口视图' : '切换消息通知视图');
     el('appwin-modal-title').textContent = (w.name || serial) + (appWinNotificationView ? ' · 应用通知' : ' · 应用窗口');
     el('appwin-modal-title').title = el('appwin-modal-title').textContent;
-    el('notification-options').style.display = appWinNotificationView ? '' : 'none';
-    el('notification-options').setAttribute('aria-expanded', String(notificationOptionsOpen));
-    el('notification-options-panel').style.display = appWinNotificationView && notificationOptionsOpen ? '' : 'none';
+    var options = el('notification-options');
+    var optionsOpen = appWinNotificationView && notificationOptionsOpen;
+    options.style.display = appWinNotificationView ? '' : 'none';
+    options.setAttribute('aria-expanded', String(optionsOpen));
+    setSettingsDisclosure(el('notification-options-panel'), optionsOpen, appWinNotificationView ? options : toggle);
     var hint = '点击应用 → 在独立窗口打开';
     if (appWinNotificationView) {
       hint = policy.mode === 'whitelist' ? ((policy.packages || []).length || policy.other ? '已允许 ' + (policy.packages || []).length + ' 个应用' + (policy.other ? ' + 暗之通知' : '') + ' · 点击切换勾选' : '未选择通知来源 · 此设备不推送通知') : (policy.mode === 'otp' ? '仅验证码 · 所有来源' : policy.mode === 'all' ? '所有来源通知' : '通知已关闭') + ' · 修改勾选后使用白名单';
@@ -6515,13 +6574,15 @@
     el('set-auto-blackout').setAttribute('aria-disabled', String(autoBlackoutSaving));
     setSwitch(el('set-force-perspective-key'), settingsState.forcePerspectiveColorKey);
     el('set-force-perspective-key').setAttribute('aria-disabled', String(forcePerspectiveKeySaving));
-    setSwitch(el('set-smoothing'), settingsState.videoSmoothing);
+    var smoothing = el('set-smoothing');
+    setSwitch(smoothing, settingsState.videoSmoothing);
+    setSettingsDisclosure(el('set-smoothing-details'), settingsState.videoSmoothing, smoothing);
     [1, 2].forEach(function (frames) {
       var button = el(frames === 1 ? 'set-smoothing-one' : 'set-smoothing-two');
       button.setAttribute('aria-pressed', settingsState.videoSmoothingFrames === frames ? 'true' : 'false');
       button.disabled = !settingsState.videoSmoothing || smoothingSaving;
     });
-    el('set-smoothing').setAttribute('aria-disabled', smoothingSaving ? 'true' : 'false');
+    smoothing.setAttribute('aria-disabled', smoothingSaving ? 'true' : 'false');
     setSwitch(el('set-appwin-decor'), settingsState.otherAppWinSystemDecorations);
   }
 
@@ -6558,9 +6619,27 @@
     });
   }
 
+  var launchAtLoginSwitch = el('set-launch-at-login');
+  function updateLaunchAtLogin(action) {
+    if (launchAtLoginSwitch.disabled) return;
+    launchAtLoginSwitch.disabled = true;
+    action().then(function (enabled) {
+      setSwitch(launchAtLoginSwitch, enabled);
+    }).catch(function (e) {
+      toast('开机自启设置失败：' + (e && e.message ? e.message : e));
+    }).finally(function () {
+      launchAtLoginSwitch.disabled = false;
+    });
+  }
+  launchAtLoginSwitch.addEventListener('click', function () {
+    var enabled = launchAtLoginSwitch.getAttribute('aria-checked') !== 'true';
+    updateLaunchAtLogin(function () { return SetLaunchAtLogin(enabled); });
+  });
+
   el('btn-settings').addEventListener('click', function () {
     syncSettings(lastState);
     renderSettings();
+    updateLaunchAtLogin(GetLaunchAtLogin);
     el('settings-modal').style.display = '';
   });
   el('settings-close').addEventListener('click', function () { el('settings-modal').style.display = 'none'; });
@@ -6649,6 +6728,7 @@
     settingsState.videoSmoothing = !previous;
     smoothingSaving = true;
     renderSettings();
+    revealSettingsDisclosure(el('set-smoothing-details'));
     SetVideoSmoothing(settingsState.videoSmoothing).then(function () {
       smoothingSaving = false;
       renderSettings();

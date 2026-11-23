@@ -36,8 +36,10 @@ static LRESULT CALLBACK
 screen_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     if (msg && msg == screen_wheel_swipe_message) {
         struct sc_screen *screen = GetPropW(hwnd, L"scrcpy-ez.Screen");
-        return screen && sc_input_manager_set_wheel_swipe(&screen->im,
-                                                         (intptr_t) wparam);
+        return screen && (lparam == 0 || lparam == 1)
+                      && sc_input_manager_set_wheel_swipe(&screen->im,
+                                                         (intptr_t) wparam,
+                                                         lparam != 0);
     }
     if (msg == WM_NCDESTROY) {
         RemovePropW(hwnd, L"scrcpy-ez.Screen");

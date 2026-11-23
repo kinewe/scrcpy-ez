@@ -148,16 +148,23 @@
             <div class="set-main"><span class="set-title" id="param-wheel-swipe-title">滚轮兼容模式</span></div>
             <button class="switch" id="param-wheel-swipe" type="button" role="switch" aria-checked="false" aria-labelledby="param-wheel-swipe-title" aria-controls="param-wheel-swipe-distance-row"><span class="knob"></span></button>
           </div>
-          <div class="setting-child wheel-swipe-controls" id="param-wheel-swipe-distance-row" data-note="每格滚轮的滑动距离按投屏画面高度计算，默认 18%；开启反向会对调上下滑动方向" hidden>
-            <label class="setting-child-title wheel-swipe-range-label" for="param-wheel-swipe-distance">滑动幅度</label>
-            <div class="wheel-swipe-range">
-              <div class="wheel-swipe-track-area" id="param-wheel-swipe-track">
-                <span class="wheel-swipe-track" aria-hidden="true"><span class="wheel-swipe-fill"></span></span>
-                <input class="wheel-swipe-slider" id="param-wheel-swipe-distance" type="range" min="5" max="50" step="any" value="18" aria-valuetext="18%">
+          <div class="settings-disclosure" id="param-wheel-swipe-distance-row" data-note="每格滚轮的滑动距离按投屏画面高度计算，默认 18%。开启反向会对调上下滑动方向" inert>
+            <div class="settings-disclosure-clip">
+              <div class="setting-child wheel-swipe-controls">
+                <div class="wheel-swipe-heading">
+                  <label class="setting-child-title" for="param-wheel-swipe-distance">滑动幅度</label>
+                  <button class="wheel-swipe-button" id="param-wheel-swipe-horizontal" type="button" aria-pressed="false" aria-label="左右滑动"><svg class="notification-symbol" viewBox="0 0 24 24" data-notification-icon="move-horizontal" aria-hidden="true"></svg>左右</button>
+                </div>
+                <div class="wheel-swipe-range">
+                  <div class="wheel-swipe-track-area" id="param-wheel-swipe-track">
+                    <span class="wheel-swipe-track" aria-hidden="true"><span class="wheel-swipe-fill"></span></span>
+                    <input class="wheel-swipe-slider" id="param-wheel-swipe-distance" type="range" min="5" max="100" step="any" value="18" aria-valuetext="18%">
+                  </div>
+                  <span class="wheel-swipe-value" id="param-wheel-swipe-value" aria-hidden="true">18%</span>
+                </div>
+                <button class="wheel-swipe-button wheel-swipe-reverse" id="param-wheel-swipe-reverse" type="button" aria-pressed="false"><span aria-hidden="true">⇅</span>反向</button>
               </div>
-              <span class="wheel-swipe-value" id="param-wheel-swipe-value" aria-hidden="true">18%</span>
             </div>
-            <button class="wheel-swipe-reverse" id="param-wheel-swipe-reverse" type="button" aria-pressed="false"><span aria-hidden="true">⇅</span> 反向</button>
           </div>
 
           <div class="param-note" id="param-note-feature">画面和声音参数按有线与无线分别记忆，滚轮兼容模式为同一台设备共用。托盘、保持唤醒、自动平滑等应用级设置可在右上角齿轮的「设置」中调整</div>
@@ -215,46 +222,54 @@
         <button class="notification-options-trigger" id="notification-options" type="button" aria-expanded="false" aria-controls="notification-options-panel" style="display:none"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="sliders-horizontal"></svg>通知选项<svg class="notification-chevron" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="chevron-down"></svg></button>
       </div>
     </div>
-    <section id="appwin-launcher-panel" class="appwin-launcher-panel" aria-label="应用窗口选项" hidden>
-      <div class="appwin-launcher-panel-head"><b>置顶栏位</b><button class="btn ghost tiny" id="appwin-launcher-reset" type="button">重置</button></div>
-      <div class="appwin-launcher-capacity">
-        <button class="chip" id="appwin-launcher-4" type="button" aria-pressed="false">4</button>
-        <button class="chip" id="appwin-launcher-8" type="button" aria-pressed="false">8</button>
-        <span class="appwin-launcher-custom">
-          <button class="chip custom" id="appwin-launcher-custom" type="button">＋ 自定义</button>
-          <input id="appwin-launcher-number" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" aria-label="自定义栏位数" aria-describedby="appwin-launcher-limit" hidden>
-          <span class="param-inline-tag" id="appwin-launcher-limit" hidden></span>
-        </span>
+    <section id="appwin-launcher-panel" class="settings-disclosure" aria-label="应用窗口选项" inert>
+      <div class="settings-disclosure-clip">
+        <div class="appwin-launcher-panel">
+          <div class="appwin-launcher-panel-head"><b>置顶栏位</b><button class="btn ghost tiny" id="appwin-launcher-reset" type="button">重置</button></div>
+          <div class="appwin-launcher-capacity">
+            <button class="chip" id="appwin-launcher-4" type="button" aria-pressed="false">4</button>
+            <button class="chip" id="appwin-launcher-8" type="button" aria-pressed="false">8</button>
+            <span class="appwin-launcher-custom">
+              <button class="chip custom" id="appwin-launcher-custom" type="button">＋ 自定义</button>
+              <input id="appwin-launcher-number" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" aria-label="自定义栏位数" aria-describedby="appwin-launcher-limit" hidden>
+              <span class="param-inline-tag" id="appwin-launcher-limit" hidden></span>
+            </span>
+          </div>
+        </div>
       </div>
     </section>
-    <div id="notification-options-panel" class="notification-options-panel" style="display:none">
-      <div class="notification-device-options" role="group" aria-label="当前设备通知选项">
-        <div class="notification-open-row">
-          <div class="notification-open-title" id="notification-open-label"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="external-link"></svg>点击通知跳转到投屏<span class="notification-scope">当前设备</span></div>
-          <div class="notification-option-note" id="notification-open-note">普通通知打开投屏 · 验证码仍只复制</div>
-          <button class="switch" id="notification-open" type="button" role="switch" aria-checked="true" aria-labelledby="notification-open-label" aria-describedby="notification-open-note"><span class="knob"></span></button>
+    <section id="notification-options-panel" class="settings-disclosure" aria-label="通知选项" inert>
+      <div class="settings-disclosure-clip">
+        <div class="notification-options-panel">
+          <div class="notification-device-options" role="group" aria-label="当前设备通知选项">
+            <div class="notification-open-row">
+              <div class="notification-open-title" id="notification-open-label"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="external-link"></svg>点击通知跳转到投屏<span class="notification-scope">当前设备</span></div>
+              <div class="notification-option-note" id="notification-open-note">普通通知打开投屏 · 验证码仍只复制</div>
+              <button class="switch" id="notification-open" type="button" role="switch" aria-checked="true" aria-labelledby="notification-open-label" aria-describedby="notification-open-note"><span class="knob"></span></button>
+            </div>
+            <fieldset id="notification-preview" class="notification-option-group">
+              <legend><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="file-text"></svg>通知内容<span class="notification-scope">当前设备</span></legend>
+              <div class="notification-content-choices">
+                <label class="notification-choice"><input type="radio" name="notification-preview" value="full"><span class="notification-choice-body"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="message-square"></svg><span><b>显示消息正文</b><small>可直接查看消息与复制验证码</small></span><svg class="notification-choice-check" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="check"></svg></span></label>
+                <label class="notification-choice"><input type="radio" name="notification-preview" value="hidden"><span class="notification-choice-body"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="lock-keyhole"></svg><span><b>仅提示应用与设备</b><small>隐藏正文，不提供验证码复制入口</small></span><svg class="notification-choice-check" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="check"></svg></span></label>
+              </div>
+            </fieldset>
+          </div>
+          <fieldset id="notification-copy-minutes" class="notification-option-group">
+            <legend><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="clock-3"></svg>验证码复制期限<span class="notification-scope">所有设备</span></legend>
+            <div class="notification-expiry-choices">
+              <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="15"><span class="notification-choice-body">15 分钟</span></label>
+              <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="60"><span class="notification-choice-body">1 小时</span></label>
+              <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="360"><span class="notification-choice-body">6 小时</span></label>
+              <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="1440"><span class="notification-choice-body">24 小时</span></label>
+              <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="4320"><span class="notification-choice-body">3 天</span></label>
+            </div>
+            <p class="notification-option-note">仅用于未注明有效期的新验证码，原文有效期优先；不延长验证码本身的有效期</p>
+          </fieldset>
+          <div class="notification-privacy-note"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="info"></svg><span>消息正文也可能出现在 Windows 通知中心与锁屏</span></div>
         </div>
-      <fieldset id="notification-preview" class="notification-option-group">
-        <legend><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="file-text"></svg>通知内容<span class="notification-scope">当前设备</span></legend>
-        <div class="notification-content-choices">
-          <label class="notification-choice"><input type="radio" name="notification-preview" value="full"><span class="notification-choice-body"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="message-square"></svg><span><b>显示消息正文</b><small>可直接查看消息与复制验证码</small></span><svg class="notification-choice-check" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="check"></svg></span></label>
-          <label class="notification-choice"><input type="radio" name="notification-preview" value="hidden"><span class="notification-choice-body"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="lock-keyhole"></svg><span><b>仅提示应用与设备</b><small>隐藏正文，不提供验证码复制入口</small></span><svg class="notification-choice-check" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="check"></svg></span></label>
-        </div>
-      </fieldset>
       </div>
-      <fieldset id="notification-copy-minutes" class="notification-option-group">
-        <legend><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="clock-3"></svg>验证码复制期限<span class="notification-scope">所有设备</span></legend>
-        <div class="notification-expiry-choices">
-          <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="15"><span class="notification-choice-body">15 分钟</span></label>
-          <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="60"><span class="notification-choice-body">1 小时</span></label>
-          <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="360"><span class="notification-choice-body">6 小时</span></label>
-          <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="1440"><span class="notification-choice-body">24 小时</span></label>
-          <label class="notification-choice"><input type="radio" name="notification-copy-minutes" value="4320"><span class="notification-choice-body">3 天</span></label>
-        </div>
-        <p class="notification-option-note">仅用于未注明有效期的新验证码，原文有效期优先；不延长验证码本身的有效期</p>
-      </fieldset>
-      <div class="notification-privacy-note"><svg class="notification-symbol" viewBox="0 0 24 24" aria-hidden="true" data-notification-icon="info"></svg><span>消息正文也可能出现在 Windows 通知中心与锁屏</span></div>
-    </div>
+    </section>
   </div>
 </div>
 
@@ -363,6 +378,13 @@
     <h3 class="settings-section-title" id="settings-window-title">窗口与显示</h3>
     <div class="set-row">
       <div class="set-main">
+        <div class="set-title" id="set-launch-at-login-label">开机自启</div>
+        <div class="set-note">登录 Windows 后自动打开 EZ</div>
+      </div>
+      <button class="switch" id="set-launch-at-login" type="button" role="switch" aria-checked="false" aria-labelledby="set-launch-at-login-label"><span class="knob"></span></button>
+    </div>
+    <div class="set-row">
+      <div class="set-main">
         <div class="set-title">启动投屏时显示参数控件</div>
         <div class="set-note">投屏窗口上的 FPS/码率/状态浮层，投屏中 Ctrl+F 可随时开关</div>
       </div>
@@ -412,18 +434,24 @@
     <div class="set-row">
       <div class="set-main">
         <div class="set-title">自动平滑（实验）</div>
-        <div class="set-note">缓解画面节奏抖动，增加少量延迟；主投屏和应用投屏均适用，重新投屏后生效</div>
+        <div class="set-note">缓解画面节奏抖动，增加少量延迟。主投屏和应用投屏均适用，重新投屏后生效</div>
       </div>
-      <div class="switch" id="set-smoothing" role="switch" aria-checked="false" tabindex="0" aria-label="自动平滑"><span class="knob"></span></div>
+      <div class="switch" id="set-smoothing" role="switch" aria-checked="false" tabindex="0" aria-label="自动平滑" aria-controls="set-smoothing-details"><span class="knob"></span></div>
     </div>
-    <div class="smoothing-options">
-      <span class="set-note">缓冲上限</span>
-      <div class="smoothing-frames" role="group" aria-label="自动平滑缓冲上限">
-        <button id="set-smoothing-one" type="button" aria-pressed="false" disabled>1 帧</button>
-        <button id="set-smoothing-two" type="button" aria-pressed="true" disabled>2 帧</button>
+    <div class="settings-disclosure" id="set-smoothing-details" inert>
+      <div class="settings-disclosure-clip">
+        <div class="setting-child smoothing-details">
+          <div class="smoothing-options">
+            <span class="setting-child-title">缓冲上限</span>
+            <div class="smoothing-frames" role="group" aria-label="自动平滑缓冲上限">
+              <button id="set-smoothing-one" type="button" aria-pressed="false" disabled>1 帧</button>
+              <button id="set-smoothing-two" type="button" aria-pressed="true" disabled>2 帧</button>
+            </div>
+          </div>
+          <div class="set-note smoothing-help">1 帧偏低延迟，2 帧多一些缓冲余量。实际等待自动调节，最多 32ms，不补帧</div>
+        </div>
       </div>
     </div>
-    <div class="set-note smoothing-help">1 帧偏低延迟，2 帧多一些缓冲余量；实际等待自动调节，最多 32ms，不补帧</div>
     </section>
     </div>
   </div>
@@ -504,16 +532,23 @@
           <div class="set-main"><span class="set-title" id="appset-wheel-swipe-title">滚轮兼容模式</span></div>
           <button class="switch" id="appset-wheel-swipe" type="button" role="switch" aria-checked="false" aria-labelledby="appset-wheel-swipe-title" aria-controls="appset-wheel-swipe-distance-row"><span class="knob"></span></button>
         </div>
-        <div class="setting-child wheel-swipe-controls" id="appset-wheel-swipe-distance-row" data-note="每格滚轮的滑动距离按投屏画面高度计算，默认 18%；开启反向会对调上下滑动方向" hidden>
-          <label class="setting-child-title wheel-swipe-range-label" for="appset-wheel-swipe-distance">滑动幅度</label>
-          <div class="wheel-swipe-range">
-            <div class="wheel-swipe-track-area" id="appset-wheel-swipe-track">
-              <span class="wheel-swipe-track" aria-hidden="true"><span class="wheel-swipe-fill"></span></span>
-              <input class="wheel-swipe-slider" id="appset-wheel-swipe-distance" type="range" min="5" max="50" step="any" value="18" aria-valuetext="18%">
+        <div class="settings-disclosure" id="appset-wheel-swipe-distance-row" data-note="每格滚轮的滑动距离按投屏画面高度计算，默认 18%。开启反向会对调上下滑动方向" inert>
+          <div class="settings-disclosure-clip">
+            <div class="setting-child wheel-swipe-controls">
+              <div class="wheel-swipe-heading">
+                <label class="setting-child-title" for="appset-wheel-swipe-distance">滑动幅度</label>
+                <button class="wheel-swipe-button" id="appset-wheel-swipe-horizontal" type="button" aria-pressed="false" aria-label="左右滑动"><svg class="notification-symbol" viewBox="0 0 24 24" data-notification-icon="move-horizontal" aria-hidden="true"></svg>左右</button>
+              </div>
+              <div class="wheel-swipe-range">
+                <div class="wheel-swipe-track-area" id="appset-wheel-swipe-track">
+                  <span class="wheel-swipe-track" aria-hidden="true"><span class="wheel-swipe-fill"></span></span>
+                  <input class="wheel-swipe-slider" id="appset-wheel-swipe-distance" type="range" min="5" max="100" step="any" value="18" aria-valuetext="18%">
+                </div>
+                <span class="wheel-swipe-value" id="appset-wheel-swipe-value" aria-hidden="true">18%</span>
+              </div>
+              <button class="wheel-swipe-button wheel-swipe-reverse" id="appset-wheel-swipe-reverse" type="button" aria-pressed="false"><span aria-hidden="true">⇅</span>反向</button>
             </div>
-            <span class="wheel-swipe-value" id="appset-wheel-swipe-value" aria-hidden="true">18%</span>
           </div>
-          <button class="wheel-swipe-reverse" id="appset-wheel-swipe-reverse" type="button" aria-pressed="false"><span aria-hidden="true">⇅</span> 反向</button>
         </div>
         <div class="fgroup-title">实验功能</div>
         <div class="set-row" id="appset-perspective-row" data-note="开启后，将投屏窗口背后的桌面作为应用的相机画面；拖动或缩放时，电脑上的画面会即时跟随。需要 Android 16 或以上及可用的虚拟相机服务，重新打开应用投屏后生效">
@@ -522,14 +557,18 @@
           </div>
           <div class="switch on" id="appset-perspective" role="switch" tabindex="0" aria-label="透视相机" aria-checked="true" aria-controls="appset-perspective-fps-row"><span class="knob"></span></div>
         </div>
-        <div class="setting-child" id="appset-perspective-fps-row" data-note="送给手机识别的桌面画面更新频率，默认 6 FPS；拖动窗口时，本地预览仍即时跟随" hidden>
-          <label class="setting-child-title" for="appset-perspective-fps">桌面送帧</label>
-          <select class="perspective-fps-select" id="appset-perspective-fps">
-            <option value="0.5" data-detail="两秒一帧">0.5 FPS</option>
-            <option value="1">1 FPS</option>
-            <option value="6" selected data-detail="默认">6 FPS</option>
-            <option value="10">10 FPS</option>
-          </select>
+        <div class="settings-disclosure" id="appset-perspective-fps-row" data-note="送给手机识别的桌面画面更新频率，默认 6 FPS；拖动窗口时，本地预览仍即时跟随" inert>
+          <div class="settings-disclosure-clip">
+            <div class="setting-child">
+              <label class="setting-child-title" for="appset-perspective-fps">桌面送帧</label>
+              <select class="perspective-fps-select" id="appset-perspective-fps">
+                <option value="0.5" data-detail="两秒一帧">0.5 FPS</option>
+                <option value="1">1 FPS</option>
+                <option value="6" selected data-detail="默认">6 FPS</option>
+                <option value="10">10 FPS</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         <div class="param-note" id="appset-note-feature">透视相机切换或关闭后需要重新打开应用窗口才会生效；部分应用（如相机类）可能限制虚拟相机。「应用投屏显示导航栏和桌面」在右上角齿轮中设置</div>

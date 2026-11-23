@@ -11,4 +11,4 @@ func BringAppWinToFront(serials []string, pkg string) error { return nil }
 
 func BringClientToFront(pid int) error { return nil }
 
-func SetClientWheelSwipe(pid, percent int) error { return nil }
+func SetClientWheelSwipe(pid, percent int, horizontal bool) error { return nil }

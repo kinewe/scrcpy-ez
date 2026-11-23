@@ -33,7 +33,7 @@
 // Interval of the Windows clipboard polling timer
 #define SC_CLIPBOARD_WATCH_INTERVAL_MS 300
 #define SC_WHEEL_SWIPE_MIN_PERCENT 5
-#define SC_WHEEL_SWIPE_MAX_PERCENT 50
+#define SC_WHEEL_SWIPE_MAX_PERCENT 100
 #define SC_WHEEL_SWIPE_TICK_MS 12
 #define SC_WHEEL_SWIPE_IDLE_MS 55
 
@@ -177,7 +177,9 @@ sc_input_manager_init(struct sc_input_manager *im,
         char *end;
         long percent = strtol(wheel_percent, &end, 10);
         if (end != wheel_percent && !*end) {
-            sc_input_manager_set_wheel_swipe(im, percent);
+            const char *horizontal = getenv("SCEZ_WHEEL_SWIPE_HORIZONTAL");
+            sc_input_manager_set_wheel_swipe(im, percent,
+                                            horizontal && !strcmp(horizontal, "1"));
         }
     }
 
@@ -2062,7 +2064,8 @@ sc_input_manager_cancel_wheel_swipe(struct sc_input_manager *im) {
 }
 
 bool
-sc_input_manager_set_wheel_swipe(struct sc_input_manager *im, int64_t percent) {
+sc_input_manager_set_wheel_swipe(struct sc_input_manager *im, int64_t percent,
+                                 bool horizontal) {
     if (percent < -SC_WHEEL_SWIPE_MAX_PERCENT
             || percent > SC_WHEEL_SWIPE_MAX_PERCENT
             || (percent && percent > -SC_WHEEL_SWIPE_MIN_PERCENT
@@ -2071,6 +2074,7 @@ sc_input_manager_set_wheel_swipe(struct sc_input_manager *im, int64_t percent) {
     }
     sc_input_manager_cancel_wheel_swipe(im);
     im->wheel.reverse = percent < 0;
+    im->wheel.horizontal = horizontal;
     im->wheel.percent = percent < 0 ? -percent : percent;
     return true;
 }
@@ -2104,8 +2108,9 @@ wheel_swipe_step(struct sc_input_manager *im) {
         return;
     }
 
-    bool swap = sc_orientation_is_swap(im->screen->orientation);
-    int span = swap ? frame.width : frame.height;
+    bool frame_x = im->wheel.horizontal
+                != sc_orientation_is_swap(im->screen->orientation);
+    int span = frame_x ? frame.width : frame.height;
     int amount = (int) im->wheel.pending;
     int min_start_distance = SDL_max(2, span / 50);
     if (!amount || (!im->wheel.down && abs(amount) < min_start_distance)) {
@@ -2118,7 +2123,7 @@ wheel_swipe_step(struct sc_input_manager *im) {
     int edge = 1;
     int end = span - 2;
     int distance = SDL_max(2, span * im->wheel.percent / 500);
-    int32_t *axis = swap ? &p->point.x : &p->point.y;
+    int32_t *axis = frame_x ? &p->point.x : &p->point.y;
     if (!im->wheel.down) {
         // Start under the cursor. At the edge, leave enough travel for the
         // touch to be recognized as a swipe rather than a tap.
@@ -2163,10 +2168,12 @@ wheel_swipe_queue(struct sc_input_manager *im, struct sc_position position,
     }
 
     enum sc_orientation orientation = im->screen->orientation;
-    bool runs_backward = orientation == SC_ORIENTATION_180
-                      || orientation == SC_ORIENTATION_270
-                      || orientation == SC_ORIENTATION_FLIP_90
-                      || orientation == SC_ORIENTATION_FLIP_180;
+    // Match the direction in the displayed window after rotation/reflection.
+    bool runs_backward = im->wheel.horizontal
+        ? orientation == SC_ORIENTATION_90 || orientation == SC_ORIENTATION_180
+          || orientation == SC_ORIENTATION_FLIP_0 || orientation == SC_ORIENTATION_FLIP_90
+        : orientation == SC_ORIENTATION_180 || orientation == SC_ORIENTATION_270
+          || orientation == SC_ORIENTATION_FLIP_90 || orientation == SC_ORIENTATION_FLIP_180;
     if (im->wheel.reverse != runs_backward) {
         ticks = -ticks;
     }
@@ -2177,7 +2184,8 @@ wheel_swipe_queue(struct sc_input_manager *im, struct sc_position position,
             || ticks * im->wheel.pending < 0)) {
         sc_input_manager_cancel_wheel_swipe(im);
     }
-    int span = sc_orientation_is_swap(orientation) ? width : height;
+    bool frame_x = im->wheel.horizontal != sc_orientation_is_swap(orientation);
+    int span = frame_x ? width : height;
     float pixels = ticks * span * im->wheel.percent / 100.0f;
     im->wheel.pending = SDL_clamp(im->wheel.pending + pixels, -span, span);
     im->wheel.last_activity = SDL_GetTicks();

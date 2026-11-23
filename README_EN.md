@@ -7,7 +7,7 @@
 > ✨ **Entirely developed by AI** (code and docs written by AI)
 > ⚠️ **Tested on**: Windows 11 only (other versions unverified)
 
-> **Current release: 2.5.0**. Adds a virtual camera and direct WeChat Scan, improves mirroring startup and connection recovery, and makes main mirroring screen blackout more resilient. See the [release notes](docs/release-2.5.0.md).
+> **Current release v2.5.2**. Wheel compatibility adds horizontal swipes and raises the distance limit to 100%. The release also adds launch at Windows sign-in and improves how nested settings expand and scroll into view. See the [release notes](docs/release-2.5.2.md).
 
 ---
 
@@ -152,6 +152,7 @@ While mirroring, a persistent "scrcpy-ez is mirroring" notification appears on t
 
 | Version | Features |
 |---|---|
+| **[v2.5.2](https://github.com/kinewe/scrcpy-ez/releases/tag/v2.5.2)** | Wheel compatibility adds horizontal swipes and a 100% distance limit for main and app mirroring. Nested settings animate open and closed, and scroll into view when needed. Launch at Windows sign-in is available in global settings and is off by default. See the [release notes](docs/release-2.5.2.md) |
 | **[v2.5.1](https://github.com/kinewe/scrcpy-ez/releases/tag/v2.5.1)** | See recent apps and pin favorites in the app picker, with matching order in the notification view. Convert mouse wheel input into touch swipes with adjustable distance and direction in main and app mirroring. Notification clicks reuse an existing window for the same app and use the same freeze prevention as regular app mirroring. See the [release notes](docs/release-2.5.1.md) |
 | **[v2.5.0](https://github.com/kinewe/scrcpy-ez/releases/tag/v2.5.0)** | Create the virtual camera on demand, with native RGBA, Zstd-compressed frame deltas and chroma-key fallback. Launch WeChat Scan directly from supported device cards. Improve mirroring startup, ADB connection recovery and automatic screen blackout in main mirroring. See the [release notes](docs/release-2.5.0.md) |
 | **[v2.4.1](https://github.com/kinewe/scrcpy-ez/releases/tag/v2.4.1)** | Raise the application resource guard from **500 to 10,000**. Improve large-list loading and name/package/pinyin search usability with batched rendering, viewport-first icons and preserved search/scroll state; adapt read timeouts to list size and connection conditions, keeping usable lists when some icons fail. Add native device resolution/refresh presets, 60fps wireless defaults and automatic app-window DPI; use backlog-based ABR, correct high-refresh encoder hints and app-window frame limiting; use wake locks for main mirroring only. Group settings and offer one/two-frame smoothing budgets at the bottom (off by default). See [release notes](docs/release-2.4.1.md) |

@@ -88,6 +88,7 @@ type CastParams struct {
 	VdAudio              string // SCEZ_VD_AUDIO：声音档位单套回退（v2.1.78；phone/pc/both，空=不注入）
 	StartApp             string // SCEZ_START_APP：启动应用包名（调用方带 "+" 前缀=先强停再启动）
 	WheelSwipePercent    int    // Negative reverses swipes. Zero keeps native wheel input.
+	WheelSwipeHorizontal bool   // Convert vertical wheel ticks to horizontal touch swipes.
 	AppPowerSavePackage  string // App opened by a notification on this session's virtual display.
 	ReuseAppTask         bool   // Prefer a verified existing task; never silently force-stop.
 	WinTitle             string // Display title; castEnv quotes it as one Windows argument.
@@ -295,6 +296,11 @@ func castEnv(params CastParams, watchTag string) []string {
 		env = append(env, "SCEZ_START_APP="+params.StartApp)
 	}
 	env = append(env, "SCEZ_WHEEL_SWIPE_PERCENT="+strconv.Itoa(params.WheelSwipePercent))
+	horizontal := "0"
+	if params.WheelSwipeHorizontal {
+		horizontal = "1"
+	}
+	env = append(env, "SCEZ_WHEEL_SWIPE_HORIZONTAL="+horizontal)
 	if params.AppPowerSavePackage != "" {
 		env = append(env, "SCEZ_APP_POWER_SAVE_PACKAGE="+params.AppPowerSavePackage)
 	}

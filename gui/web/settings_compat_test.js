@@ -24,6 +24,7 @@ function node(id) {
       querySelectorAll: () => [],
       classList: { add: x => classes.add(x), remove: x => classes.delete(x) },
       setAttribute: (key, value) => { attrs[key] = value; },
+      getAttribute: key => attrs[key],
       addEventListener: (name, handler) => { handlers[name] = handler; }
     });
   }
@@ -35,11 +36,22 @@ const awakeSaves = [];
 const autoBlackoutSaves = [];
 const smoothingSaves = [];
 const smoothingFrameSaves = [];
+const revealed = [];
+const launchAtLoginSaves = [];
+let launchAtLogin = false;
 const context = {
   el: node,
+  document: { activeElement: null },
+  revealSettingsDisclosure: panel => { if (!panel.inert) revealed.push(panel); },
   appWinModalSerial: null, notificationBatchTargets: [], notificationSaving: false,
   lastState: { settings: { showParamOverlay: false, closeToTray: true } },
   SetSettings: (...args) => { saves.push(args); return Promise.resolve(); },
+  GetLaunchAtLogin: () => Promise.resolve(launchAtLogin),
+  SetLaunchAtLogin: enabled => {
+    launchAtLoginSaves.push(enabled);
+    launchAtLogin = enabled;
+    return Promise.resolve(enabled);
+  },
   SetOtherAppWinSystemDecorations: value => { compatSaves.push(value); return Promise.resolve(); },
   SetKeepDeviceAwake: value => { awakeSaves.push(value); return Promise.resolve(); },
   SetAutoBlackoutMainCast: value => { autoBlackoutSaves.push(value); return Promise.resolve(); },
@@ -48,9 +60,11 @@ const context = {
   toast: message => { throw new Error(message); }
 };
 vm.createContext(context);
+vm.runInContext(source.match(/  function setSettingsDisclosure\([\s\S]+?\n  }/)[0], context);
 vm.runInContext(source.slice(start, end), context);
 node('btn-settings').handlers.click();
 assert.equal(node('set-smoothing').attrs['aria-checked'], 'false');
+assert.equal(node('set-smoothing-details').inert, true);
 assert.equal(node('set-keep-awake').attrs['aria-checked'], 'true');
 node('set-keep-awake').handlers.click();
 assert.deepEqual(awakeSaves, [false]);
@@ -76,6 +90,21 @@ assert.equal(saves.length, 1);
 console.log('settings compatibility: legacy snapshots, save bindings and independent original settings passed');
 
 (async () => {
+  const launchSwitch = node('set-launch-at-login');
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  await settle();
+  assert.equal(launchSwitch.attrs['aria-checked'], 'false');
+  assert.deepEqual(launchAtLoginSaves, [], 'opening settings must never enroll EZ in startup');
+  launchSwitch.handlers.click();
+  launchSwitch.handlers.click();
+  await settle();
+  assert.deepEqual(launchAtLoginSaves, [true]);
+  assert.equal(launchSwitch.attrs['aria-checked'], 'true');
+  launchAtLogin = false;
+  node('settings-close').handlers.click();
+  node('btn-settings').handlers.click();
+  await settle();
+  assert.equal(launchSwitch.attrs['aria-checked'], 'false', 'reopening settings reads the Windows entry again');
   assert.equal(node('set-auto-blackout').attrs['aria-checked'], 'true');
   node('set-auto-blackout').handlers.click();
   node('set-auto-blackout').handlers.click();
@@ -91,6 +120,8 @@ console.log('settings compatibility: legacy snapshots, save bindings and indepen
   node('set-smoothing').handlers.click();
   node('set-smoothing').handlers.click(); // Do not enqueue a second save while pending.
   assert.deepEqual(smoothingSaves, [true]);
+  assert.equal(node('set-smoothing-details').inert, false);
+  assert.deepEqual(revealed, [node('set-smoothing-details')]);
   context.syncSettings({ settings: { videoSmoothing: false } });
   assert.equal(context.settingsState.videoSmoothing, true);
   await Promise.resolve();
@@ -115,10 +146,13 @@ console.log('settings compatibility: legacy snapshots, save bindings and indepen
   node('set-smoothing').handlers.keydown({key: 'Enter', preventDefault() {}});
   await Promise.resolve(); await Promise.resolve();
   assert.equal(node('set-smoothing').attrs['aria-checked'], 'true');
+  assert.equal(node('set-smoothing-details').inert, false);
+  assert.equal(revealed.length, 1, 'a failed close does not request a reveal on rollback');
   assert.equal(errors.length, 1);
   context.syncSettings({ settings: {} });
   assert.equal(context.settingsState.videoSmoothing, false);
   assert.equal(context.settingsState.videoSmoothingFrames, 2);
   assert.equal(node('set-smoothing-one').disabled, true);
+  assert.equal(node('set-smoothing-details').inert, true);
   console.log('smoothing: legacy default, independent save, pending snapshot and failed-save rollback passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

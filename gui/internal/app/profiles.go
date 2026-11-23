@@ -137,17 +137,18 @@ func (p AppWinModeParams) Empty() bool { return p.Size == "" }
 
 // WheelSwipeSettings applies to both transports of a device or application.
 type WheelSwipeSettings struct {
-	WheelSwipeEnabled bool `json:"wheelSwipeEnabled,omitempty"`
-	WheelSwipePercent int  `json:"wheelSwipePercent,omitempty"`
-	WheelSwipeReverse bool `json:"wheelSwipeReverse,omitempty"`
+	WheelSwipeEnabled    bool `json:"wheelSwipeEnabled,omitempty"`
+	WheelSwipePercent    int  `json:"wheelSwipePercent,omitempty"`
+	WheelSwipeReverse    bool `json:"wheelSwipeReverse,omitempty"`
+	WheelSwipeHorizontal bool `json:"wheelSwipeHorizontal,omitempty"`
 }
 
 func (s WheelSwipeSettings) normalized() WheelSwipeSettings {
-	if s.WheelSwipePercent < 5 || s.WheelSwipePercent > 50 {
+	if s.WheelSwipePercent < 5 || s.WheelSwipePercent > 100 {
 		s.WheelSwipePercent = 18
 	}
 	// Leave legacy/default profiles without a setting on disk.
-	if !s.WheelSwipeEnabled && !s.WheelSwipeReverse && s.WheelSwipePercent == 18 {
+	if s == (WheelSwipeSettings{WheelSwipePercent: 18}) {
 		return WheelSwipeSettings{}
 	}
 	return s

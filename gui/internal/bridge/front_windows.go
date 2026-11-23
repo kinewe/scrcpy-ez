@@ -455,19 +455,23 @@ func BringClientToFront(pid int) error {
 
 // SetClientWheelSwipe updates a running client without replacing its display.
 // A negative percent reverses the gesture direction.
-func SetClientWheelSwipe(pid, percent int) error {
+func SetClientWheelSwipe(pid, percent int, horizontal bool) error {
 	if pid <= 0 {
 		return nil
 	}
 	name := syscall.StringToUTF16Ptr("scrcpy-ez.WheelSwipe")
 	message, _, _ := procRegisterClientMessage.Call(uintptr(unsafe.Pointer(name)))
 	if message != 0 {
+		var axis uintptr
+		if horizontal {
+			axis = 1
+		}
 		// A replacement client emits READY before its window is shown.
 		for _, win := range clientWindows(pid) {
 			var handled uintptr
 			const abortIfHung = 0x0002
 			ok, _, _ := procSendClientMessage.Call(win.hwnd, message, uintptr(percent),
-				0, abortIfHung, 125, uintptr(unsafe.Pointer(&handled)))
+				axis, abortIfHung, 125, uintptr(unsafe.Pointer(&handled)))
 			if ok != 0 && handled == 1 {
 				return nil
 			}

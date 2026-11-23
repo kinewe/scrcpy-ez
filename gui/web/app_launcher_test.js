@@ -48,7 +48,7 @@ function el(id) {
     nodes.set(id,{events:{},attrs:{},hidden:true,value:'',scrollTop:0,
       setAttribute(k,v){this.attrs[k]=v;},addEventListener(k,f){this.events[k]=f;},
       style:{setProperty(k,v){this[k]=v;}},
-      classList:{add:n=>flags.add(n),remove:n=>flags.delete(n),toggle(n,on){if(on)flags.add(n);else flags.delete(n);}},
+      classList:{add:n=>flags.add(n),remove:n=>flags.delete(n),contains:n=>flags.has(n),toggle(n,on){if(on)flags.add(n);else flags.delete(n);}},
       getBoundingClientRect(){return {top:32,height:360};},
       closest(s){return el(s);},focus(){this.focused=true;},select(){this.selected=true;}});
   }
@@ -68,6 +68,8 @@ const scope = {
 };
 let pointerTarget;
 vm.createContext(scope);
+const disclosureStart=source.indexOf('  function setSettingsDisclosure(');
+vm.runInContext(source.slice(disclosureStart,source.indexOf('\n  }',disclosureStart)+4),scope);
 const start=source.indexOf('  function appLauncherProfileItem('), end=source.indexOf('  function appLauncherColumns(',start);
 vm.runInContext(source.slice(start,end),scope);
 scope.bindAppLauncher();
@@ -89,7 +91,7 @@ const type=value=>{input.value=value;input.events.input();};
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
 (async()=>{
-  toggle();assert.equal(el('appwin-launcher-panel').hidden,false);
+  toggle();assert.equal(el('appwin-launcher-panel').inert,false);
   assert.equal(el('appwin-modal-hint').textContent,'已置顶 2 / 4 · 若还有空位，将留给「最近打开应用」');
   scope.toggleAppLauncherPin(camera,false);
   assert.deepEqual(profile.appLauncher.pins,[market,settings],'edits wait for panel close');
@@ -118,10 +120,19 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
   type('6');
   search.value='xiangj';
   el('appwin-modal-grid').scrollTop=130;
+  let finishCollapse;
+  const panel=el('appwin-launcher-panel'), card=el('.appwin-card');
+  panel.getAnimations=()=>[{
+    transitionProperty:'grid-template-rows', finished:new Promise(resolve=>{finishCollapse=resolve;})
+  }];
   toggle();await flush();
   assert.deepEqual(saved,[{identity:'device:A',capacity:6,custom:true,pins:[camera,market,settings]}]);
   assert.equal(scope.appLauncherDraft,null);
   assert.equal(search.value,'');assert.equal(el('appwin-modal-grid').scrollTop,0);
+  assert.equal(panel.inert,true,'saved submenu is inert during the close animation');
+  assert.equal(card.classList.contains('launcher-options-open'),true,'grid stays fixed until the submenu closes');
+  finishCollapse();await flush();
+  assert.equal(card.classList.contains('launcher-options-open'),false);
   assert.deepEqual(profile.appLauncher.recent,[gallery,notes,browser]);
   toggle();assert.equal(input.value,'6');
   scope.rememberAppLauncherClick('A',files);

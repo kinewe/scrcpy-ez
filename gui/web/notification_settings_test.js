@@ -23,7 +23,7 @@ el('appwin-modal-grid').buttons=[card];
 let backend = {settings:{notificationDefault:true,notificationPreview:true,notificationDevices:{},notificationPolicies:{},notificationCopyMinutes:1440},profiles:[{key:'tablet'},{key:'phone'}]};
 let selected = [{identity:'tablet'}], reject=false, hold=null;
 const saves=[],messages=[],launches=[];
-const context = {el,Promise,SCEZNotificationIcons:require('./notification_icons'),lastState:backend,lastJson:'',appWinModalSerial:'wifi-tablet',appWinNotificationView:false,notificationOptionsOpen:false,notificationSaving:false,notificationBatchTargets:[],
+const context = {el,Promise,document:{activeElement:null},SCEZNotificationIcons:require('./notification_icons'),lastState:backend,lastJson:'',appWinModalSerial:'wifi-tablet',appWinNotificationView:false,notificationOptionsOpen:false,notificationSaving:false,notificationBatchTargets:[],
   appLauncherDraft:null,closeAppLauncherOptions:done=>done(),renderAppLauncherControls(){},
   appWins:{'wifi-tablet':{identity:'tablet',loaded:true,name:'平板 <test>',apps}},
   batchSelectedDevices:()=>selected,syncBatchUI(){},renderDevices(){},renderAppWinGrid(serial){context.renderAppNotificationControls(serial);},deviceIdentityOf:()=>'',refreshNow(){},toast:text=>messages.push(text),
@@ -42,6 +42,8 @@ const context = {el,Promise,SCEZNotificationIcons:require('./notification_icons'
   },StartAppWin:()=>launches.push(true)
 };
 vm.createContext(context);vm.runInContext(source.slice(start,end),context);
+const disclosureStart=source.indexOf('  function setSettingsDisclosure(');
+vm.runInContext(source.slice(disclosureStart,source.indexOf('\n  }',disclosureStart)+4),context);
 const closeStart=source.indexOf('  function closeAppWinModal(');
 vm.runInContext(source.slice(closeStart,source.indexOf('\n  }',closeStart)+4),context);
 const drain=()=>new Promise(resolve=>setImmediate(resolve));
@@ -66,6 +68,11 @@ const draft=()=>context.notificationDraft.policy;
   assert.equal(backend.settings.notificationPolicies.phone.mode,'all');
   const before=saves.length;
   fresh();el('appwin-modal-search').value='mail';context.toggleNotificationApp('wifi-tablet','com.example.mail');
+  const options=el('notification-options'), panel=el('notification-options-panel');
+  assert.equal(panel.inert,true);
+  options.handlers.click();assert.equal(panel.inert,false);assert.equal(options.attrs['aria-expanded'],'true');
+  context.syncSettings(clone(backend));assert.equal(panel.inert,false,'background refresh keeps the submenu open');
+  options.handlers.click();assert.equal(panel.inert,true);assert.equal(options.attrs['aria-expanded'],'false');
   assert.deepEqual(clone(draft().packages),['com.example.chat','com.example.store']);assert.equal(draft().other,true);
   assert.equal(card.attrs['aria-label'],'邮件，未允许通知','badge label retains application name');
   assert.equal(el('appwin-modal-grid').buttons[0],card,'draft edit preserves app DOM and keyboard focus');

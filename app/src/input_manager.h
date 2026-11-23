@@ -56,6 +56,7 @@ struct sc_input_manager {
     struct {
         unsigned percent;
         bool reverse;
+        bool horizontal;
         SDL_TimerID timer;
         uint64_t last_activity;
         struct sc_position position;
@@ -105,7 +106,8 @@ sc_input_manager_handle_event(struct sc_input_manager *im,
                               const SDL_Event *event);
 
 bool
-sc_input_manager_set_wheel_swipe(struct sc_input_manager *im, int64_t percent);
+sc_input_manager_set_wheel_swipe(struct sc_input_manager *im, int64_t percent,
+                                 bool horizontal);
 
 void
 sc_input_manager_cancel_wheel_swipe(struct sc_input_manager *im);

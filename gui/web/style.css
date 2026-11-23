@@ -790,8 +790,7 @@ body {
 .settings-body { min-height: 0; overflow-y: auto; padding-right: 4px; }
 .settings-section + .settings-section { margin-top: 18px; }
 .settings-section-title { margin: 0 0 6px; font-size: 11.5px; font-weight: 600; color: var(--green-dark); }
-.smoothing-options { display: flex; align-items: center; gap: 14px; margin-top: 10px; }
-.smoothing-options > .set-note { margin-top: 0; }
+.smoothing-options { display: flex; align-items: center; gap: 14px; }
 .smoothing-frames { display: inline-flex; gap: 6px; }
 .smoothing-frames button { min-width: 68px; padding: 6px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
 .smoothing-frames button[aria-pressed="true"] { color: var(--green-dark); border-color: var(--green); background: var(--green-light, #e8f5ed); }
@@ -802,19 +801,36 @@ body {
 
 .dpage .set-row button.switch { border: 0; padding: 0; }
 .dpage .switch:focus-visible { outline: 2px solid var(--green-dark); outline-offset: 2px; }
+.settings-disclosure {
+  --disclosure-duration: 180ms;
+  display: grid; flex: none; min-width: 0; grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows var(--disclosure-duration) cubic-bezier(.2,.7,.3,1),
+              opacity var(--disclosure-duration) ease;
+}
+.settings-disclosure:not([inert]) {
+  grid-template-rows: 1fr; opacity: 1;
+}
+.settings-disclosure-clip {
+  display: flow-root; min-height: 0; overflow: hidden;
+  margin-inline: -4px; padding-inline: 4px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-disclosure { transition: none; }
+}
 .setting-child {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   margin: 0 0 8px 13px; padding: 5px 0 5px 11px;
   border-left: 2px solid #d3e9de;
 }
-.setting-child[hidden] { display: none; }
+.setting-child.smoothing-details { display: block; }
 .setting-child-title { min-width: 0; color: var(--muted); font-size: 12px; }
 .setting-child .perspective-fps-select { min-height: 30px; padding-block: 4px; }
 .wheel-swipe-controls {
   display: grid; grid-template-columns: minmax(0, 1fr) auto;
   gap: 3px 12px; align-items: center;
 }
-.wheel-swipe-range-label { grid-column: 1 / -1; }
+.wheel-swipe-heading { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .wheel-swipe-range { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .wheel-swipe-value {
   flex: none; min-width: 40px; padding: 3px 5px; border-radius: 6px;
@@ -823,7 +839,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 .wheel-swipe-track-area {
-  --wheel-swipe-progress: 28.8889%;
+  --wheel-swipe-progress: 13.6842%;
   position: relative; flex: 1; min-width: 0; height: 24px;
 }
 .wheel-swipe-track {
@@ -854,14 +870,21 @@ body {
   background: transparent; forced-color-adjust: none;
 }
 @media (prefers-reduced-motion: reduce) { .wheel-swipe-fill::after { transition: none; } }
-.wheel-swipe-reverse {
-  flex: none; align-self: center; padding: 5px 8px;
+.wheel-swipe-button {
+  display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 4px;
+  width: 62px; height: 28px; padding: 0 6px;
   border: 1px solid var(--border); border-radius: 8px; background: var(--card);
   color: var(--muted); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer;
 }
-.wheel-swipe-reverse:hover { border-color: var(--green); color: var(--green-dark); }
-.wheel-swipe-reverse[aria-pressed="true"] { border-color: var(--green); background: #edf7f1; color: var(--green-dark); }
-.wheel-swipe-reverse:focus-visible, .wheel-swipe-slider:focus-visible { outline: 2px solid var(--green-dark); outline-offset: 2px; }
+.wheel-swipe-button .notification-symbol { width: 13px; height: 13px; }
+.wheel-swipe-button:hover { border-color: var(--green); color: var(--green-dark); }
+.wheel-swipe-button[aria-pressed="true"] { border-color: var(--green); background: #edf7f1; color: var(--green-dark); }
+.wheel-swipe-button:focus-visible, .wheel-swipe-slider:focus-visible { outline: 2px solid var(--green-dark); outline-offset: 2px; }
+.wheel-swipe-reverse span { display: inline-block; transition: transform 140ms ease; }
+[data-axis="horizontal"] .wheel-swipe-reverse span { transform: rotate(-90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .wheel-swipe-reverse span { transition: none; }
+}
 
 .perspective-fps-select {
   flex: none;
@@ -956,7 +979,8 @@ body {
 .notification-options-trigger:hover, .notification-options-trigger[aria-expanded="true"] { background: #edf7f1; border-color: #d3e9de; }
 .notification-chevron { width: 13px; height: 13px; transition: transform .16s; }
 .notification-options-trigger[aria-expanded="true"] .notification-chevron { transform: rotate(180deg); }
-.notification-options-panel { flex: none; max-height: 48vh; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 9px; margin-top: 8px; }
+@media (prefers-reduced-motion: reduce) { .notification-chevron { transition: none; } }
+.notification-options-panel { max-height: 48vh; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 9px; margin-top: 8px; }
 #appwin-modal { overflow-y: auto; overscroll-behavior-y: contain; }
 .appwin-card.launcher-options-open { max-height: none; align-self: flex-start; margin-top: var(--appwin-launcher-top, 0); margin-bottom: 12px; }
 .appwin-card.launcher-options-open .appwin-grid { flex: none; height: var(--appwin-launcher-grid, 360px); max-height: none; }
@@ -1016,7 +1040,7 @@ body {
   12% { transform: translateY(-.5px) rotate(2.1deg); }
   18% { transform: rotate(-1.2deg); }
 }
-.appwin-launcher-panel { flex: none; margin-top: 8px; padding-top: 9px; border-top: 1px solid var(--border); }
+.appwin-launcher-panel { margin-top: 8px; padding-top: 9px; border-top: 1px solid var(--border); }
 .appwin-launcher-panel-head, .appwin-launcher-capacity, .appwin-launcher-custom { display: flex; align-items: center; gap: 6px; }
 .appwin-launcher-panel-head { justify-content: space-between; font-size: 12px; }
 .appwin-launcher-capacity { flex-wrap: wrap; margin-top: 5px; }

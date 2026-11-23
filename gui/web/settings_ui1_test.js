@@ -64,7 +64,7 @@ const missing = [...referenced].filter(id => !ids.has(id));
 ok('app.js el() 引用的 id 都存在于 index.html', missing.length === 0, missing.slice(0, 10).join(','));
 
 for (const prefix of ['param', 'appset']) {
-  ok(prefix + ' 滑条范围 5%–50% 且连续移动', new RegExp('id="' + prefix + '-wheel-swipe-distance" type="range" min="5" max="50" step="any"').test(html));
+  ok(prefix + ' 滑条范围 5%–100% 且连续移动', new RegExp('id="' + prefix + '-wheel-swipe-distance" type="range" min="5" max="100" step="any"').test(html));
   ok(prefix + ' 幅度徽标在滑条之后', new RegExp('id="' + prefix + '-wheel-swipe-distance"[^>]*>\\s*</div>\\s*<span class="wheel-swipe-value" id="' + prefix + '-wheel-swipe-value"').test(html));
   ok(prefix + ' 反向初始关闭', new RegExp('id="' + prefix + '-wheel-swipe-reverse" type="button" aria-pressed="false"').test(html));
 }

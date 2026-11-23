@@ -79,7 +79,7 @@ type appWinState struct {
 	startedAt          time.Time
 	closing            bool
 	clientPID          int
-	liveWheelSwipe     *int
+	liveWheelSwipe     *WheelSwipeSettings
 	displayID          int
 	displayReady       bool
 	powerSaveDisplay   int
@@ -198,6 +198,7 @@ func (a *App) startAppWinSession(serial, pkg, name string, notification, restart
 	lp := a.profiles.Get(identity)
 	ap, hasArchive := a.appWinParamsFor(identity, pkg)
 	params.WheelSwipePercent = ap.activePercent()
+	params.WheelSwipeHorizontal = ap.WheelSwipeHorizontal
 	pickV := func(appV, devV string) string {
 		if strings.TrimSpace(appV) != "" {
 			return NormalizeVCodec(appV)
@@ -451,7 +452,8 @@ func (a *App) onAppWinLineFor(serial, pkg string, r Runner, line string) {
 		st.clientPID, _ = strconv.Atoi(match[1])
 		st.displayReady = st.clientPID > 0 && st.displayID > 0
 		if st.liveWheelSwipe != nil && !st.closing && !st.restarting {
-			if err := bridge.SetClientWheelSwipe(st.clientPID, *st.liveWheelSwipe); err != nil {
+			wheel := st.liveWheelSwipe
+			if err := bridge.SetClientWheelSwipe(st.clientPID, wheel.activePercent(), wheel.WheelSwipeHorizontal); err != nil {
 				bridge.DebugLog("[appwin] 同步滚轮设置失败: %v", err)
 			}
 		}
@@ -1382,9 +1384,8 @@ func (a *App) SaveAppWinParams(serial, pkg, payload string) error {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		if st := a.appWins[appWinKey(serial, pkg)]; st != nil && !st.closing && !st.restarting {
-			percent := wheel.activePercent()
-			st.liveWheelSwipe = &percent
-			return bridge.SetClientWheelSwipe(st.clientPID, percent)
+			st.liveWheelSwipe = &wheel
+			return bridge.SetClientWheelSwipe(st.clientPID, wheel.activePercent(), wheel.WheelSwipeHorizontal)
 		}
 		return nil
 	}

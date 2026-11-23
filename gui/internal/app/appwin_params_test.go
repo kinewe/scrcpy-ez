@@ -699,22 +699,23 @@ func TestWheelSwipeSettingsFollowAppAcrossLaunchPaths(t *testing.T) {
 			e := newAppWinParamsEnv(t)
 			setDevices(e.a, []adb.Device{{Serial: "K80", State: "device", ConnType: "usb"}})
 			if err := e.a.SaveAppWinParams("K80", launch.pkg,
-				`{"mode":"wifi","wheelSwipeOnly":true,"wheelSwipeEdited":true,"wheelSwipeEnabled":true,"wheelSwipePercent":27,"wheelSwipeReverse":true}`); err != nil {
+				`{"mode":"wifi","wheelSwipeOnly":true,"wheelSwipeEdited":true,"wheelSwipeEnabled":true,"wheelSwipePercent":100,"wheelSwipeReverse":true,"wheelSwipeHorizontal":true}`); err != nil {
 				t.Fatal(err)
 			}
 			if err := launch.start(e.a); err != nil {
 				t.Fatal(err)
 			}
-			if got := e.f.waitParams(t, 1).WheelSwipePercent; got != -27 {
-				t.Fatalf("USB launch ignored preference configured on Wi-Fi: %d", got)
+			if got := e.f.waitParams(t, 1); got.WheelSwipePercent != -100 || !got.WheelSwipeHorizontal {
+				t.Fatalf("USB launch ignored preference configured on Wi-Fi: %d, horizontal=%t", got.WheelSwipePercent, got.WheelSwipeHorizontal)
 			}
 			if err := e.a.SaveAppWinParams("K80", launch.pkg,
-				`{"mode":"usb","wheelSwipeOnly":true,"wheelSwipeEdited":true,"wheelSwipePercent":27,"wheelSwipeReverse":true}`); err != nil {
+				`{"mode":"usb","wheelSwipeOnly":true,"wheelSwipeEdited":true,"wheelSwipePercent":100,"wheelSwipeReverse":true,"wheelSwipeHorizontal":true}`); err != nil {
 				t.Fatal(err)
 			}
 			e.a.mu.RLock()
 			window := e.a.appWins[appWinKey("K80", launch.pkg)]
-			applied := window != nil && !window.restarting && window.liveWheelSwipe != nil && *window.liveWheelSwipe == 0
+			applied := window != nil && !window.restarting && window.liveWheelSwipe != nil &&
+				window.liveWheelSwipe.activePercent() == 0 && window.liveWheelSwipe.WheelSwipeHorizontal
 			e.a.mu.RUnlock()
 			if !applied {
 				t.Fatal("changing only the scroll setting must keep the current virtual display")
@@ -725,11 +726,15 @@ func TestWheelSwipeSettingsFollowAppAcrossLaunchPaths(t *testing.T) {
 			}
 			entry, _ := store.Entry("K80")
 			got := entry.AppParams[launch.pkg]
-			if got.WheelSwipeEnabled || !got.WheelSwipeReverse || got.WheelSwipePercent != 27 || !got.Usb.Empty() || !got.Wifi.Empty() {
+			if got.WheelSwipeEnabled || !got.WheelSwipeReverse || !got.WheelSwipeHorizontal ||
+				got.WheelSwipePercent != 100 || !got.Usb.Empty() || !got.Wifi.Empty() {
 				t.Fatalf("saved preference or transport defaults changed: %+v", got)
 			}
 			if other, _ := e.a.appWinParamsFor("K80", "com.example.other"); other.activePercent() != 0 {
 				t.Fatal("unrelated apps must retain the default")
+			}
+			if main := e.a.GetProfile("K80").WheelSwipeSettings; main.activePercent() != 0 || main.WheelSwipeHorizontal {
+				t.Fatal("app edits must leave the main cast preference unchanged")
 			}
 		})
 	}
